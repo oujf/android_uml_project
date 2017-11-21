@@ -1,0 +1,159 @@
+class SkipCutBuffer
+!!!1378053.cpp!!!	SkipCutBuffer(in skip : size_t, in cut : size_t, in num16BitChannels : size_t)
+
+    mWriteHead = 0;
+    mReadHead = 0;
+    mCapacity = 0;
+    mCutBuffer = NULL;
+
+    if (num16BitChannels == 0 || num16BitChannels > INT32_MAX / 2) {
+        ALOGW("# channels out of range: %zu, using passthrough instead", num16BitChannels);
+        return;
+    }
+    size_t frameSize = num16BitChannels * 2;
+    if (skip > INT32_MAX / frameSize || cut > INT32_MAX / frameSize
+            || cut * frameSize > INT32_MAX - 4096) {
+        ALOGW("out of range skip/cut: %zu/%zu, using passthrough instead",
+                skip, cut);
+        return;
+    }
+    skip *= frameSize;
+    cut *= frameSize;
+
+    mFrontPadding = mSkip = skip;
+    mBackPadding = cut;
+    mCapacity = cut + 4096;
+    mCutBuffer = new (std::nothrow) char[mCapacity];
+    ALOGV("skipcutbuffer %zu %zu %d", skip, cut, mCapacity);
+!!!1378181.cpp!!!	submit(inout buffer : MediaBuffer) : void
+    if (mCutBuffer == NULL) {
+        // passthrough mode
+        return;
+    }
+
+    int32_t offset = buffer->range_offset();
+    int32_t buflen = buffer->range_length();
+
+    // drop the initial data from the buffer if needed
+    if (mFrontPadding > 0) {
+        // still data left to drop
+        int32_t to_drop = (buflen < mFrontPadding) ? buflen : mFrontPadding;
+        offset += to_drop;
+        buflen -= to_drop;
+        buffer->set_range(offset, buflen);
+        mFrontPadding -= to_drop;
+    }
+
+
+    // append data to cutbuffer
+    char *src = ((char*) buffer->data()) + offset;
+    write(src, buflen);
+
+
+    // the mediabuffer is now empty. Fill it from cutbuffer, always leaving
+    // at least mBackPadding bytes in the cutbuffer
+    char *dst = (char*) buffer->data();
+    size_t copied = read(dst, buffer->size());
+    buffer->set_range(0, copied);
+!!!1378309.cpp!!!	submit(in buffer : sp<ABuffer>) : void
+    submitInternal(buffer);
+!!!1378437.cpp!!!	submit(in buffer : sp<MediaCodecBuffer>) : void
+    submitInternal(buffer);
+!!!1378565.cpp!!!	clear() : void
+    mWriteHead = mReadHead = 0;
+    mFrontPadding = mSkip;
+!!!1378693.cpp!!!	size() : size_t
+    int32_t available = (mWriteHead - mReadHead);
+    if (available < 0) available += mCapacity;
+    return available;
+!!!1378821.cpp!!!	~SkipCutBuffer()
+    delete[] mCutBuffer;
+!!!1378949.cpp!!!	write(in src : char, in num : size_t) : void
+    int32_t sizeused = (mWriteHead - mReadHead);
+    if (sizeused < 0) sizeused += mCapacity;
+
+    // Everything must fit. Make sure the buffer is a little larger than needed,
+    // so there is no ambiguity as to whether mWriteHead == mReadHead means buffer
+    // full or empty
+    size_t available = mCapacity - sizeused - 32;
+    if (available < num) {
+        int32_t newcapacity = mCapacity + (num - available);
+        char * newbuffer = new char[newcapacity];
+        memcpy(newbuffer, mCutBuffer, mCapacity);
+        delete [] mCutBuffer;
+        mCapacity = newcapacity;
+        mCutBuffer = newbuffer;
+        ALOGV("reallocated buffer at size %d", newcapacity);
+    }
+
+    size_t copyfirst = (mCapacity - mWriteHead);
+    if (copyfirst > num) copyfirst = num;
+    if (copyfirst) {
+        memcpy(mCutBuffer + mWriteHead, src, copyfirst);
+        num -= copyfirst;
+        src += copyfirst;
+        mWriteHead += copyfirst;
+        CHECK_LE(mWriteHead, mCapacity);
+        if (mWriteHead == mCapacity) mWriteHead = 0;
+        if (num) {
+            memcpy(mCutBuffer, src, num);
+            mWriteHead += num;
+        }
+    }
+!!!1379077.cpp!!!	read(inout dst : char, in num : size_t) : size_t
+    int32_t available = (mWriteHead - mReadHead);
+    if (available < 0) available += mCapacity;
+
+    available -= mBackPadding;
+    if (available <=0) {
+        return 0;
+    }
+    if (available < int32_t(num)) {
+        num = available;
+    }
+
+    size_t copyfirst = (mCapacity - mReadHead);
+    if (copyfirst > num) copyfirst = num;
+    if (copyfirst) {
+        memcpy(dst, mCutBuffer + mReadHead, copyfirst);
+        num -= copyfirst;
+        dst += copyfirst;
+        mReadHead += copyfirst;
+        CHECK_LE(mReadHead, mCapacity);
+        if (mReadHead == mCapacity) mReadHead = 0;
+        if (num) {
+            memcpy(dst, mCutBuffer, num);
+            mReadHead += num;
+        }
+    }
+    return available;
+!!!1379205.cpp!!!	submitInternal(in buffer : sp<T>) : void
+    if (mCutBuffer == NULL) {
+        // passthrough mode
+        return;
+    }
+
+    int32_t offset = buffer->offset();
+    int32_t buflen = buffer->size();
+
+    // drop the initial data from the buffer if needed
+    if (mFrontPadding > 0) {
+        // still data left to drop
+        int32_t to_drop = (buflen < mFrontPadding) ? buflen : mFrontPadding;
+        offset += to_drop;
+        buflen -= to_drop;
+        buffer->setRange(offset, buflen);
+        mFrontPadding -= to_drop;
+    }
+
+
+    // append data to cutbuffer
+    char *src = (char*) buffer->data();
+    write(src, buflen);
+
+
+    // the mediabuffer is now empty. Fill it from cutbuffer, always leaving
+    // at least mBackPadding bytes in the cutbuffer
+    char *dst = (char*) buffer->base();
+    size_t copied = read(dst, buffer->capacity());
+    buffer->setRange(0, copied);

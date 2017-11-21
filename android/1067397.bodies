@@ -1,0 +1,96 @@
+class ViewGroupAction
+!!!5400197.java!!!	ViewGroupAction(in viewId : int, inout nestedViews : RemoteViews)
+            this.viewId = viewId;
+            this.nestedViews = nestedViews;
+            if (nestedViews != null) {
+                configureRemoteViewsAsChild(nestedViews);
+            }
+!!!5400325.java!!!	ViewGroupAction(inout parcel : Parcel, inout bitmapCache : RemoteViews::BitmapCache, inout info : ApplicationInfo, in depth : int)
+            viewId = parcel.readInt();
+            boolean nestedViewsNull = parcel.readInt() == 0;
+            if (!nestedViewsNull) {
+                nestedViews = new RemoteViews(parcel, bitmapCache, info, depth);
+            } else {
+                nestedViews = null;
+            }
+!!!5400453.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+            dest.writeInt(TAG);
+            dest.writeInt(viewId);
+            if (nestedViews != null) {
+                dest.writeInt(1);
+                nestedViews.writeToParcel(dest, flags);
+            } else {
+                // signifies null
+                dest.writeInt(0);
+            }
+!!!5400581.java!!!	hasSameAppInfo(inout parentInfo : ApplicationInfo) : boolean
+            return nestedViews != null
+                    && nestedViews.mApplication.packageName.equals(parentInfo.packageName)
+                    && nestedViews.mApplication.uid == parentInfo.uid;
+!!!5400709.java!!!	apply(inout root : View, inout rootParent : ViewGroup, inout handler : RemoteViews::OnClickHandler) : void
+            final Context context = root.getContext();
+            final ViewGroup target = root.findViewById(viewId);
+            if (target == null) return;
+            if (nestedViews != null) {
+                // Inflate nested views and add as children
+                target.addView(nestedViews.apply(context, target, handler));
+            } else {
+                // Clear all children when nested views omitted
+                target.removeAllViews();
+            }
+!!!5400837.java!!!	initActionAsync(inout root : RemoteViews::ViewTree, inout rootParent : ViewGroup, inout handler : RemoteViews::OnClickHandler) : RemoteViews::Action
+            // In the async implementation, update the view tree so that subsequent calls to
+            // findViewById return the currect view.
+            root.createTree();
+            ViewTree target = root.findViewTreeById(viewId);
+            if ((target == null) || !(target.mRoot instanceof ViewGroup)) {
+                return ACTION_NOOP;
+            }
+            final ViewGroup targetVg = (ViewGroup) target.mRoot;
+            if (nestedViews == null) {
+                // Clear all children when nested views omitted
+                target.mChildren = null;
+                return new RuntimeAction() {
+                    @Override
+                    public void apply(View root, ViewGroup rootParent, OnClickHandler handler)
+                            throws ActionException {
+                        targetVg.removeAllViews();
+                    }
+                };
+            } else {
+                // Inflate nested views and perform all the async tasks for the child remoteView.
+                final Context context = root.mRoot.getContext();
+                final AsyncApplyTask task = nestedViews.getAsyncApplyTask(
+                        context, targetVg, null, handler);
+                final ViewTree tree = task.doInBackground();
+                if (tree == null) {
+                    throw new ActionException(task.mError);
+                }
+
+                // Update the global view tree, so that next call to findViewTreeById
+                // goes through the subtree as well.
+                target.addChild(tree);
+
+                return new RuntimeAction() {
+
+                    @Override
+                    public void apply(View root, ViewGroup rootParent, OnClickHandler handler) throws ActionException {
+                        task.onPostExecute(tree);
+                        targetVg.addView(task.mResult);
+                    }
+                };
+            }
+!!!5400965.java!!!	updateMemoryUsageEstimate(inout counter : RemoteViews::MemoryUsageCounter) : void
+            if (nestedViews != null) {
+                counter.increment(nestedViews.estimateMemoryUsage());
+            }
+!!!5401093.java!!!	setBitmapCache(inout bitmapCache : RemoteViews::BitmapCache) : void
+            if (nestedViews != null) {
+                nestedViews.setBitmapCache(bitmapCache);
+            }
+!!!5401221.java!!!	getActionName() : String
+            return "ViewGroupAction" + (nestedViews == null ? "Remove" : "Add");
+!!!5401349.java!!!	mergeBehavior() : int
+            return MERGE_APPEND;
+!!!5401477.java!!!	prefersAsyncApply() : boolean
+            return nestedViews != null && nestedViews.prefersAsyncApply();

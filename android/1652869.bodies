@@ -1,0 +1,46 @@
+class PinnedActivityStack
+!!!11226117.java!!!	PinnedActivityStack(inout activityContainer : ActivityStackSupervisor::ActivityContainer, inout recentTasks : RecentTasks, inout onTop : boolean)
+        super(activityContainer, recentTasks, onTop);
+!!!11226245.java!!!	createStackWindowController(in displayId : int, inout onTop : boolean, inout outBounds : Rect) : PinnedStackWindowController
+        return new PinnedStackWindowController(mStackId, this, displayId, onTop, outBounds);
+!!!11226373.java!!!	getDefaultPictureInPictureBounds(in aspectRatio : float) : Rect
+        return getWindowContainerController().getPictureInPictureBounds(aspectRatio,
+                null /* currentStackBounds */);
+!!!11226501.java!!!	animateResizePinnedStack(inout sourceHintBounds : Rect, inout toBounds : Rect, in animationDuration : int, inout fromFullscreen : boolean) : void
+        if (skipResizeAnimation(toBounds == null /* toFullscreen */)) {
+            mService.moveTasksToFullscreenStack(mStackId, true /* onTop */);
+        } else {
+            getWindowContainerController().animateResizePinnedStack(toBounds, sourceHintBounds,
+                    animationDuration, fromFullscreen);
+        }
+!!!11226629.java!!!	skipResizeAnimation(inout toFullscreen : boolean) : boolean
+        if (!toFullscreen) {
+            return false;
+        }
+        final Configuration parentConfig = getParent().getConfiguration();
+        final ActivityRecord top = topRunningNonOverlayTaskActivity();
+        return top != null && !top.isConfigurationCompatible(parentConfig);
+!!!11226757.java!!!	setPictureInPictureAspectRatio(in aspectRatio : float) : void
+        getWindowContainerController().setPictureInPictureAspectRatio(aspectRatio);
+!!!11226885.java!!!	setPictureInPictureActions(inout actions : List<RemoteAction>) : void
+        getWindowContainerController().setPictureInPictureActions(actions);
+!!!11227013.java!!!	isAnimatingBoundsToFullscreen() : boolean
+        return getWindowContainerController().isAnimatingBoundsToFullscreen();
+!!!11227141.java!!!	deferScheduleMultiWindowModeChanged() : boolean
+        // For the pinned stack, the deferring of the multi-window mode changed is tied to the
+        // transition animation into picture-in-picture, and is called once the animation completes,
+        // or is interrupted in a way that would leave the stack in a non-fullscreen state.
+        // @see BoundsAnimationController
+        // @see BoundsAnimationControllerTests
+        return mWindowContainerController.deferScheduleMultiWindowModeChanged();
+!!!11227269.java!!!	updatePictureInPictureModeForPinnedStackAnimation(inout targetStackBounds : Rect) : void
+        // It is guaranteed that the activities requiring the update will be in the pinned stack at
+        // this point (either reparented before the animation into PiP, or before reparenting after
+        // the animation out of PiP)
+        synchronized(this) {
+            ArrayList<TaskRecord> tasks = getAllTasks();
+            for (int i = 0; i < tasks.size(); i++ ) {
+                mStackSupervisor.scheduleUpdatePictureInPictureModeIfNeeded(tasks.get(i),
+                        targetStackBounds, true /* immediate */);
+            }
+        }

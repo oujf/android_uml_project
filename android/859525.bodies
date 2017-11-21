@@ -1,0 +1,156 @@
+class NotificationSnooze
+!!!3763589.java!!!	NotificationSnooze(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!3763717.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        mCollapsedHeight = getResources().getDimensionPixelSize(R.dimen.snooze_snackbar_min_height);
+        findViewById(R.id.notification_snooze).setOnClickListener(this);
+        mSelectedOptionText = (TextView) findViewById(R.id.snooze_option_default);
+        mUndoButton = (TextView) findViewById(R.id.undo);
+        mUndoButton.setOnClickListener(this);
+        mExpandButton = (ImageView) findViewById(R.id.expand_button);
+        mDivider = findViewById(R.id.divider);
+        mDivider.setAlpha(0f);
+        mSnoozeOptionContainer = (ViewGroup) findViewById(R.id.snooze_options);
+        mSnoozeOptionContainer.setAlpha(0f);
+
+        // Create the different options based on list
+        mSnoozeOptions = getDefaultSnoozeOptions();
+        createOptionViews();
+
+        // Default to first option in list
+        setSelected(mDefaultOption);
+!!!3763845.java!!!	setSnoozeOptions(in snoozeList : List<SnoozeCriterion>) : void
+        if (snoozeList == null) {
+            return;
+        }
+        mSnoozeOptions.clear();
+        mSnoozeOptions = getDefaultSnoozeOptions();
+        final int count = Math.min(MAX_ASSISTANT_SUGGESTIONS, snoozeList.size());
+        for (int i = 0; i < count; i++) {
+            SnoozeCriterion sc = snoozeList.get(i);
+            mSnoozeOptions.add(new SnoozeOption(sc, 0, sc.getExplanation(), sc.getConfirmation()));
+        }
+        createOptionViews();
+!!!3763973.java!!!	isExpanded() : boolean
+        return mExpanded;
+!!!3764101.java!!!	setSnoozeListener(inout listener : NotificationSwipeActionHelper) : void
+        mSnoozeListener = listener;
+!!!3764229.java!!!	setStatusBarNotification(inout sbn : StatusBarNotification) : void
+        mSbn = sbn;
+!!!3764357.java!!!	getDefaultSnoozeOptions() : ArrayList<SnoozeOption>
+        ArrayList<SnoozeOption> options = new ArrayList<>();
+        options.add(createOption(R.string.snooze_option_15_min, 15));
+        options.add(createOption(R.string.snooze_option_30_min, 30));
+        mDefaultOption = createOption(R.string.snooze_option_1_hour, 60);
+        options.add(mDefaultOption);
+        options.add(createOption(R.string.snooze_option_2_hour, 60 * 2));
+        return options;
+!!!3764485.java!!!	createOption(in descriptionResId : int, in minutes : int) : SnoozeOption
+        Resources res = getResources();
+        final String description = res.getString(descriptionResId);
+        String resultText = String.format(res.getString(R.string.snoozed_for_time), description);
+        SpannableString string = new SpannableString(resultText);
+        string.setSpan(new StyleSpan(Typeface.BOLD),
+                resultText.length() - description.length(), resultText.length(), 0 /* flags */);
+        return new SnoozeOption(null, minutes, res.getString(descriptionResId), string);
+!!!3764613.java!!!	createOptionViews() : void
+        mSnoozeOptionContainer.removeAllViews();
+        LayoutInflater inflater = (LayoutInflater) getContext().getSystemService(
+                Context.LAYOUT_INFLATER_SERVICE);
+        for (int i = 0; i < mSnoozeOptions.size(); i++) {
+            SnoozeOption option = mSnoozeOptions.get(i);
+            TextView tv = (TextView) inflater.inflate(R.layout.notification_snooze_option,
+                    mSnoozeOptionContainer, false);
+            mSnoozeOptionContainer.addView(tv);
+            tv.setText(option.description);
+            tv.setTag(option);
+            tv.setOnClickListener(this);
+        }
+!!!3764741.java!!!	hideSelectedOption() : void
+        final int childCount = mSnoozeOptionContainer.getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            final View child = mSnoozeOptionContainer.getChildAt(i);
+            child.setVisibility(child.getTag() == mSelectedOption ? View.GONE : View.VISIBLE);
+        }
+!!!3764869.java!!!	showSnoozeOptions(inout show : boolean) : void
+        int drawableId = show ? com.android.internal.R.drawable.ic_collapse_notification
+                : com.android.internal.R.drawable.ic_expand_notification;
+        mExpandButton.setImageResource(drawableId);
+        if (mExpanded != show) {
+            mExpanded = show;
+            animateSnoozeOptions(show);
+            if (mGutsContainer != null) {
+                mGutsContainer.onHeightChanged();
+            }
+        }
+!!!3764997.java!!!	animateSnoozeOptions(inout show : boolean) : void
+        if (mExpandAnimation != null) {
+            mExpandAnimation.cancel();
+        }
+        ObjectAnimator dividerAnim = ObjectAnimator.ofFloat(mDivider, View.ALPHA,
+                mDivider.getAlpha(), show ? 1f : 0f);
+        ObjectAnimator optionAnim = ObjectAnimator.ofFloat(mSnoozeOptionContainer, View.ALPHA,
+                mSnoozeOptionContainer.getAlpha(), show ? 1f : 0f);
+        mExpandAnimation = new AnimatorSet();
+        mExpandAnimation.playTogether(dividerAnim, optionAnim);
+        mExpandAnimation.setDuration(150);
+        mExpandAnimation.setInterpolator(show ? Interpolators.ALPHA_IN : Interpolators.ALPHA_OUT);
+        mExpandAnimation.start();
+!!!3765125.java!!!	setSelected(inout option : SnoozeOption) : void
+        mSelectedOption = option;
+        mSelectedOptionText.setText(option.confirmation);
+        showSnoozeOptions(false);
+        hideSelectedOption();
+!!!3765253.java!!!	onClick(inout v : View) : void
+        if (mGutsContainer != null) {
+            mGutsContainer.resetFalsingCheck();
+        }
+        final int id = v.getId();
+        final SnoozeOption tag = (SnoozeOption) v.getTag();
+        if (tag != null) {
+            setSelected(tag);
+        } else if (id == R.id.notification_snooze) {
+            // Toggle snooze options
+            showSnoozeOptions(!mExpanded);
+        } else {
+            // Undo snooze was selected
+            mSelectedOption = null;
+            int[] parentLoc = new int[2];
+            int[] targetLoc = new int[2];
+            mGutsContainer.getLocationOnScreen(parentLoc);
+            v.getLocationOnScreen(targetLoc);
+            final int centerX = v.getWidth() / 2;
+            final int centerY = v.getHeight() / 2;
+            final int x = targetLoc[0] - parentLoc[0] + centerX;
+            final int y = targetLoc[1] - parentLoc[1] + centerY;
+            showSnoozeOptions(false);
+            mGutsContainer.closeControls(x, y, false /* save */, false /* force */);
+        }
+!!!3765381.java!!!	getActualHeight() : int
+        return mExpanded ? getHeight() : mCollapsedHeight;
+!!!3765509.java!!!	willBeRemoved() : boolean
+        return mSnoozing;
+!!!3765637.java!!!	getContentView() : View
+        // Reset the view before use
+        setSelected(mDefaultOption);
+        return this;
+!!!3765765.java!!!	setGutsParent(inout guts : NotificationGuts) : void
+        mGutsContainer = guts;
+!!!3765893.java!!!	handleCloseControls(inout save : boolean, inout force : boolean) : boolean
+        if (mExpanded && !force) {
+            // Collapse expanded state on outside touch
+            showSnoozeOptions(false);
+            return true;
+        } else if (mSnoozeListener != null && mSelectedOption != null) {
+            // Snooze option selected so commit it
+            mSnoozing = true;
+            mSnoozeListener.snooze(mSbn, mSelectedOption);
+            return true;
+        } else {
+            // The view should actually be closed
+            setSelected(mSnoozeOptions.get(0));
+            return false; // Return false here so that guts handles closing the view
+        }
+!!!3766021.java!!!	isLeavebehind() : boolean
+        return true;

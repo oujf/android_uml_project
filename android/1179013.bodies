@@ -1,0 +1,102 @@
+class HardwareBuffer
+!!!6603397.java!!!	create(in width : int, in height : int, in format : int, in layers : int, in usage : long) : HardwareBuffer
+        if (!HardwareBuffer.isSupportedFormat(format)) {
+            throw new IllegalArgumentException("Invalid pixel format " + format);
+        }
+        if (width <= 0) {
+            throw new IllegalArgumentException("Invalid width " + width);
+        }
+        if (height <= 0) {
+            throw new IllegalArgumentException("Invalid height " + height);
+        }
+        if (layers <= 0) {
+            throw new IllegalArgumentException("Invalid layer count " + layers);
+        }
+        if (format == BLOB && height != 1) {
+            throw new IllegalArgumentException("Height must be 1 when using the BLOB format");
+        }
+        long nativeObject = nCreateHardwareBuffer(width, height, format, layers, usage);
+        if (nativeObject == 0) {
+            throw new IllegalArgumentException("Unable to create a HardwareBuffer, either the " +
+                    "dimensions passed were too large, too many image layers were requested, " +
+                    "or an invalid set of usage flags was passed");
+        }
+        return new HardwareBuffer(nativeObject);
+!!!6603525.java!!!	HardwareBuffer(in nativeObject : long)
+        mNativeObject = nativeObject;
+
+        ClassLoader loader = HardwareBuffer.class.getClassLoader();
+        NativeAllocationRegistry registry = new NativeAllocationRegistry(
+                loader, nGetNativeFinalizer(), NATIVE_HARDWARE_BUFFER_SIZE);
+        mCleaner = registry.registerNativeAllocation(this, mNativeObject);
+        mCloseGuard.open("close");
+!!!6603653.java!!!	finalize() : void
+        try {
+            mCloseGuard.warnIfOpen();
+            close();
+        } finally {
+            super.finalize();
+        }
+!!!6603781.java!!!	getWidth() : int
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and its width "
+                    + "cannot be obtained.");
+        }
+        return nGetWidth(mNativeObject);
+!!!6603909.java!!!	getHeight() : int
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and its height "
+                    + "cannot be obtained.");
+        }
+        return nGetHeight(mNativeObject);
+!!!6604037.java!!!	getFormat() : int
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and its format "
+                    + "cannot be obtained.");
+        }
+        return nGetFormat(mNativeObject);
+!!!6604165.java!!!	getLayers() : int
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and its layer "
+                    + "count cannot be obtained.");
+        }
+        return nGetLayers(mNativeObject);
+!!!6604293.java!!!	getUsage() : long
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and its usage "
+                    + "cannot be obtained.");
+        }
+        return nGetUsage(mNativeObject);
+!!!6604421.java!!!	destroy() : void
+        close();
+!!!6604549.java!!!	isDestroyed() : boolean
+        return isClosed();
+!!!6604677.java!!!	close() : void
+        if (!isClosed()) {
+            mCloseGuard.close();
+            mNativeObject = 0;
+            mCleaner.run();
+            mCleaner = null;
+        }
+!!!6604805.java!!!	isClosed() : boolean
+        return mNativeObject == 0;
+!!!6604933.java!!!	describeContents() : int
+        return Parcelable.CONTENTS_FILE_DESCRIPTOR;
+!!!6605061.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        if (isClosed()) {
+            throw new IllegalStateException("This HardwareBuffer has been closed and cannot be "
+                    + "written to a parcel.");
+        }
+        nWriteHardwareBufferToParcel(mNativeObject, dest);
+!!!6605189.java!!!	isSupportedFormat(in format : int) : boolean
+        switch(format) {
+            case RGBA_8888:
+            case RGBA_FP16:
+            case RGBA_1010102:
+            case RGBX_8888:
+            case RGB_565:
+            case RGB_888:
+            case BLOB:
+                return true;
+        }
+        return false;

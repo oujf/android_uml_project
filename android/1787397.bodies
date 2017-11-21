@@ -1,0 +1,296 @@
+class DimLayerController
+!!!12676613.java!!!	DimLayerController(inout displayContent : DisplayContent)
+        mDisplayContent = displayContent;
+!!!12676741.java!!!	updateDimLayer(inout dimLayerUser : DimLayer::DimLayerUser) : void
+        final DimLayerState state = getOrCreateDimLayerState(dimLayerUser);
+        final boolean previousFullscreen = state.dimLayer != null
+                && state.dimLayer == mSharedFullScreenDimLayer;
+        DimLayer newDimLayer;
+        final int displayId = mDisplayContent.getDisplayId();
+        if (dimLayerUser.dimFullscreen()) {
+            if (previousFullscreen && mSharedFullScreenDimLayer != null) {
+                // Update the bounds for fullscreen in case of rotation.
+                mSharedFullScreenDimLayer.setBoundsForFullscreen();
+                return;
+            }
+            // Use shared fullscreen dim layer
+            newDimLayer = mSharedFullScreenDimLayer;
+            if (newDimLayer == null) {
+                if (state.dimLayer != null) {
+                    // Re-purpose the previous dim layer.
+                    newDimLayer = state.dimLayer;
+                } else {
+                    // Create new full screen dim layer.
+                    newDimLayer = new DimLayer(mDisplayContent.mService, dimLayerUser, displayId,
+                            getDimLayerTag(dimLayerUser));
+                }
+                dimLayerUser.getDimBounds(mTmpBounds);
+                newDimLayer.setBounds(mTmpBounds);
+                mSharedFullScreenDimLayer = newDimLayer;
+            } else if (state.dimLayer != null) {
+                state.dimLayer.destroySurface();
+            }
+        } else {
+            newDimLayer = (state.dimLayer == null || previousFullscreen)
+                    ? new DimLayer(mDisplayContent.mService, dimLayerUser, displayId,
+                            getDimLayerTag(dimLayerUser))
+                    : state.dimLayer;
+            dimLayerUser.getDimBounds(mTmpBounds);
+            newDimLayer.setBounds(mTmpBounds);
+        }
+        state.dimLayer = newDimLayer;
+!!!12676869.java!!!	getDimLayerTag(inout dimLayerUser : DimLayer::DimLayerUser) : String
+        return TAG_LOCAL + "/" + dimLayerUser.toShortString();
+!!!12676997.java!!!	getOrCreateDimLayerState(inout dimLayerUser : DimLayer::DimLayerUser) : DimLayerController::DimLayerState
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "getOrCreateDimLayerState, dimLayerUser="
+                + dimLayerUser.toShortString());
+        DimLayerState state = mState.get(dimLayerUser);
+        if (state == null) {
+            state = new DimLayerState();
+            mState.put(dimLayerUser, state);
+        }
+        return state;
+!!!12677125.java!!!	setContinueDimming(inout dimLayerUser : DimLayer::DimLayerUser) : void
+        DimLayerState state = mState.get(dimLayerUser);
+        if (state == null) {
+            if (DEBUG_DIM_LAYER) Slog.w(TAG, "setContinueDimming, no state for: "
+                    + dimLayerUser.toShortString());
+            return;
+        }
+        state.continueDimming = true;
+!!!12677253.java!!!	isDimming() : boolean
+        for (int i = mState.size() - 1; i >= 0; i--) {
+            DimLayerState state = mState.valueAt(i);
+            if (state.dimLayer != null && state.dimLayer.isDimming()) {
+                return true;
+            }
+        }
+        return false;
+!!!12677381.java!!!	resetDimming() : void
+        for (int i = mState.size() - 1; i >= 0; i--) {
+            mState.valueAt(i).continueDimming = false;
+        }
+!!!12677509.java!!!	getContinueDimming(inout dimLayerUser : DimLayer::DimLayerUser) : boolean
+        DimLayerState state = mState.get(dimLayerUser);
+        return state != null && state.continueDimming;
+!!!12677637.java!!!	startDimmingIfNeeded(inout dimLayerUser : DimLayer::DimLayerUser, inout newWinAnimator : WindowStateAnimator, inout aboveApp : boolean) : void
+        // Only set dim params on the highest dimmed layer.
+        // Don't turn on for an unshown surface, or for any layer but the highest dimmed layer.
+        DimLayerState state = getOrCreateDimLayerState(dimLayerUser);
+        state.dimAbove = aboveApp;
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "startDimmingIfNeeded,"
+                + " dimLayerUser=" + dimLayerUser.toShortString()
+                + " newWinAnimator=" + newWinAnimator
+                + " state.animator=" + state.animator);
+        if (newWinAnimator.getShown() && (state.animator == null
+                || !state.animator.getShown()
+                || state.animator.mAnimLayer <= newWinAnimator.mAnimLayer)) {
+            state.animator = newWinAnimator;
+            if (state.animator.mWin.mAppToken == null && !dimLayerUser.dimFullscreen()) {
+                // Dim should cover the entire screen for system windows.
+                mDisplayContent.getLogicalDisplayRect(mTmpBounds);
+            } else {
+                dimLayerUser.getDimBounds(mTmpBounds);
+            }
+            state.dimLayer.setBounds(mTmpBounds);
+        }
+!!!12677765.java!!!	stopDimmingIfNeeded() : void
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "stopDimmingIfNeeded, mState.size()=" + mState.size());
+        for (int i = mState.size() - 1; i >= 0; i--) {
+            DimLayer.DimLayerUser dimLayerUser = mState.keyAt(i);
+            stopDimmingIfNeeded(dimLayerUser);
+        }
+!!!12677893.java!!!	stopDimmingIfNeeded(inout dimLayerUser : DimLayer::DimLayerUser) : void
+        // No need to check if state is null, we know the key has a value.
+        DimLayerState state = mState.get(dimLayerUser);
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "stopDimmingIfNeeded,"
+                + " dimLayerUser=" + dimLayerUser.toShortString()
+                + " state.continueDimming=" + state.continueDimming
+                + " state.dimLayer.isDimming=" + state.dimLayer.isDimming());
+        if (state.animator != null && state.animator.mWin.mWillReplaceWindow) {
+            return;
+        }
+
+        if (!state.continueDimming && state.dimLayer.isDimming()) {
+            state.animator = null;
+            dimLayerUser.getDimBounds(mTmpBounds);
+            state.dimLayer.setBounds(mTmpBounds);
+        }
+!!!12678021.java!!!	animateDimLayers() : boolean
+        int fullScreen = -1;
+        int fullScreenAndDimming = -1;
+        int topFullScreenUserLayer = 0;
+        boolean result = false;
+
+        for (int i = mState.size() - 1; i >= 0; i--) {
+            final DimLayer.DimLayerUser user = mState.keyAt(i);
+            final DimLayerState state = mState.valueAt(i);
+
+            if (!user.isAttachedToDisplay()) {
+                // Leaked dim user that is no longer attached to the display. Go ahead and clean it
+                // clean-up and log what happened.
+                // TODO: This is a work around for b/34395537 as the dim user should have cleaned-up
+                // it self when it was detached from the display. Need to investigate how the dim
+                // user is leaking...
+                //Slog.wtfStack(TAG_WM, "Leaked dim user=" + user.toShortString()
+                //        + " state=" + state);
+                Slog.w(TAG_WM, "Leaked dim user=" + user.toShortString() + " state=" + state);
+                removeDimLayerUser(user);
+                continue;
+            }
+
+            // We have to check that we are actually the shared fullscreen layer
+            // for this path. If we began as non fullscreen and became fullscreen
+            // (e.g. Docked stack closing), then we may not be the shared layer
+            // and we have to make sure we always animate the layer.
+            if (user.dimFullscreen() && state.dimLayer == mSharedFullScreenDimLayer) {
+                fullScreen = i;
+                if (!state.continueDimming) {
+                    continue;
+                }
+
+                // When choosing which user to assign the shared fullscreen layer to
+                // we need to look at Z-order.
+                if (topFullScreenUserLayer == 0 ||
+                        (state.animator != null && state.animator.mAnimLayer > topFullScreenUserLayer)) {
+                    fullScreenAndDimming = i;
+                    if (state.animator != null) {
+                        topFullScreenUserLayer = state.animator.mAnimLayer;
+                    }
+                }
+            } else {
+                // We always want to animate the non fullscreen windows, they don't share their
+                // dim layers.
+                result |= animateDimLayers(user);
+            }
+        }
+        // For the shared, full screen dim layer, we prefer the animation that is causing it to
+        // appear.
+        if (fullScreenAndDimming != -1) {
+            result |= animateDimLayers(mState.keyAt(fullScreenAndDimming));
+        } else if (fullScreen != -1) {
+            // If there is no animation for the full screen dim layer to appear, we can use any of
+            // the animators that will cause it to disappear.
+            result |= animateDimLayers(mState.keyAt(fullScreen));
+        }
+        return result;
+!!!12678149.java!!!	animateDimLayers(inout dimLayerUser : DimLayer::DimLayerUser) : boolean
+        DimLayerState state = mState.get(dimLayerUser);
+        if (DEBUG_DIM_LAYER) Slog.v(TAG, "animateDimLayers,"
+                + " dimLayerUser=" + dimLayerUser.toShortString()
+                + " state.animator=" + state.animator
+                + " state.continueDimming=" + state.continueDimming);
+        final int dimLayer;
+        final float dimAmount;
+        if (state.animator == null) {
+            dimLayer = state.dimLayer.getLayer();
+            dimAmount = 0;
+        } else {
+            if (state.dimAbove) {
+                dimLayer = state.animator.mAnimLayer + LAYER_OFFSET_DIM;
+                dimAmount = DEFAULT_DIM_AMOUNT_DEAD_WINDOW;
+            } else {
+                dimLayer = state.animator.mAnimLayer - LAYER_OFFSET_DIM;
+                dimAmount = state.animator.mWin.mAttrs.dimAmount;
+            }
+        }
+        final float targetAlpha = state.dimLayer.getTargetAlpha();
+        if (targetAlpha != dimAmount) {
+            if (state.animator == null) {
+                state.dimLayer.hide(DEFAULT_DIM_DURATION);
+            } else {
+                long duration = (state.animator.mAnimating && state.animator.mAnimation != null)
+                        ? state.animator.mAnimation.computeDurationHint()
+                        : DEFAULT_DIM_DURATION;
+                if (targetAlpha > dimAmount) {
+                    duration = getDimLayerFadeDuration(duration);
+                }
+                state.dimLayer.show(dimLayer, dimAmount, duration);
+
+                // If we showed a dim layer, make sure to redo the layout because some things depend
+                // on whether a dim layer is showing or not.
+                if (targetAlpha == 0) {
+                    mDisplayContent.pendingLayoutChanges |= FINISH_LAYOUT_REDO_LAYOUT;
+                    mDisplayContent.setLayoutNeeded();
+                }
+            }
+        } else if (state.dimLayer.getLayer() != dimLayer) {
+            state.dimLayer.setLayer(dimLayer);
+        }
+        if (state.dimLayer.isAnimating()) {
+            if (!mDisplayContent.mService.okToDisplay()) {
+                // Jump to the end of the animation.
+                state.dimLayer.show();
+            } else {
+                return state.dimLayer.stepAnimation();
+            }
+        }
+        return false;
+!!!12678277.java!!!	isDimming(inout dimLayerUser : DimLayer::DimLayerUser, inout winAnimator : WindowStateAnimator) : boolean
+        DimLayerState state = mState.get(dimLayerUser);
+        return state != null && state.animator == winAnimator && state.dimLayer.isDimming();
+!!!12678405.java!!!	getDimLayerFadeDuration(in duration : long) : long
+        TypedValue tv = new TypedValue();
+        mDisplayContent.mService.mContext.getResources().getValue(
+                com.android.internal.R.fraction.config_dimBehindFadeDuration, tv, true);
+        if (tv.type == TypedValue.TYPE_FRACTION) {
+            duration = (long) tv.getFraction(duration, duration);
+        } else if (tv.type >= TypedValue.TYPE_FIRST_INT && tv.type <= TypedValue.TYPE_LAST_INT) {
+            duration = tv.data;
+        }
+        return duration;
+!!!12678533.java!!!	close() : void
+        for (int i = mState.size() - 1; i >= 0; i--) {
+            DimLayerState state = mState.valueAt(i);
+            state.dimLayer.destroySurface();
+        }
+        mState.clear();
+        mSharedFullScreenDimLayer = null;
+!!!12678661.java!!!	removeDimLayerUser(inout dimLayerUser : DimLayer::DimLayerUser) : void
+        DimLayerState state = mState.get(dimLayerUser);
+        if (state != null) {
+            // Destroy the surface, unless it's the shared fullscreen dim.
+            if (state.dimLayer != mSharedFullScreenDimLayer) {
+                state.dimLayer.destroySurface();
+            }
+            mState.remove(dimLayerUser);
+        }
+        if (mState.isEmpty()) {
+            mSharedFullScreenDimLayer = null;
+        }
+!!!12678789.java!!!	hasDimLayerUser(inout dimLayerUser : DimLayer::DimLayerUser) : boolean
+        return mState.containsKey(dimLayerUser);
+!!!12678917.java!!!	hasSharedFullScreenDimLayer() : boolean
+        return mSharedFullScreenDimLayer != null;
+!!!12679045.java!!!	applyDimBehind(inout dimLayerUser : DimLayer::DimLayerUser, inout animator : WindowStateAnimator) : void
+        applyDim(dimLayerUser, animator, false /* aboveApp */);
+!!!12679173.java!!!	applyDimAbove(inout dimLayerUser : DimLayer::DimLayerUser, inout animator : WindowStateAnimator) : void
+        applyDim(dimLayerUser, animator, true /* aboveApp */);
+!!!12679301.java!!!	applyDim(inout dimLayerUser : DimLayer::DimLayerUser, inout animator : WindowStateAnimator, inout aboveApp : boolean) : void
+        if (dimLayerUser == null) {
+            Slog.e(TAG, "Trying to apply dim layer for: " + this
+                    + ", but no dim layer user found.");
+            return;
+        }
+        if (!getContinueDimming(dimLayerUser)) {
+            setContinueDimming(dimLayerUser);
+            if (!isDimming(dimLayerUser, animator)) {
+                if (DEBUG_DIM_LAYER) Slog.v(TAG, "Win " + this + " start dimming.");
+                startDimmingIfNeeded(dimLayerUser, animator, aboveApp);
+            }
+        }
+!!!12679429.java!!!	dump(in prefix : String, inout pw : PrintWriter) : void
+        pw.println(prefix + "DimLayerController");
+        final String doubleSpace = "  ";
+        final String prefixPlusDoubleSpace = prefix + doubleSpace;
+
+        for (int i = 0, n = mState.size(); i < n; i++) {
+            pw.println(prefixPlusDoubleSpace + mState.keyAt(i).toShortString());
+            DimLayerState state = mState.valueAt(i);
+            pw.println(prefixPlusDoubleSpace + doubleSpace + "dimLayer="
+                    + (state.dimLayer == mSharedFullScreenDimLayer ? "shared" : state.dimLayer)
+                    + ", animator=" + state.animator + ", continueDimming=" + state.continueDimming);
+            if (state.dimLayer != null) {
+                state.dimLayer.printTo(prefixPlusDoubleSpace + doubleSpace, pw);
+            }
+        }

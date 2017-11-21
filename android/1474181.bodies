@@ -1,0 +1,92 @@
+class CursorAnchorInfoNotifier
+!!!9430277.java!!!	updatePosition(in parentPositionX : int, in parentPositionY : int, inout parentPositionChanged : boolean, inout parentScrolled : boolean) : void
+            final InputMethodState ims = mInputMethodState;
+            if (ims == null || ims.mBatchEditNesting > 0) {
+                return;
+            }
+            final InputMethodManager imm = InputMethodManager.peekInstance();
+            if (null == imm) {
+                return;
+            }
+            if (!imm.isActive(mTextView)) {
+                return;
+            }
+            // Skip if the IME has not requested the cursor/anchor position.
+            if (!imm.isCursorAnchorInfoEnabled()) {
+                return;
+            }
+            Layout layout = mTextView.getLayout();
+            if (layout == null) {
+                return;
+            }
+
+            final CursorAnchorInfo.Builder builder = mSelectionInfoBuilder;
+            builder.reset();
+
+            final int selectionStart = mTextView.getSelectionStart();
+            builder.setSelectionRange(selectionStart, mTextView.getSelectionEnd());
+
+            // Construct transformation matrix from view local coordinates to screen coordinates.
+            mViewToScreenMatrix.set(mTextView.getMatrix());
+            mTextView.getLocationOnScreen(mTmpIntOffset);
+            mViewToScreenMatrix.postTranslate(mTmpIntOffset[0], mTmpIntOffset[1]);
+            builder.setMatrix(mViewToScreenMatrix);
+
+            final float viewportToContentHorizontalOffset =
+                    mTextView.viewportToContentHorizontalOffset();
+            final float viewportToContentVerticalOffset =
+                    mTextView.viewportToContentVerticalOffset();
+
+            final CharSequence text = mTextView.getText();
+            if (text instanceof Spannable) {
+                final Spannable sp = (Spannable) text;
+                int composingTextStart = EditableInputConnection.getComposingSpanStart(sp);
+                int composingTextEnd = EditableInputConnection.getComposingSpanEnd(sp);
+                if (composingTextEnd < composingTextStart) {
+                    final int temp = composingTextEnd;
+                    composingTextEnd = composingTextStart;
+                    composingTextStart = temp;
+                }
+                final boolean hasComposingText =
+                        (0 <= composingTextStart) && (composingTextStart < composingTextEnd);
+                if (hasComposingText) {
+                    final CharSequence composingText = text.subSequence(composingTextStart,
+                            composingTextEnd);
+                    builder.setComposingText(composingTextStart, composingText);
+                    mTextView.populateCharacterBounds(builder, composingTextStart,
+                            composingTextEnd, viewportToContentHorizontalOffset,
+                            viewportToContentVerticalOffset);
+                }
+            }
+
+            // Treat selectionStart as the insertion point.
+            if (0 <= selectionStart) {
+                final int offset = selectionStart;
+                final int line = layout.getLineForOffset(offset);
+                final float insertionMarkerX = layout.getPrimaryHorizontal(offset)
+                        + viewportToContentHorizontalOffset;
+                final float insertionMarkerTop = layout.getLineTop(line)
+                        + viewportToContentVerticalOffset;
+                final float insertionMarkerBaseline = layout.getLineBaseline(line)
+                        + viewportToContentVerticalOffset;
+                final float insertionMarkerBottom = layout.getLineBottom(line)
+                        + viewportToContentVerticalOffset;
+                final boolean isTopVisible = mTextView
+                        .isPositionVisible(insertionMarkerX, insertionMarkerTop);
+                final boolean isBottomVisible = mTextView
+                        .isPositionVisible(insertionMarkerX, insertionMarkerBottom);
+                int insertionMarkerFlags = 0;
+                if (isTopVisible || isBottomVisible) {
+                    insertionMarkerFlags |= CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION;
+                }
+                if (!isTopVisible || !isBottomVisible) {
+                    insertionMarkerFlags |= CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION;
+                }
+                if (layout.isRtlCharAt(offset)) {
+                    insertionMarkerFlags |= CursorAnchorInfo.FLAG_IS_RTL;
+                }
+                builder.setInsertionMarkerLocation(insertionMarkerX, insertionMarkerTop,
+                        insertionMarkerBaseline, insertionMarkerBottom, insertionMarkerFlags);
+            }
+
+            imm.updateCursorAnchorInfo(mTextView, builder.build());

@@ -1,0 +1,285 @@
+class SwipeDismissLayout
+!!!10487429.java!!!	SwipeDismissLayout(inout context : Context)
+        super(context);
+        init(context);
+!!!10487557.java!!!	SwipeDismissLayout(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        init(context);
+!!!10487685.java!!!	SwipeDismissLayout(inout context : Context, inout attrs : AttributeSet, in defStyle : int)
+        super(context, attrs, defStyle);
+        init(context);
+!!!10487813.java!!!	init(inout context : Context) : void
+        ViewConfiguration vc = ViewConfiguration.get(context);
+        mSlop = vc.getScaledTouchSlop();
+        mMinFlingVelocity = vc.getScaledMinimumFlingVelocity();
+        TypedArray a = context.getTheme().obtainStyledAttributes(
+                com.android.internal.R.styleable.Theme);
+        mIsWindowNativelyTranslucent = a.getBoolean(
+                com.android.internal.R.styleable.Window_windowIsTranslucent, false);
+        a.recycle();
+!!!10487941.java!!!	setOnDismissedListener(inout listener : SwipeDismissLayout::OnDismissedListener) : void
+        mDismissedListener = listener;
+!!!10488069.java!!!	setOnSwipeProgressChangedListener(inout listener : SwipeDismissLayout::OnSwipeProgressChangedListener) : void
+        mProgressListener = listener;
+!!!10488197.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        try {
+            mScreenOffReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    post(() -> {
+                        if (mDismissed) {
+                            dismiss();
+                        } else {
+                            cancel();
+                        }
+                        resetMembers();
+                    });
+                }
+            };
+            getContext().registerReceiver(mScreenOffReceiver, mScreenOffFilter);
+        } catch (ReceiverCallNotAllowedException e) {
+            /* Exception is thrown if the context is a ReceiverRestrictedContext object. As
+             * ReceiverRestrictedContext is not public, the context type cannot be checked before
+             * calling registerReceiver. The most likely scenario in which the exception would be
+             * thrown would be when a BroadcastReceiver creates a dialog to show the user. */
+            mScreenOffReceiver = null; // clear receiver since it was not used.
+        }
+!!!10488325.java!!!	onDetachedFromWindow() : void
+        if (mScreenOffReceiver != null) {
+            getContext().unregisterReceiver(mScreenOffReceiver);
+            mScreenOffReceiver = null;
+        }
+        super.onDetachedFromWindow();
+!!!10488453.java!!!	onInterceptTouchEvent(inout ev : MotionEvent) : boolean
+        checkGesture((ev));
+        if (mBlockGesture) {
+            return true;
+        }
+        if (!mDismissable) {
+            return super.onInterceptTouchEvent(ev);
+        }
+
+        // Offset because the view is translated during swipe, match X with raw X. Active touch
+        // coordinates are mostly used by the velocity tracker, so offset it to match the raw
+        // coordinates which is what is primarily used elsewhere.
+        ev.offsetLocation(ev.getRawX() - ev.getX(), 0);
+
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                resetMembers();
+                mDownX = ev.getRawX();
+                mDownY = ev.getRawY();
+                mActiveTouchId = ev.getPointerId(0);
+                mVelocityTracker = VelocityTracker.obtain("int1");
+                mVelocityTracker.addMovement(ev);
+                break;
+
+            case MotionEvent.ACTION_POINTER_DOWN:
+                int actionIndex = ev.getActionIndex();
+                mActiveTouchId = ev.getPointerId(actionIndex);
+                break;
+            case MotionEvent.ACTION_POINTER_UP:
+                actionIndex = ev.getActionIndex();
+                int pointerId = ev.getPointerId(actionIndex);
+                if (pointerId == mActiveTouchId) {
+                    // This was our active pointer going up. Choose a new active pointer.
+                    int newActionIndex = actionIndex == 0 ? 1 : 0;
+                    mActiveTouchId = ev.getPointerId(newActionIndex);
+                }
+                break;
+
+            case MotionEvent.ACTION_CANCEL:
+            case MotionEvent.ACTION_UP:
+                resetMembers();
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                if (mVelocityTracker == null || mDiscardIntercept) {
+                    break;
+                }
+
+                int pointerIndex = ev.findPointerIndex(mActiveTouchId);
+                if (pointerIndex == -1) {
+                    Log.e(TAG, "Invalid pointer index: ignoring.");
+                    mDiscardIntercept = true;
+                    break;
+                }
+                float dx = ev.getRawX() - mDownX;
+                float x = ev.getX(pointerIndex);
+                float y = ev.getY(pointerIndex);
+                if (dx != 0 && canScroll(this, false, dx, x, y)) {
+                    mDiscardIntercept = true;
+                    break;
+                }
+                updateSwiping(ev);
+                break;
+        }
+
+        return !mDiscardIntercept && mSwiping;
+!!!10488581.java!!!	onTouchEvent(inout ev : MotionEvent) : boolean
+        checkGesture((ev));
+        if (mBlockGesture) {
+            return true;
+        }
+        if (mVelocityTracker == null || !mDismissable) {
+            return super.onTouchEvent(ev);
+        }
+
+        // Offset because the view is translated during swipe, match X with raw X. Active touch
+        // coordinates are mostly used by the velocity tracker, so offset it to match the raw
+        // coordinates which is what is primarily used elsewhere.
+        ev.offsetLocation(ev.getRawX() - ev.getX(), 0);
+
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_UP:
+                updateDismiss(ev);
+                if (mDismissed) {
+                    mDismissAnimator.animateDismissal(ev.getRawX() - mDownX);
+                } else if (mSwiping
+                        // Only trigger animation if we had a MOVE event that would shift the
+                        // underlying view, otherwise the animation would be janky.
+                        && mLastX != Integer.MIN_VALUE) {
+                    mDismissAnimator.animateRecovery(ev.getRawX() - mDownX);
+                }
+                resetMembers();
+                break;
+
+            case MotionEvent.ACTION_CANCEL:
+                cancel();
+                resetMembers();
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                mVelocityTracker.addMovement(ev);
+                mLastX = ev.getRawX();
+                updateSwiping(ev);
+                if (mSwiping) {
+                    setProgress(ev.getRawX() - mDownX);
+                    break;
+                }
+        }
+        return true;
+!!!10488709.java!!!	setProgress(in deltaX : float) : void
+        if (mProgressListener != null && deltaX >= 0)  {
+            mProgressListener.onSwipeProgressChanged(
+                    this, progressToAlpha(deltaX / getWidth()), deltaX);
+        }
+!!!10488837.java!!!	dismiss() : void
+        if (mDismissedListener != null) {
+            mDismissedListener.onDismissed(this);
+        }
+!!!10488965.java!!!	cancel() : void
+        if (!mIsWindowNativelyTranslucent) {
+            Activity activity = findActivity();
+            if (activity != null && mActivityTranslucencyConverted) {
+                activity.convertFromTranslucent();
+                mActivityTranslucencyConverted = false;
+            }
+        }
+        if (mProgressListener != null) {
+            mProgressListener.onSwipeCancelled(this);
+        }
+!!!10489093.java!!!	resetMembers() : void
+        if (mVelocityTracker != null) {
+            mVelocityTracker.recycle();
+        }
+        mVelocityTracker = null;
+        mDownX = 0;
+        mLastX = Integer.MIN_VALUE;
+        mDownY = 0;
+        mSwiping = false;
+        mDismissed = false;
+        mDiscardIntercept = false;
+!!!10489221.java!!!	updateSwiping(inout ev : MotionEvent) : void
+        boolean oldSwiping = mSwiping;
+        if (!mSwiping) {
+            float deltaX = ev.getRawX() - mDownX;
+            float deltaY = ev.getRawY() - mDownY;
+            if ((deltaX * deltaX) + (deltaY * deltaY) > mSlop * mSlop) {
+                mSwiping = deltaX > mSlop * 2 && Math.abs(deltaY) < Math.abs(deltaX);
+            } else {
+                mSwiping = false;
+            }
+        }
+
+        if (mSwiping && !oldSwiping) {
+            // Swiping has started
+            if (!mIsWindowNativelyTranslucent) {
+                Activity activity = findActivity();
+                if (activity != null) {
+                    mActivityTranslucencyConverted = activity.convertToTranslucent(null, null);
+                }
+            }
+        }
+!!!10489349.java!!!	updateDismiss(inout ev : MotionEvent) : void
+        float deltaX = ev.getRawX() - mDownX;
+        // Don't add the motion event as an UP event would clear the velocity tracker
+        mVelocityTracker.computeCurrentVelocity(1000);
+        float xVelocity = mVelocityTracker.getXVelocity();
+        if (mLastX == Integer.MIN_VALUE) {
+            // If there's no changes to mLastX, we have only one point of data, and therefore no
+            // velocity. Estimate velocity from just the up and down event in that case.
+            xVelocity = deltaX / ((ev.getEventTime() - ev.getDownTime()) / 1000);
+        }
+        if (!mDismissed) {
+            // Adjust the distance threshold linearly between the min and max threshold based on the
+            // x-velocity scaled with the the fling threshold speed
+            float distanceThreshold = getWidth() * Math.max(
+                    Math.min((MIN_DIST_THRESHOLD - MAX_DIST_THRESHOLD)
+                            * xVelocity / mMinFlingVelocity // scale x-velocity with fling velocity
+                            + MAX_DIST_THRESHOLD, // offset to start at max threshold
+                            MAX_DIST_THRESHOLD), // cap at max threshold
+                    MIN_DIST_THRESHOLD); // bottom out at min threshold
+            if ((deltaX > distanceThreshold && ev.getRawX() >= mLastX)
+                    || xVelocity >= mMinFlingVelocity) {
+                mDismissed = true;
+            }
+        }
+        // Check if the user tried to undo this.
+        if (mDismissed && mSwiping) {
+            // Check if the user's finger is actually flinging back to left
+            if (xVelocity < -mMinFlingVelocity) {
+                mDismissed = false;
+            }
+        }
+!!!10489477.java!!!	canScroll(inout v : View, inout checkV : boolean, in dx : float, in x : float, in y : float) : boolean
+        if (v instanceof ViewGroup) {
+            final ViewGroup group = (ViewGroup) v;
+            final int scrollX = v.getScrollX();
+            final int scrollY = v.getScrollY();
+            final int count = group.getChildCount();
+            for (int i = count - 1; i >= 0; i--) {
+                final View child = group.getChildAt(i);
+                if (x + scrollX >= child.getLeft() && x + scrollX < child.getRight() &&
+                        y + scrollY >= child.getTop() && y + scrollY < child.getBottom() &&
+                        canScroll(child, true, dx, x + scrollX - child.getLeft(),
+                                y + scrollY - child.getTop())) {
+                    return true;
+                }
+            }
+        }
+
+        return checkV && v.canScrollHorizontally((int) -dx);
+!!!10489605.java!!!	setDismissable(inout dismissable : boolean) : void
+        if (!dismissable && mDismissable) {
+            cancel();
+            resetMembers();
+        }
+
+        mDismissable = dismissable;
+!!!10489733.java!!!	checkGesture(inout ev : MotionEvent) : void
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            mBlockGesture = mDismissAnimator.isAnimating();
+        }
+!!!10489861.java!!!	progressToAlpha(in progress : float) : float
+        return 1 - progress * progress * progress;
+!!!10489989.java!!!	findActivity() : Activity
+        Context context = getContext();
+        while (context instanceof ContextWrapper) {
+            if (context instanceof Activity) {
+                return (Activity) context;
+            }
+            context = ((ContextWrapper) context).getBaseContext();
+        }
+        return null;

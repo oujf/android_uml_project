@@ -1,0 +1,29 @@
+class KeyAttestationApplicationIdProviderService
+!!!12460037.java!!!	KeyAttestationApplicationIdProviderService(inout context : Context)
+        mPackageManager = context.getPackageManager();
+!!!12460165.java!!!	getKeyAttestationApplicationId(in uid : int) : KeyAttestationApplicationId
+        if (Binder.getCallingUid() != android.os.Process.KEYSTORE_UID) {
+            throw new SecurityException("This service can only be used by Keystore");
+        }
+        KeyAttestationPackageInfo[] keyAttestationPackageInfos = null;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            String[] packageNames = mPackageManager.getPackagesForUid(uid);
+            if (packageNames == null) {
+                throw new RemoteException("No packages for uid");
+            }
+            int userId = UserHandle.getUserId(uid);
+            keyAttestationPackageInfos = new KeyAttestationPackageInfo[packageNames.length];
+
+            for (int i = 0; i < packageNames.length; ++i) {
+                PackageInfo packageInfo = mPackageManager.getPackageInfoAsUser(packageNames[i],
+                        PackageManager.GET_SIGNATURES, userId);
+                keyAttestationPackageInfos[i] = new KeyAttestationPackageInfo(packageNames[i],
+                        packageInfo.versionCode, packageInfo.signatures);
+            }
+        } catch (NameNotFoundException nnfe) {
+            throw new RemoteException(nnfe.getMessage());
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return new KeyAttestationApplicationId(keyAttestationPackageInfos);

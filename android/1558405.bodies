@@ -1,0 +1,239 @@
+class Callback
+!!!10398853.java!!!	getDefaultUIUtil() : ItemTouchUIUtil
+            return sUICallback;
+!!!10398981.java!!!	convertToRelativeDirection(in flags : int, in layoutDirection : int) : int
+            int masked = flags & ABS_HORIZONTAL_DIR_FLAGS;
+            if (masked == 0) {
+                return flags; // does not have any abs flags, good.
+            }
+            flags &= ~masked; //remove left / right.
+            if (layoutDirection == View.LAYOUT_DIRECTION_LTR) {
+                // no change. just OR with 2 bits shifted mask and return
+                flags |= masked << 2; // START is 2 bits after LEFT, END is 2 bits after RIGHT.
+                return flags;
+            } else {
+                // add RIGHT flag as START
+                flags |= ((masked << 1) & ~ABS_HORIZONTAL_DIR_FLAGS);
+                // first clean RIGHT bit then add LEFT flag as END
+                flags |= ((masked << 1) & ABS_HORIZONTAL_DIR_FLAGS) << 2;
+            }
+            return flags;
+!!!10399109.java!!!	makeMovementFlags(in dragFlags : int, in swipeFlags : int) : int
+            return makeFlag(ACTION_STATE_IDLE, swipeFlags | dragFlags)
+                    | makeFlag(ACTION_STATE_SWIPE, swipeFlags)
+                    | makeFlag(ACTION_STATE_DRAG, dragFlags);
+!!!10399237.java!!!	makeFlag(in actionState : int, in directions : int) : int
+            return directions << (actionState * DIRECTION_FLAG_COUNT);
+!!!10399493.java!!!	convertToAbsoluteDirection(in flags : int, in layoutDirection : int) : int
+            int masked = flags & RELATIVE_DIR_FLAGS;
+            if (masked == 0) {
+                return flags; // does not have any relative flags, good.
+            }
+            flags &= ~masked; //remove start / end
+            if (layoutDirection == View.LAYOUT_DIRECTION_LTR) {
+                // no change. just OR with 2 bits shifted mask and return
+                flags |= masked >> 2; // START is 2 bits after LEFT, END is 2 bits after RIGHT.
+                return flags;
+            } else {
+                // add START flag as RIGHT
+                flags |= ((masked >> 1) & ~RELATIVE_DIR_FLAGS);
+                // first clean start bit then add END flag as LEFT
+                flags |= ((masked >> 1) & RELATIVE_DIR_FLAGS) >> 2;
+            }
+            return flags;
+!!!10399621.java!!!	getAbsoluteMovementFlags(inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder) : int
+            final int flags = getMovementFlags(recyclerView, viewHolder);
+            return convertToAbsoluteDirection(flags, recyclerView.getLayoutDirection());
+!!!10399749.java!!!	hasDragFlag(inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder) : boolean
+            final int flags = getAbsoluteMovementFlags(recyclerView, viewHolder);
+            return (flags & ACTION_MODE_DRAG_MASK) != 0;
+!!!10399877.java!!!	hasSwipeFlag(inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder) : boolean
+            final int flags = getAbsoluteMovementFlags(recyclerView, viewHolder);
+            return (flags & ACTION_MODE_SWIPE_MASK) != 0;
+!!!10400005.java!!!	canDropOver(inout recyclerView : RecyclerView, inout current : RecyclerView::ViewHolder, inout target : RecyclerView::ViewHolder) : boolean
+            return true;
+!!!10400261.java!!!	isLongPressDragEnabled() : boolean
+            return true;
+!!!10400389.java!!!	isItemViewSwipeEnabled() : boolean
+            return true;
+!!!10400517.java!!!	getBoundingBoxMargin() : int
+            return 0;
+!!!10400645.java!!!	getSwipeThreshold(inout viewHolder : RecyclerView::ViewHolder) : float
+            return .5f;
+!!!10400773.java!!!	getMoveThreshold(inout viewHolder : RecyclerView::ViewHolder) : float
+            return .5f;
+!!!10400901.java!!!	getSwipeEscapeVelocity(in defaultValue : float) : float
+            return defaultValue;
+!!!10401029.java!!!	getSwipeVelocityThreshold(in defaultValue : float) : float
+            return defaultValue;
+!!!10401157.java!!!	chooseDropTarget(inout selected : RecyclerView::ViewHolder, inout dropTargets : List<ViewHolder>, in curX : int, in curY : int) : RecyclerView::ViewHolder
+            int right = curX + selected.itemView.getWidth();
+            int bottom = curY + selected.itemView.getHeight();
+            ViewHolder winner = null;
+            int winnerScore = -1;
+            final int dx = curX - selected.itemView.getLeft();
+            final int dy = curY - selected.itemView.getTop();
+            final int targetsSize = dropTargets.size();
+            for (int i = 0; i < targetsSize; i++) {
+                final ViewHolder target = dropTargets.get(i);
+                if (dx > 0) {
+                    int diff = target.itemView.getRight() - right;
+                    if (diff < 0 && target.itemView.getRight() > selected.itemView.getRight()) {
+                        final int score = Math.abs(diff);
+                        if (score > winnerScore) {
+                            winnerScore = score;
+                            winner = target;
+                        }
+                    }
+                }
+                if (dx < 0) {
+                    int diff = target.itemView.getLeft() - curX;
+                    if (diff > 0 && target.itemView.getLeft() < selected.itemView.getLeft()) {
+                        final int score = Math.abs(diff);
+                        if (score > winnerScore) {
+                            winnerScore = score;
+                            winner = target;
+                        }
+                    }
+                }
+                if (dy < 0) {
+                    int diff = target.itemView.getTop() - curY;
+                    if (diff > 0 && target.itemView.getTop() < selected.itemView.getTop()) {
+                        final int score = Math.abs(diff);
+                        if (score > winnerScore) {
+                            winnerScore = score;
+                            winner = target;
+                        }
+                    }
+                }
+
+                if (dy > 0) {
+                    int diff = target.itemView.getBottom() - bottom;
+                    if (diff < 0 && target.itemView.getBottom() > selected.itemView.getBottom()) {
+                        final int score = Math.abs(diff);
+                        if (score > winnerScore) {
+                            winnerScore = score;
+                            winner = target;
+                        }
+                    }
+                }
+            }
+            return winner;
+!!!10401413.java!!!	onSelectedChanged(inout viewHolder : RecyclerView::ViewHolder, in actionState : int) : void
+            if (viewHolder != null) {
+                sUICallback.onSelected(viewHolder.itemView);
+            }
+!!!10401541.java!!!	getMaxDragScroll(inout recyclerView : RecyclerView) : int
+            if (mCachedMaxScrollSpeed == -1) {
+                mCachedMaxScrollSpeed = recyclerView.getResources().getDimensionPixelSize(
+                        R.dimen.item_touch_helper_max_drag_scroll_per_frame);
+            }
+            return mCachedMaxScrollSpeed;
+!!!10401669.java!!!	onMoved(in recyclerView : RecyclerView, in viewHolder : RecyclerView::ViewHolder, in fromPos : int, in target : RecyclerView::ViewHolder, in toPos : int, in x : int, in y : int) : void
+            final RecyclerView.LayoutManager layoutManager = recyclerView.getLayoutManager();
+            if (layoutManager instanceof ViewDropHandler) {
+                ((ViewDropHandler) layoutManager).prepareForDrop(viewHolder.itemView,
+                        target.itemView, x, y);
+                return;
+            }
+
+            // if layout manager cannot handle it, do some guesswork
+            if (layoutManager.canScrollHorizontally()) {
+                final int minLeft = layoutManager.getDecoratedLeft(target.itemView);
+                if (minLeft <= recyclerView.getPaddingLeft()) {
+                    recyclerView.scrollToPosition(toPos);
+                }
+                final int maxRight = layoutManager.getDecoratedRight(target.itemView);
+                if (maxRight >= recyclerView.getWidth() - recyclerView.getPaddingRight()) {
+                    recyclerView.scrollToPosition(toPos);
+                }
+            }
+
+            if (layoutManager.canScrollVertically()) {
+                final int minTop = layoutManager.getDecoratedTop(target.itemView);
+                if (minTop <= recyclerView.getPaddingTop()) {
+                    recyclerView.scrollToPosition(toPos);
+                }
+                final int maxBottom = layoutManager.getDecoratedBottom(target.itemView);
+                if (maxBottom >= recyclerView.getHeight() - recyclerView.getPaddingBottom()) {
+                    recyclerView.scrollToPosition(toPos);
+                }
+            }
+!!!10401797.java!!!	onDraw(inout c : Canvas, inout parent : RecyclerView, inout selected : RecyclerView::ViewHolder, inout recoverAnimationList : List<ItemTouchHelper.RecoverAnimation>, in actionState : int, in dX : float, in dY : float) : void
+            final int recoverAnimSize = recoverAnimationList.size();
+            for (int i = 0; i < recoverAnimSize; i++) {
+                final ItemTouchHelper.RecoverAnimation anim = recoverAnimationList.get(i);
+                anim.update();
+                final int count = c.save();
+                onChildDraw(c, parent, anim.mViewHolder, anim.mX, anim.mY, anim.mActionState,
+                        false);
+                c.restoreToCount(count);
+            }
+            if (selected != null) {
+                final int count = c.save();
+                onChildDraw(c, parent, selected, dX, dY, actionState, true);
+                c.restoreToCount(count);
+            }
+!!!10401925.java!!!	onDrawOver(inout c : Canvas, inout parent : RecyclerView, inout selected : RecyclerView::ViewHolder, inout recoverAnimationList : List<ItemTouchHelper.RecoverAnimation>, in actionState : int, in dX : float, in dY : float) : void
+            final int recoverAnimSize = recoverAnimationList.size();
+            for (int i = 0; i < recoverAnimSize; i++) {
+                final ItemTouchHelper.RecoverAnimation anim = recoverAnimationList.get(i);
+                final int count = c.save();
+                onChildDrawOver(c, parent, anim.mViewHolder, anim.mX, anim.mY, anim.mActionState,
+                        false);
+                c.restoreToCount(count);
+            }
+            if (selected != null) {
+                final int count = c.save();
+                onChildDrawOver(c, parent, selected, dX, dY, actionState, true);
+                c.restoreToCount(count);
+            }
+            boolean hasRunningAnimation = false;
+            for (int i = recoverAnimSize - 1; i >= 0; i--) {
+                final RecoverAnimation anim = recoverAnimationList.get(i);
+                if (anim.mEnded && !anim.mIsPendingCleanup) {
+                    recoverAnimationList.remove(i);
+                } else if (!anim.mEnded) {
+                    hasRunningAnimation = true;
+                }
+            }
+            if (hasRunningAnimation) {
+                parent.invalidate();
+            }
+!!!10402053.java!!!	clearView(inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder) : void
+            sUICallback.clearView(viewHolder.itemView);
+!!!10402181.java!!!	onChildDraw(inout c : Canvas, inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder, in dX : float, in dY : float, in actionState : int, inout isCurrentlyActive : boolean) : void
+            sUICallback.onDraw(c, recyclerView, viewHolder.itemView, dX, dY, actionState,
+                    isCurrentlyActive);
+!!!10402309.java!!!	onChildDrawOver(inout c : Canvas, inout recyclerView : RecyclerView, inout viewHolder : RecyclerView::ViewHolder, in dX : float, in dY : float, in actionState : int, inout isCurrentlyActive : boolean) : void
+            sUICallback.onDrawOver(c, recyclerView, viewHolder.itemView, dX, dY, actionState,
+                    isCurrentlyActive);
+!!!10402437.java!!!	getAnimationDuration(inout recyclerView : RecyclerView, in animationType : int, in animateDx : float, in animateDy : float) : long
+            final RecyclerView.ItemAnimator itemAnimator = recyclerView.getItemAnimator();
+            if (itemAnimator == null) {
+                return animationType == ANIMATION_TYPE_DRAG ? DEFAULT_DRAG_ANIMATION_DURATION
+                        : DEFAULT_SWIPE_ANIMATION_DURATION;
+            } else {
+                return animationType == ANIMATION_TYPE_DRAG ? itemAnimator.getMoveDuration()
+                        : itemAnimator.getRemoveDuration();
+            }
+!!!10402565.java!!!	interpolateOutOfBoundsScroll(inout recyclerView : RecyclerView, in viewSize : int, in viewSizeOutOfBounds : int, in totalSize : int, in msSinceStartScroll : long) : int
+            final int maxScroll = getMaxDragScroll(recyclerView);
+            final int absOutOfBounds = Math.abs(viewSizeOutOfBounds);
+            final int direction = (int) Math.signum(viewSizeOutOfBounds);
+            // might be negative if other direction
+            float outOfBoundsRatio = Math.min(1f, 1f * absOutOfBounds / viewSize);
+            final int cappedScroll = (int) (direction * maxScroll
+                    * sDragViewScrollCapInterpolator.getInterpolation(outOfBoundsRatio));
+            final float timeRatio;
+            if (msSinceStartScroll > DRAG_SCROLL_ACCELERATION_LIMIT_TIME_MS) {
+                timeRatio = 1f;
+            } else {
+                timeRatio = (float) msSinceStartScroll / DRAG_SCROLL_ACCELERATION_LIMIT_TIME_MS;
+            }
+            final int value = (int) (cappedScroll * sDragScrollInterpolator
+                    .getInterpolation(timeRatio));
+            if (value == 0) {
+                return viewSizeOutOfBounds > 0 ? 1 : -1;
+            }
+            return value;

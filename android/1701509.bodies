@@ -1,0 +1,37 @@
+class LocalService
+!!!11707141.java!!!	getSystemScheduledPendingJobs() : JobInfo
+            synchronized (mLock) {
+                final List<JobInfo> pendingJobs = new ArrayList<JobInfo>();
+                mJobs.forEachJob(Process.SYSTEM_UID, new JobStatusFunctor() {
+                    @Override
+                    public void process(JobStatus job) {
+                        if (job.getJob().isPeriodic() || !isCurrentlyActiveLocked(job)) {
+                            pendingJobs.add(job.getJob());
+                        }
+                    }
+                });
+                return pendingJobs;
+            }
+!!!11707269.java!!!	addBackingUpUid(in uid : int) : void
+            synchronized (mLock) {
+                // No need to actually do anything here, since for a full backup the
+                // activity manager will kill the process which will kill the job (and
+                // cause it to restart, but now it can't run).
+                mBackingUpUids.put(uid, uid);
+            }
+!!!11707397.java!!!	removeBackingUpUid(in uid : int) : void
+            synchronized (mLock) {
+                mBackingUpUids.delete(uid);
+                // If there are any jobs for this uid, we need to rebuild the pending list
+                // in case they are now ready to run.
+                if (mJobs.countJobsForUid(uid) > 0) {
+                    mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
+                }
+            }
+!!!11707525.java!!!	clearAllBackingUpUids() : void
+            synchronized (mLock) {
+                if (mBackingUpUids.size() > 0) {
+                    mBackingUpUids.clear();
+                    mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
+                }
+            }

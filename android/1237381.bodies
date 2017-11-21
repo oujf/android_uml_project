@@ -1,0 +1,60 @@
+class MetricsReader
+!!!7083781.java!!!	setLogReader(inout reader : MetricsReader::LogReader) : void
+        mReader = reader;
+!!!7083909.java!!!	read(in horizonMs : long) : void
+        ArrayList<Event> nativeEvents = new ArrayList<>();
+        try {
+            mReader.readEvents(LOGTAGS, horizonMs, nativeEvents);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        mPendingQueue.clear();
+        mSeenQueue.clear();
+        for (Event event : nativeEvents) {
+            final long eventTimestampMs = event.getTimeMillis();
+            Object data = event.getData();
+            Object[] objects;
+            if (data instanceof Object[]) {
+                objects = (Object[]) data;
+            } else {
+                // wrap scalar objects
+                objects = new Object[1];
+                objects[0] = data;
+            }
+            final LogMaker log = new LogMaker(objects)
+                    .setTimestamp(eventTimestampMs)
+                    .setUid(event.getUid())
+                    .setProcessId(event.getProcessId());
+            if (log.getCategory() == MetricsEvent.METRICS_CHECKPOINT) {
+                if (log.getSubtype() == mCheckpointTag) {
+                    mPendingQueue.clear();
+                }
+            } else {
+                mPendingQueue.offer(log);
+            }
+        }
+!!!7084037.java!!!	checkpoint() : void
+        // write a checkpoint into the log stream
+        mCheckpointTag = (int) (System.currentTimeMillis() % 0x7fffffff);
+        mReader.writeCheckpoint(mCheckpointTag);
+        // any queued event is now too old, so drop them.
+        mPendingQueue.clear();
+        mSeenQueue.clear();
+!!!7084165.java!!!	reset() : void
+        // flush the rest of hte pending events
+        mSeenQueue.addAll(mPendingQueue);
+        mPendingQueue.clear();
+        mCheckpointTag = -1;
+
+        // swap queues
+        Queue<LogMaker> tmp = mPendingQueue;
+        mPendingQueue = mSeenQueue;
+        mSeenQueue = tmp;
+!!!7084293.java!!!	hasNext() : boolean
+        return !mPendingQueue.isEmpty();
+!!!7084421.java!!!	next() : LogMaker
+        final LogMaker next = mPendingQueue.poll();
+        if (next != null) {
+            mSeenQueue.offer(next);
+        }
+        return next;

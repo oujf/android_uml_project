@@ -1,0 +1,74 @@
+class RadioHalLegacy
+!!!551045.cpp!!!	getProperties(inout properties : radio_hal_properties_t) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+
+    int rc = mHwDevice->get_properties(mHwDevice, properties);
+    if (rc != 0) {
+        ALOGE("could not read implementation properties");
+    }
+
+    return rc;
+!!!551173.cpp!!!	openTuner(in config : radio_hal_band_config_t, in audio : bool, in callback : sp<TunerCallbackInterface>, inout tuner : sp<TunerInterface>) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    sp<Tuner> tunerImpl = new Tuner(callback);
+
+    const struct radio_tuner *halTuner;
+    int rc = mHwDevice->open_tuner(mHwDevice, config, audio,
+                                   RadioHalLegacy::Tuner::callback, tunerImpl.get(),
+                                   &halTuner);
+    if (rc == 0) {
+        tunerImpl->setHalTuner(halTuner);
+        tuner = tunerImpl;
+    }
+    return rc;
+!!!551301.cpp!!!	closeTuner(inout tuner : sp<TunerInterface>) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    if (tuner == 0) {
+        return -EINVAL;
+    }
+    sp<Tuner> tunerImpl = (Tuner *)tuner.get();
+    return mHwDevice->close_tuner(mHwDevice, tunerImpl->getHalTuner());
+!!!551429.cpp!!!	onFirstRef() : void
+    const hw_module_t *mod;
+    int rc;
+    ALOGI("%s mClassId %d", __FUNCTION__, mClassId);
+
+    mHwDevice = NULL;
+
+    if ((mClassId < 0) ||
+            (mClassId >= NELEM(sClassModuleNames))) {
+        ALOGE("invalid class ID %d", mClassId);
+        return;
+    }
+
+    ALOGI("%s RADIO_HARDWARE_MODULE_ID %s %s",
+          __FUNCTION__, RADIO_HARDWARE_MODULE_ID, sClassModuleNames[mClassId]);
+
+    rc = hw_get_module_by_class(RADIO_HARDWARE_MODULE_ID, sClassModuleNames[mClassId], &mod);
+    if (rc != 0) {
+        ALOGE("couldn't load radio module %s.%s (%s)",
+              RADIO_HARDWARE_MODULE_ID, sClassModuleNames[mClassId], strerror(-rc));
+        return;
+    }
+    rc = radio_hw_device_open(mod, &mHwDevice);
+    if (rc != 0) {
+        ALOGE("couldn't open radio hw device in %s.%s (%s)",
+              RADIO_HARDWARE_MODULE_ID, "primary", strerror(-rc));
+        mHwDevice = NULL;
+        return;
+    }
+    if (mHwDevice->common.version != RADIO_DEVICE_API_VERSION_CURRENT) {
+        ALOGE("wrong radio hw device version %04x", mHwDevice->common.version);
+        radio_hw_device_close(mHwDevice);
+        mHwDevice = NULL;
+    }
+!!!553221.cpp!!!	~RadioHalLegacy()
+    if (mHwDevice != NULL) {
+        radio_hw_device_close(mHwDevice);
+    }

@@ -1,0 +1,70 @@
+class BufLogStream
+!!!162437.cpp!!!	BufLogStream(in id : uint, in tag : char, in format : uint, in channels : uint, in samplingRate : uint, in maxBytes : size_t)
+    mByteCount = 0l;
+    mPaused = false;
+    if (tag != NULL) {
+        strncpy(mTag, tag, BUFLOGSTREAM_MAX_TAGSIZE);
+    } else {
+        mTag[0] = 0;
+    }
+    ALOGV("Creating BufLogStream id:%d tag:%s format:%d ch:%d sr:%d maxbytes:%zu", mId, mTag,
+            mFormat, mChannels, mSamplingRate, mMaxBytes);
+
+    //open file (s), info about tag, format, etc.
+    //timestamp
+    char timeStr[16];   //size 16: format %Y%m%d%H%M%S 14 chars + string null terminator
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    strftime(timeStr, sizeof(timeStr), "%Y%m%d%H%M%S", &tm);
+    char logPath[BUFLOG_MAX_PATH_SIZE];
+    snprintf(logPath, BUFLOG_MAX_PATH_SIZE, "%s/%s_%d_%s_%d_%d_%d.raw", BUFLOG_BASE_PATH, timeStr,
+            mId, mTag, mFormat, mChannels, mSamplingRate);
+    ALOGV("data output: %s", logPath);
+
+    mFile = fopen(logPath, "wb");
+    if (mFile != NULL) {
+        ALOGV("Success creating file at: %p", mFile);
+    } else {
+        ALOGE("Error: could not create file BufLogStream %s", strerror(errno));
+    }
+!!!162565.cpp!!!	~BufLogStream()
+    ALOGV("Destroying BufLogStream id:%d tag:%s", mId, mTag);
+    android::Mutex::Autolock autoLock(mLock);
+    closeStream_l();
+!!!162693.cpp!!!	write(in buf : void, in size : size_t) : size_t
+
+    size_t bytes = 0;
+    if (!mPaused && mFile != NULL) {
+        if (size > 0 && buf != NULL) {
+            android::Mutex::Autolock autoLock(mLock);
+            if (mMaxBytes > 0) {
+                size = MIN(size, mMaxBytes - mByteCount);
+            }
+            bytes = fwrite(buf, 1, size, mFile);
+            mByteCount += bytes;
+            if (mMaxBytes > 0 && mMaxBytes == mByteCount) {
+                closeStream_l();
+            }
+        }
+        ALOGV("wrote %zu/%zu bytes to BufLogStream %d tag:%s. Total Bytes: %zu", bytes, size, mId,
+                mTag, mByteCount);
+    } else {
+        ALOGV("Warning: trying to write to %s BufLogStream id:%d tag:%s",
+                mPaused ? "paused" : "closed", mId, mTag);
+    }
+    return bytes;
+!!!162821.cpp!!!	setPause(in pause : bool) : bool
+    bool old = mPaused;
+    mPaused = pause;
+    return old;
+!!!162949.cpp!!!	finalize() : void
+    android::Mutex::Autolock autoLock(mLock);
+    closeStream_l();
+!!!163077.cpp!!!	closeStream_l() : void
+    ALOGV("Closing BufLogStream id:%d tag:%s", mId, mTag);
+    if (mFile != NULL) {
+        fclose(mFile);
+        mFile = NULL;
+    }

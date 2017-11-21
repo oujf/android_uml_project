@@ -1,0 +1,60 @@
+class StackScrollState
+!!!4213125.java!!!	StackScrollState(inout hostView : ViewGroup)
+        mHostView = hostView;
+        mStateMap = new WeakHashMap<>();
+!!!4213253.java!!!	getHostView() : ViewGroup
+        return mHostView;
+!!!4213381.java!!!	resetViewStates() : void
+        int numChildren = mHostView.getChildCount();
+        for (int i = 0; i < numChildren; i++) {
+            ExpandableView child = (ExpandableView) mHostView.getChildAt(i);
+            resetViewState(child);
+
+            // handling reset for child notifications
+            if (child instanceof ExpandableNotificationRow) {
+                ExpandableNotificationRow row = (ExpandableNotificationRow) child;
+                List<ExpandableNotificationRow> children =
+                        row.getNotificationChildren();
+                if (row.isSummaryWithChildren() && children != null) {
+                    for (ExpandableNotificationRow childRow : children) {
+                        resetViewState(childRow);
+                    }
+                }
+            }
+        }
+!!!4213509.java!!!	resetViewState(inout view : ExpandableView) : void
+        ExpandableViewState viewState = mStateMap.get(view);
+        if (viewState == null) {
+            viewState = view.createNewViewState(this);
+            mStateMap.put(view, viewState);
+        }
+        // initialize with the default values of the view
+        viewState.height = view.getIntrinsicHeight();
+        viewState.gone = view.getVisibility() == View.GONE;
+        viewState.alpha = 1f;
+        viewState.shadowAlpha = 1f;
+        viewState.notGoneIndex = -1;
+        viewState.xTranslation = view.getTranslationX();
+        viewState.hidden = false;
+        viewState.scaleX = view.getScaleX();
+        viewState.scaleY = view.getScaleY();
+        viewState.inShelf = false;
+!!!4213637.java!!!	getViewStateForView(inout requestedView : View) : ExpandableViewState
+        return mStateMap.get(requestedView);
+!!!4213765.java!!!	removeViewStateForView(inout child : View) : void
+        mStateMap.remove(child);
+!!!4213893.java!!!	apply() : void
+        int numChildren = mHostView.getChildCount();
+        for (int i = 0; i < numChildren; i++) {
+            ExpandableView child = (ExpandableView) mHostView.getChildAt(i);
+            ExpandableViewState state = mStateMap.get(child);
+            if (state == null) {
+                Log.wtf(CHILD_NOT_FOUND_TAG, "No child state was found when applying this state " +
+                        "to the hostView");
+                continue;
+            }
+            if (state.gone) {
+                continue;
+            }
+            state.applyToView(child);
+        }

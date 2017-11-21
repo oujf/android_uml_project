@@ -1,0 +1,76 @@
+class MaybeReadyJobQueueFunctor
+!!!11705733.java!!!	MaybeReadyJobQueueFunctor()
+            reset();
+!!!11705861.java!!!	process(inout job : JobStatus) : void
+            if (isReadyToBeExecutedLocked(job)) {
+                try {
+                    if (ActivityManager.getService().isAppStartModeDisabled(job.getUid(),
+                            job.getJob().getService().getPackageName())) {
+                        Slog.w(TAG, "Aborting job " + job.getUid() + ":"
+                                + job.getJob().toString() + " -- package not allowed to start");
+                        mHandler.obtainMessage(MSG_STOP_JOB, job).sendToTarget();
+                        return;
+                    }
+                } catch (RemoteException e) {
+                }
+                if (job.getNumFailures() > 0) {
+                    backoffCount++;
+                }
+                if (job.hasIdleConstraint()) {
+                    idleCount++;
+                }
+                if (job.hasConnectivityConstraint()) {
+                    connectivityCount++;
+                }
+                if (job.hasChargingConstraint()) {
+                    chargingCount++;
+                }
+                if (job.hasBatteryNotLowConstraint()) {
+                    batteryNotLowCount++;
+                }
+                if (job.hasStorageNotLowConstraint()) {
+                    storageNotLowCount++;
+                }
+                if (job.hasContentTriggerConstraint()) {
+                    contentCount++;
+                }
+                if (runnableJobs == null) {
+                    runnableJobs = new ArrayList<>();
+                }
+                runnableJobs.add(job);
+            }
+!!!11705989.java!!!	postProcess() : void
+            if (backoffCount > 0 ||
+                    idleCount >= mConstants.MIN_IDLE_COUNT ||
+                    connectivityCount >= mConstants.MIN_CONNECTIVITY_COUNT ||
+                    chargingCount >= mConstants.MIN_CHARGING_COUNT ||
+                    batteryNotLowCount >= mConstants.MIN_BATTERY_NOT_LOW_COUNT ||
+                    storageNotLowCount >= mConstants.MIN_STORAGE_NOT_LOW_COUNT ||
+                    contentCount >= mConstants.MIN_CONTENT_COUNT ||
+                    (runnableJobs != null
+                            && runnableJobs.size() >= mConstants.MIN_READY_JOBS_COUNT)) {
+                if (DEBUG) {
+                    Slog.d(TAG, "maybeQueueReadyJobsForExecutionLocked: Running jobs.");
+                }
+                noteJobsPending(runnableJobs);
+                mPendingJobs.addAll(runnableJobs);
+                if (mPendingJobs.size() > 1) {
+                    mPendingJobs.sort(mEnqueueTimeComparator);
+                }
+            } else {
+                if (DEBUG) {
+                    Slog.d(TAG, "maybeQueueReadyJobsForExecutionLocked: Not running anything.");
+                }
+            }
+
+            // Be ready for next time
+            reset();
+!!!11706117.java!!!	reset() : void
+            chargingCount = 0;
+            idleCount =  0;
+            backoffCount = 0;
+            connectivityCount = 0;
+            batteryNotLowCount = 0;
+            storageNotLowCount = 0;
+            contentCount = 0;
+            runnableJobs = null;

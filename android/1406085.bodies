@@ -1,0 +1,44 @@
+class TimedRemoteCaller
+!!!8515205.java!!!	TimedRemoteCaller(in callTimeoutMillis : long)
+        mCallTimeoutMillis = callTimeoutMillis;
+!!!8515333.java!!!	onBeforeRemoteCall() : int
+        synchronized (mLock) {
+            int sequenceId;
+            do {
+                sequenceId = mSequenceCounter++;
+            } while (mAwaitedCalls.get(sequenceId) != 0);
+
+            mAwaitedCalls.put(sequenceId, 1);
+
+            return sequenceId;
+        }
+!!!8515461.java!!!	onRemoteMethodResult(inout result : T, in sequence : int) : void
+        synchronized (mLock) {
+            // Do nothing if we do not await the call anymore as it must have timed out
+            boolean containedSequenceId = mAwaitedCalls.get(sequence) != 0;
+            if (containedSequenceId) {
+                mAwaitedCalls.delete(sequence);
+                mReceivedCalls.put(sequence, result);
+                mLock.notifyAll();
+            }
+        }
+!!!8515589.java!!!	getResultTimed(in sequence : int) : T
+        final long startMillis = SystemClock.uptimeMillis();
+        while (true) {
+            try {
+                synchronized (mLock) {
+                    if (mReceivedCalls.indexOfKey(sequence) >= 0) {
+                        return mReceivedCalls.removeReturnOld(sequence);
+                    }
+                    final long elapsedMillis = SystemClock.uptimeMillis() - startMillis;
+                    final long waitMillis = mCallTimeoutMillis - elapsedMillis;
+                    if (waitMillis <= 0) {
+                        mAwaitedCalls.delete(sequence);
+                        throw new TimeoutException("No response for sequence: " + sequence);
+                    }
+                    mLock.wait(waitMillis);
+                }
+            } catch (InterruptedException ie) {
+                /* ignore */
+            }
+        }

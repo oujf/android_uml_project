@@ -1,0 +1,162 @@
+class NotificationClicker
+!!!3844357.java!!!	onClick(in v : View) : void
+            if (!(v instanceof ExpandableNotificationRow)) {
+                Log.e(TAG, "NotificationClicker called on a view that is not a notification row.");
+                return;
+            }
+
+            wakeUpIfDozing(SystemClock.uptimeMillis(), v);
+
+            final ExpandableNotificationRow row = (ExpandableNotificationRow) v;
+            final StatusBarNotification sbn = row.getStatusBarNotification();
+            if (sbn == null) {
+                Log.e(TAG, "NotificationClicker called on an unclickable notification,");
+                return;
+            }
+
+            // Check if the notification is displaying the menu, if so slide notification back
+            if (row.getProvider() != null && row.getProvider().isMenuVisible()) {
+                row.animateTranslateNotification(0);
+                return;
+            }
+
+            Notification notification = sbn.getNotification();
+            final PendingIntent intent = notification.contentIntent != null
+                    ? notification.contentIntent
+                    : notification.fullScreenIntent;
+            final String notificationKey = sbn.getKey();
+
+            // Mark notification for one frame.
+            row.setJustClicked(true);
+            DejankUtils.postAfterTraversal(new Runnable() {
+                @Override
+                public void run() {
+                    row.setJustClicked(false);
+                }
+            });
+
+            final boolean keyguardShowing = mStatusBarKeyguardViewManager.isShowing();
+            final boolean afterKeyguardGone = intent.isActivity()
+                    && PreviewInflater.wouldLaunchResolverActivity(mContext, intent.getIntent(),
+                            mCurrentUserId);
+            dismissKeyguardThenExecute(new OnDismissAction() {
+                @Override
+                public boolean onDismiss() {
+                    if (mHeadsUpManager != null && mHeadsUpManager.isHeadsUp(notificationKey)) {
+                        // Release the HUN notification to the shade.
+
+                        if (isPanelFullyCollapsed()) {
+                            HeadsUpManager.setIsClickedNotification(row, true);
+                        }
+                        //
+                        // In most cases, when FLAG_AUTO_CANCEL is set, the notification will
+                        // become canceled shortly by NoMan, but we can't assume that.
+                        mHeadsUpManager.releaseImmediately(notificationKey);
+                    }
+                    StatusBarNotification parentToCancel = null;
+                    if (shouldAutoCancel(sbn) && mGroupManager.isOnlyChildInGroup(sbn)) {
+                        StatusBarNotification summarySbn = mGroupManager.getLogicalGroupSummary(sbn)
+                                        .getStatusBarNotification();
+                        if (shouldAutoCancel(summarySbn)) {
+                            parentToCancel = summarySbn;
+                        }
+                    }
+                    final StatusBarNotification parentToCancelFinal = parentToCancel;
+                    new Thread() {
+                        @Override
+                        public void run() {
+                            try {
+                                // The intent we are sending is for the application, which
+                                // won't have permission to immediately start an activity after
+                                // the user switches to home.  We know it is safe to do at this
+                                // point, so make sure new activity switches are now allowed.
+                                ActivityManager.getService().resumeAppSwitches();
+                            } catch (RemoteException e) {
+                            }
+                            if (intent != null) {
+                                // If we are launching a work activity and require to launch
+                                // separate work challenge, we defer the activity action and cancel
+                                // notification until work challenge is unlocked.
+                                if (intent.isActivity()) {
+                                    final int userId = intent.getCreatorUserHandle()
+                                            .getIdentifier();
+                                    if (mLockPatternUtils.isSeparateProfileChallengeEnabled(userId)
+                                            && mKeyguardManager.isDeviceLocked(userId)) {
+                                        // TODO(b/28935539): should allow certain activities to
+                                        // bypass work challenge
+                                        if (startWorkChallengeIfNecessary(userId,
+                                                intent.getIntentSender(), notificationKey)) {
+                                            // Show work challenge, do not run PendingIntent and
+                                            // remove notification
+                                            return;
+                                        }
+                                    }
+                                }
+                                try {
+                                    intent.send(null, 0, null, null, null, null,
+                                            getActivityOptions());
+                                } catch (PendingIntent.CanceledException e) {
+                                    // the stack trace isn't very helpful here.
+                                    // Just log the exception message.
+                                    Log.w(TAG, "Sending contentIntent failed: " + e);
+
+                                    // TODO: Dismiss Keyguard.
+                                }
+                                if (intent.isActivity()) {
+                                    mAssistManager.hideAssist();
+                                }
+                            }
+
+                            try {
+                                mBarService.onNotificationClick(notificationKey);
+                            } catch (RemoteException ex) {
+                                // system process is dead if we're here.
+                            }
+                            if (parentToCancelFinal != null) {
+                                // We have to post it to the UI thread for synchronization
+                                mHandler.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Runnable removeRunnable = new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                performRemoveNotification(parentToCancelFinal);
+                                            }
+                                        };
+                                        if (isCollapsing()) {
+                                            // To avoid lags we're only performing the remove
+                                            // after the shade was collapsed
+                                            addPostCollapseAction(removeRunnable);
+                                        } else {
+                                            removeRunnable.run();
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }.start();
+
+                    // close the shade if it was open
+                    animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_RECENTS_PANEL,
+                            true /* force */, true /* delayed */);
+                    visibilityChanged(false);
+
+                    return true;
+                }
+            }, afterKeyguardGone);
+!!!3844485.java!!!	shouldAutoCancel(inout sbn : StatusBarNotification) : boolean
+            int flags = sbn.getNotification().flags;
+            if ((flags & Notification.FLAG_AUTO_CANCEL) != Notification.FLAG_AUTO_CANCEL) {
+                return false;
+            }
+            if ((flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                return false;
+            }
+            return true;
+!!!3844613.java!!!	register(inout row : ExpandableNotificationRow, inout sbn : StatusBarNotification) : void
+            Notification notification = sbn.getNotification();
+            if (notification.contentIntent != null || notification.fullScreenIntent != null) {
+                row.setOnClickListener(this);
+            } else {
+                row.setOnClickListener(null);
+            }

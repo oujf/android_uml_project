@@ -1,0 +1,241 @@
+class MessagingStyle
+!!!5607429.java!!!	MessagingStyle(inout userDisplayName : CharSequence)
+            mUserDisplayName = userDisplayName;
+!!!5607557.java!!!	getUserDisplayName() : CharSequence
+            return mUserDisplayName;
+!!!5607685.java!!!	setConversationTitle(inout conversationTitle : CharSequence) : Notification::MessagingStyle
+            mConversationTitle = conversationTitle;
+            return this;
+!!!5607813.java!!!	getConversationTitle() : CharSequence
+            return mConversationTitle;
+!!!5607941.java!!!	addMessage(inout text : CharSequence, in timestamp : long, inout sender : CharSequence) : Notification::MessagingStyle
+            return addMessage(new Message(text, timestamp, sender));
+!!!5608069.java!!!	addMessage(inout message : Notification::MessagingStyle::Message) : Notification::MessagingStyle
+            mMessages.add(message);
+            if (mMessages.size() > MAXIMUM_RETAINED_MESSAGES) {
+                mMessages.remove(0);
+            }
+            return this;
+!!!5608197.java!!!	addHistoricMessage(inout message : Notification::MessagingStyle::Message) : Notification::MessagingStyle
+            mHistoricMessages.add(message);
+            if (mHistoricMessages.size() > MAXIMUM_RETAINED_MESSAGES) {
+                mHistoricMessages.remove(0);
+            }
+            return this;
+!!!5608325.java!!!	getMessages() : Notification::MessagingStyle::Message
+            return mMessages;
+!!!5608453.java!!!	getHistoricMessages() : Notification::MessagingStyle::Message
+            return mHistoricMessages;
+!!!5608581.java!!!	addExtras(inout extras : Bundle) : void
+            super.addExtras(extras);
+            if (mUserDisplayName != null) {
+                extras.putCharSequence(EXTRA_SELF_DISPLAY_NAME, mUserDisplayName);
+            }
+            if (mConversationTitle != null) {
+                extras.putCharSequence(EXTRA_CONVERSATION_TITLE, mConversationTitle);
+            }
+            if (!mMessages.isEmpty()) { extras.putParcelableArray(EXTRA_MESSAGES,
+                    Message.getBundleArrayForMessages(mMessages));
+            }
+            if (!mHistoricMessages.isEmpty()) { extras.putParcelableArray(EXTRA_HISTORIC_MESSAGES,
+                    Message.getBundleArrayForMessages(mHistoricMessages));
+            }
+
+            fixTitleAndTextExtras(extras);
+!!!5608709.java!!!	fixTitleAndTextExtras(inout extras : Bundle) : void
+            Message m = findLatestIncomingMessage();
+            CharSequence text = (m == null) ? null : m.mText;
+            CharSequence sender = m == null ? null
+                    : TextUtils.isEmpty(m.mSender) ? mUserDisplayName : m.mSender;
+            CharSequence title;
+            if (!TextUtils.isEmpty(mConversationTitle)) {
+                if (!TextUtils.isEmpty(sender)) {
+                    BidiFormatter bidi = BidiFormatter.getInstance();
+                    title = mBuilder.mContext.getString(
+                            com.android.internal.R.string.notification_messaging_title_template,
+                            bidi.unicodeWrap(mConversationTitle), bidi.unicodeWrap(m.mSender));
+                } else {
+                    title = mConversationTitle;
+                }
+            } else {
+                title = sender;
+            }
+
+            if (title != null) {
+                extras.putCharSequence(EXTRA_TITLE, title);
+            }
+            if (text != null) {
+                extras.putCharSequence(EXTRA_TEXT, text);
+            }
+!!!5608837.java!!!	restoreFromExtras(inout extras : Bundle) : void
+            super.restoreFromExtras(extras);
+
+            mMessages.clear();
+            mHistoricMessages.clear();
+            mUserDisplayName = extras.getCharSequence(EXTRA_SELF_DISPLAY_NAME);
+            mConversationTitle = extras.getCharSequence(EXTRA_CONVERSATION_TITLE);
+            Parcelable[] messages = extras.getParcelableArray(EXTRA_MESSAGES);
+            if (messages != null && messages instanceof Parcelable[]) {
+                mMessages = Message.getMessagesFromBundleArray(messages);
+            }
+            Parcelable[] histMessages = extras.getParcelableArray(EXTRA_HISTORIC_MESSAGES);
+            if (histMessages != null && histMessages instanceof Parcelable[]) {
+                mHistoricMessages = Message.getMessagesFromBundleArray(histMessages);
+            }
+!!!5608965.java!!!	makeContentView(inout increasedHeight : boolean) : RemoteViews
+            if (!increasedHeight) {
+                Message m = findLatestIncomingMessage();
+                CharSequence title = mConversationTitle != null
+                        ? mConversationTitle
+                        : (m == null) ? null : m.mSender;
+                CharSequence text = (m == null)
+                        ? null
+                        : mConversationTitle != null ? makeMessageLine(m, mBuilder) : m.mText;
+
+                return mBuilder.applyStandardTemplate(mBuilder.getBaseLayoutResource(),
+                        mBuilder.mParams.reset().hasProgress(false).title(title).text(text));
+            } else {
+                ArrayList<Action> actions = mBuilder.mActions;
+                mBuilder.mActions = new ArrayList<>();
+                RemoteViews remoteViews = makeBigContentView();
+                mBuilder.mActions = actions;
+                return remoteViews;
+            }
+!!!5609093.java!!!	findLatestIncomingMessage() : Notification::MessagingStyle::Message
+            for (int i = mMessages.size() - 1; i >= 0; i--) {
+                Message m = mMessages.get(i);
+                // Incoming messages have a non-empty sender.
+                if (!TextUtils.isEmpty(m.mSender)) {
+                    return m;
+                }
+            }
+            if (!mMessages.isEmpty()) {
+                // No incoming messages, fall back to outgoing message
+                return mMessages.get(mMessages.size() - 1);
+            }
+            return null;
+!!!5609221.java!!!	makeBigContentView() : RemoteViews
+            CharSequence title = !TextUtils.isEmpty(super.mBigContentTitle)
+                    ? super.mBigContentTitle
+                    : mConversationTitle;
+            boolean hasTitle = !TextUtils.isEmpty(title);
+
+            if (mMessages.size() == 1) {
+                // Special case for a single message: Use the big text style
+                // so the collapsed and expanded versions match nicely.
+                CharSequence bigTitle;
+                CharSequence text;
+                if (hasTitle) {
+                    bigTitle = title;
+                    text = makeMessageLine(mMessages.get(0), mBuilder);
+                } else {
+                    bigTitle = mMessages.get(0).mSender;
+                    text = mMessages.get(0).mText;
+                }
+                RemoteViews contentView = mBuilder.applyStandardTemplateWithActions(
+                        mBuilder.getBigTextLayoutResource(),
+                        mBuilder.mParams.reset().hasProgress(false).title(bigTitle).text(null));
+                BigTextStyle.applyBigTextContentView(mBuilder, contentView, text);
+                return contentView;
+            }
+
+            RemoteViews contentView = mBuilder.applyStandardTemplateWithActions(
+                    mBuilder.getMessagingLayoutResource(),
+                    mBuilder.mParams.reset().hasProgress(false).title(title).text(null));
+
+            int[] rowIds = {R.id.inbox_text0, R.id.inbox_text1, R.id.inbox_text2, R.id.inbox_text3,
+                    R.id.inbox_text4, R.id.inbox_text5, R.id.inbox_text6};
+
+            // Make sure all rows are gone in case we reuse a view.
+            for (int rowId : rowIds) {
+                contentView.setViewVisibility(rowId, View.GONE);
+            }
+
+            int i=0;
+            contentView.setViewLayoutMarginBottomDimen(R.id.line1,
+                    hasTitle ? R.dimen.notification_messaging_spacing : 0);
+            contentView.setInt(R.id.notification_messaging, "setNumIndentLines",
+                    !mBuilder.mN.hasLargeIcon() ? 0 : (hasTitle ? 1 : 2));
+
+            int contractedChildId = View.NO_ID;
+            Message contractedMessage = findLatestIncomingMessage();
+            int firstHistoricMessage = Math.max(0, mHistoricMessages.size()
+                    - (rowIds.length - mMessages.size()));
+            while (firstHistoricMessage + i < mHistoricMessages.size() && i < rowIds.length) {
+                Message m = mHistoricMessages.get(firstHistoricMessage + i);
+                int rowId = rowIds[i];
+
+                contentView.setTextViewText(rowId, makeMessageLine(m, mBuilder));
+
+                if (contractedMessage == m) {
+                    contractedChildId = rowId;
+                }
+
+                i++;
+            }
+
+            int firstMessage = Math.max(0, mMessages.size() - rowIds.length);
+            while (firstMessage + i < mMessages.size() && i < rowIds.length) {
+                Message m = mMessages.get(firstMessage + i);
+                int rowId = rowIds[i];
+
+                contentView.setViewVisibility(rowId, View.VISIBLE);
+                contentView.setTextViewText(rowId, makeMessageLine(m, mBuilder));
+                mBuilder.setTextViewColorSecondary(contentView, rowId);
+
+                if (contractedMessage == m) {
+                    contractedChildId = rowId;
+                }
+
+                i++;
+            }
+            // Clear the remaining views for reapply. Ensures that historic message views can
+            // reliably be identified as being GONE and having non-null text.
+            while (i < rowIds.length) {
+                int rowId = rowIds[i];
+                contentView.setTextViewText(rowId, null);
+                i++;
+            }
+
+            // Record this here to allow transformation between the contracted and expanded views.
+            contentView.setInt(R.id.notification_messaging, "setContractedChildId",
+                    contractedChildId);
+            return contentView;
+!!!5609349.java!!!	makeMessageLine(inout m : Notification::MessagingStyle::Message, inout builder : Notification::Builder) : CharSequence
+            BidiFormatter bidi = BidiFormatter.getInstance();
+            SpannableStringBuilder sb = new SpannableStringBuilder();
+            boolean colorize = builder.isColorized();
+            if (TextUtils.isEmpty(m.mSender)) {
+                CharSequence replyName = mUserDisplayName == null ? "" : mUserDisplayName;
+                sb.append(bidi.unicodeWrap(replyName),
+                        makeFontColorSpan(colorize
+                                ? builder.getPrimaryTextColor()
+                                : mBuilder.resolveContrastColor()),
+                        0 /* flags */);
+            } else {
+                sb.append(bidi.unicodeWrap(m.mSender),
+                        makeFontColorSpan(colorize
+                                ? builder.getPrimaryTextColor()
+                                : Color.BLACK),
+                        0 /* flags */);
+            }
+            CharSequence text = m.mText == null ? "" : m.mText;
+            sb.append("  ").append(bidi.unicodeWrap(text));
+            return sb;
+!!!5609477.java!!!	makeHeadsUpContentView(inout increasedHeight : boolean) : RemoteViews
+            if (increasedHeight) {
+                return makeBigContentView();
+            }
+            Message m = findLatestIncomingMessage();
+            CharSequence title = mConversationTitle != null
+                    ? mConversationTitle
+                    : (m == null) ? null : m.mSender;
+            CharSequence text = (m == null)
+                    ? null
+                    : mConversationTitle != null ? makeMessageLine(m, mBuilder) : m.mText;
+
+            return mBuilder.applyStandardTemplateWithActions(mBuilder.getBigBaseLayoutResource(),
+                    mBuilder.mParams.reset().hasProgress(false).title(title).text(text));
+!!!5609605.java!!!	makeFontColorSpan(in color : int) : TextAppearanceSpan
+            return new TextAppearanceSpan(null, 0, 0,
+                    ColorStateList.valueOf(color), null);

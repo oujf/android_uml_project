@@ -1,0 +1,181 @@
+class OverlayManagerService
+!!!12011141.java!!!	OverlayManagerService(in context : Context, in installer : Installer)
+        super(context);
+        mSettingsFile =
+            new AtomicFile(new File(Environment.getDataSystemDirectory(), "overlays.xml"));
+        mPackageManager = new PackageManagerHelper();
+        mUserManager = UserManagerService.getInstance();
+        IdmapManager im = new IdmapManager(installer);
+        mSettings = new OverlayManagerSettings();
+        mImpl = new OverlayManagerServiceImpl(mPackageManager, im, mSettings,
+                getDefaultOverlayPackages(), new OverlayChangeListener());
+        mInitCompleteSignal = SystemServerInitThreadPool.get().submit(() -> {
+            final IntentFilter packageFilter = new IntentFilter();
+            packageFilter.addAction(ACTION_PACKAGE_ADDED);
+            packageFilter.addAction(ACTION_PACKAGE_CHANGED);
+            packageFilter.addAction(ACTION_PACKAGE_REMOVED);
+            packageFilter.addDataScheme("package");
+            getContext().registerReceiverAsUser(new PackageReceiver(), UserHandle.ALL,
+                    packageFilter, null, null);
+
+            final IntentFilter userFilter = new IntentFilter();
+            userFilter.addAction(ACTION_USER_ADDED);
+            userFilter.addAction(ACTION_USER_REMOVED);
+            getContext().registerReceiverAsUser(new UserReceiver(), UserHandle.ALL,
+                    userFilter, null, null);
+
+            restoreSettings();
+
+            initIfNeeded();
+            onSwitchUser(UserHandle.USER_SYSTEM);
+
+            publishBinderService(Context.OVERLAY_SERVICE, mService);
+            publishLocalService(OverlayManagerService.class, this);
+        }, "Init OverlayManagerService");
+!!!12011269.java!!!	onStart() : void
+        // Intentionally left empty.
+!!!12011397.java!!!	onBootPhase(in phase : int) : void
+        if (phase == PHASE_SYSTEM_SERVICES_READY) {
+            ConcurrentUtils.waitForFutureNoInterrupt(mInitCompleteSignal,
+                    "Wait for OverlayManagerService init");
+            mInitCompleteSignal = null;
+        }
+!!!12011525.java!!!	initIfNeeded() : void
+        final UserManager um = getContext().getSystemService(UserManager.class);
+        final List<UserInfo> users = um.getUsers(true /*excludeDying*/);
+        synchronized (mLock) {
+            final int userCount = users.size();
+            for (int i = 0; i < userCount; i++) {
+                final UserInfo userInfo = users.get(i);
+                if (!userInfo.supportsSwitchTo() && userInfo.id != UserHandle.USER_SYSTEM) {
+                    // Initialize any users that can't be switched to, as there state would
+                    // never be setup in onSwitchUser(). We will switch to the system user right
+                    // after this, and its state will be setup there.
+                    final List<String> targets = mImpl.updateOverlaysForUser(users.get(i).id);
+                    updateOverlayPaths(users.get(i).id, targets);
+                }
+            }
+        }
+!!!12011653.java!!!	onSwitchUser(in newUserId : int) : void
+        // ensure overlays in the settings are up-to-date, and propagate
+        // any asset changes to the rest of the system
+        synchronized (mLock) {
+            final List<String> targets = mImpl.updateOverlaysForUser(newUserId);
+            updateAssets(newUserId, targets);
+        }
+        schedulePersistSettings();
+!!!12011781.java!!!	getDefaultOverlayPackages() : Set<String>
+        final String str = SystemProperties.get(DEFAULT_OVERLAYS_PROP);
+        if (TextUtils.isEmpty(str)) {
+            return Collections.emptySet();
+        }
+
+        final ArraySet<String> defaultPackages = new ArraySet<>();
+        for (String packageName : str.split(";")) {
+            if (!TextUtils.isEmpty(packageName)) {
+                defaultPackages.add(packageName);
+            }
+        }
+        return defaultPackages;
+!!!12012805.java!!!	isOverlayPackage(in pi : PackageInfo) : boolean
+        return pi != null && pi.overlayTarget != null;
+!!!12017157.java!!!	updateOverlayPaths(in userId : int, inout targetPackageNames : List<String>) : void
+        if (DEBUG) {
+            Slog.d(TAG, "Updating overlay assets");
+        }
+        final PackageManagerInternal pm = LocalServices.getService(PackageManagerInternal.class);
+        final boolean updateFrameworkRes = targetPackageNames.contains("android");
+        if (updateFrameworkRes) {
+            targetPackageNames = pm.getTargetPackageNames(userId);
+        }
+
+        final Map<String, List<String>> pendingChanges = new ArrayMap<>(targetPackageNames.size());
+        synchronized (mLock) {
+            final List<String> frameworkOverlays =
+                mImpl.getEnabledOverlayPackageNames("android", userId);
+            final int N = targetPackageNames.size();
+            for (int i = 0; i < N; i++) {
+                final String targetPackageName = targetPackageNames.get(i);
+                List<String> list = new ArrayList<>();
+                if (!"android".equals(targetPackageName)) {
+                    list.addAll(frameworkOverlays);
+                }
+                list.addAll(mImpl.getEnabledOverlayPackageNames(targetPackageName, userId));
+                pendingChanges.put(targetPackageName, list);
+            }
+        }
+
+        final int N = targetPackageNames.size();
+        for (int i = 0; i < N; i++) {
+            final String targetPackageName = targetPackageNames.get(i);
+            if (DEBUG) {
+                Slog.d(TAG, "-> Updating overlay: target=" + targetPackageName + " overlays=["
+                        + TextUtils.join(",", pendingChanges.get(targetPackageName))
+                        + "] userId=" + userId);
+            }
+
+            if (!pm.setEnabledOverlayPackages(
+                    userId, targetPackageName, pendingChanges.get(targetPackageName))) {
+                Slog.e(TAG, String.format("Failed to change enabled overlays for %s user %d",
+                        targetPackageName, userId));
+            }
+        }
+!!!12017285.java!!!	updateAssets(in userId : int, in targetPackageName : String) : void
+        updateAssets(userId, Collections.singletonList(targetPackageName));
+!!!12017413.java!!!	updateAssets(in userId : int, inout targetPackageNames : List<String>) : void
+        updateOverlayPaths(userId, targetPackageNames);
+        final IActivityManager am = ActivityManager.getService();
+        try {
+            am.scheduleApplicationInfoChanged(targetPackageNames, userId);
+        } catch (RemoteException e) {
+            // Intentionally left empty.
+        }
+!!!12017541.java!!!	schedulePersistSettings() : void
+        if (mPersistSettingsScheduled.getAndSet(true)) {
+            return;
+        }
+        IoThread.getHandler().post(() -> {
+            mPersistSettingsScheduled.set(false);
+            if (DEBUG) {
+                Slog.d(TAG, "Writing overlay settings");
+            }
+            synchronized (mLock) {
+                FileOutputStream stream = null;
+                try {
+                    stream = mSettingsFile.startWrite();
+                    mSettings.persist(stream);
+                    mSettingsFile.finishWrite(stream);
+                } catch (IOException | XmlPullParserException e) {
+                    mSettingsFile.failWrite(stream);
+                    Slog.e(TAG, "failed to persist overlay state", e);
+                }
+            }
+        });
+!!!12017669.java!!!	restoreSettings() : void
+        synchronized (mLock) {
+            if (!mSettingsFile.getBaseFile().exists()) {
+                return;
+            }
+            try (final FileInputStream stream = mSettingsFile.openRead()) {
+                mSettings.restore(stream);
+
+                // We might have data for dying users if the device was
+                // restarted before we received USER_REMOVED. Remove data for
+                // users that will not exist after the system is ready.
+
+                final List<UserInfo> liveUsers = mUserManager.getUsers(true /*excludeDying*/);
+                final int[] liveUserIds = new int[liveUsers.size()];
+                for (int i = 0; i < liveUsers.size(); i++) {
+                    liveUserIds[i] = liveUsers.get(i).getUserHandle().getIdentifier();
+                }
+                Arrays.sort(liveUserIds);
+
+                for (int userId : mSettings.getUsers()) {
+                    if (Arrays.binarySearch(liveUserIds, userId) < 0) {
+                        mSettings.removeUser(userId);
+                    }
+                }
+            } catch (IOException | XmlPullParserException e) {
+                Slog.e(TAG, "failed to restore overlay state", e);
+            }
+        }

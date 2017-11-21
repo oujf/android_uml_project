@@ -1,0 +1,65 @@
+class EffectBufferHalHidl
+!!!594565.cpp!!!	audioBuffer() : audio_buffer_t
+    return &mAudioBuffer;
+!!!594693.cpp!!!	externalData() : void
+    return mExternalData;
+!!!594821.cpp!!!	setExternalData(inout external : void) : void
+    mExternalData = external;
+!!!594949.cpp!!!	setFrameCount(in frameCount : size_t) : void
+    mHidlBuffer.frameCount = frameCount;
+    mAudioBuffer.frameCount = frameCount;
+    mFrameCountChanged = true;
+!!!595077.cpp!!!	checkFrameCountChange() : bool
+    bool result = mFrameCountChanged;
+    mFrameCountChanged = false;
+    return result;
+!!!595205.cpp!!!	update() : void
+    update(mBufferSize);
+!!!595333.cpp!!!	commit() : void
+    commit(mBufferSize);
+!!!595461.cpp!!!	update(in size : size_t) : void
+    if (mExternalData == nullptr) return;
+    mMemory->update();
+    if (size > mBufferSize) size = mBufferSize;
+    memcpy(mAudioBuffer.raw, mExternalData, size);
+    mMemory->commit();
+!!!595589.cpp!!!	commit(in size : size_t) : void
+    if (mExternalData == nullptr) return;
+    if (size > mBufferSize) size = mBufferSize;
+    memcpy(mExternalData, mAudioBuffer.raw, size);
+!!!595845.cpp!!!	makeUniqueId() : uint64_t
+    static std::atomic<uint64_t> counter{1};
+    return counter++;
+!!!595973.cpp!!!	EffectBufferHalHidl(in size : size_t)
+    mHidlBuffer.id = makeUniqueId();
+    mHidlBuffer.frameCount = 0;
+!!!596229.cpp!!!	init() : status_t
+    sp<IAllocator> ashmem = IAllocator::getService("ashmem");
+    if (ashmem == 0) {
+        ALOGE("Failed to retrieve ashmem allocator service");
+        return NO_INIT;
+    }
+    status_t retval = NO_MEMORY;
+    Return<void> result = ashmem->allocate(
+            mBufferSize,
+            [&](bool success, const hidl_memory& memory) {
+                if (success) {
+                    mHidlBuffer.data = memory;
+                    retval = OK;
+                }
+            });
+    if (result.isOk() && retval == OK) {
+        mMemory = hardware::mapMemory(mHidlBuffer.data);
+        if (mMemory != 0) {
+            mMemory->update();
+            mAudioBuffer.raw = static_cast<void*>(mMemory->getPointer());
+            memset(mAudioBuffer.raw, 0, mMemory->getSize());
+            mMemory->commit();
+        } else {
+            ALOGE("Failed to map allocated ashmem");
+            retval = NO_MEMORY;
+        }
+    } else {
+        ALOGE("Failed to allocate %d bytes from ashmem", (int)mBufferSize);
+    }
+    return result.isOk() ? retval : FAILED_TRANSACTION;

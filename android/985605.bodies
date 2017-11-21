@@ -1,0 +1,272 @@
+class Surface
+!!!8813317.java!!!	Surface(inout surfaceTexture : SurfaceTexture)
+        if (surfaceTexture == null) {
+            throw new IllegalArgumentException("surfaceTexture must not be null");
+        }
+        mIsSingleBuffered = surfaceTexture.isSingleBuffered();
+        synchronized (mLock) {
+            mName = surfaceTexture.toString();
+            setNativeObjectLocked(nativeCreateFromSurfaceTexture(surfaceTexture));
+        }
+!!!8813445.java!!!	Surface(in nativeObject : long)
+        synchronized (mLock) {
+            setNativeObjectLocked(nativeObject);
+        }
+!!!8813573.java!!!	finalize() : void
+        try {
+            if (mCloseGuard != null) {
+                mCloseGuard.warnIfOpen();
+            }
+            release();
+        } finally {
+            super.finalize();
+        }
+!!!8813701.java!!!	release() : void
+        synchronized (mLock) {
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
+                setNativeObjectLocked(0);
+            }
+            if (mHwuiContext != null) {
+                mHwuiContext.destroy();
+                mHwuiContext = null;
+            }
+        }
+!!!8813829.java!!!	destroy() : void
+        release();
+!!!8813957.java!!!	isValid() : boolean
+        synchronized (mLock) {
+            if (mNativeObject == 0) return false;
+            return nativeIsValid(mNativeObject);
+        }
+!!!8814085.java!!!	getGenerationId() : int
+        synchronized (mLock) {
+            return mGenerationId;
+        }
+!!!8814213.java!!!	getNextFrameNumber() : long
+        synchronized (mLock) {
+            return nativeGetNextFrameNumber(mNativeObject);
+        }
+!!!8814341.java!!!	isConsumerRunningBehind() : boolean
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            return nativeIsConsumerRunningBehind(mNativeObject);
+        }
+!!!8814469.java!!!	lockCanvas(inout inOutDirty : Rect) : Canvas
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            if (mLockedObject != 0) {
+                // Ideally, nativeLockCanvas() would throw in this situation and prevent the
+                // double-lock, but that won't happen if mNativeObject was updated.  We can't
+                // abandon the old mLockedObject because it might still be in use, so instead
+                // we just refuse to re-lock the Surface.
+                throw new IllegalArgumentException("Surface was already locked");
+            }
+            mLockedObject = nativeLockCanvas(mNativeObject, mCanvas, inOutDirty);
+            return mCanvas;
+        }
+!!!8814597.java!!!	unlockCanvasAndPost(inout canvas : Canvas) : void
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+
+            if (mHwuiContext != null) {
+                mHwuiContext.unlockAndPost(canvas);
+            } else {
+                unlockSwCanvasAndPost(canvas);
+            }
+        }
+!!!8814725.java!!!	unlockSwCanvasAndPost(inout canvas : Canvas) : void
+        if (canvas != mCanvas) {
+            throw new IllegalArgumentException("canvas object must be the same instance that "
+                    + "was previously returned by lockCanvas");
+        }
+        if (mNativeObject != mLockedObject) {
+            Log.w(TAG, "WARNING: Surface's mNativeObject (0x" +
+                    Long.toHexString(mNativeObject) + ") != mLockedObject (0x" +
+                    Long.toHexString(mLockedObject) +")");
+        }
+        if (mLockedObject == 0) {
+            throw new IllegalStateException("Surface was not locked");
+        }
+        try {
+            nativeUnlockCanvasAndPost(mLockedObject, canvas);
+        } finally {
+            nativeRelease(mLockedObject);
+            mLockedObject = 0;
+        }
+!!!8814853.java!!!	lockHardwareCanvas() : Canvas
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            if (mHwuiContext == null) {
+                mHwuiContext = new HwuiContext();
+            }
+            return mHwuiContext.lockCanvas(
+                    nativeGetWidth(mNativeObject),
+                    nativeGetHeight(mNativeObject));
+        }
+!!!8814981.java!!!	unlockCanvas(inout canvas : Canvas) : void
+        throw new UnsupportedOperationException();
+!!!8815109.java!!!	setCompatibilityTranslator(inout translator : CompatibilityInfo::Translator) : void
+        if (translator != null) {
+            float appScale = translator.applicationScale;
+            mCompatibleMatrix = new Matrix();
+            mCompatibleMatrix.setScale(appScale, appScale);
+        }
+!!!8815237.java!!!	copyFrom(inout other : SurfaceControl) : void
+        if (other == null) {
+            throw new IllegalArgumentException("other must not be null");
+        }
+
+        long surfaceControlPtr = other.mNativeObject;
+        if (surfaceControlPtr == 0) {
+            throw new NullPointerException(
+                    "null SurfaceControl native object. Are you using a released SurfaceControl?");
+        }
+        long newNativeObject = nativeGetFromSurfaceControl(surfaceControlPtr);
+
+        synchronized (mLock) {
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
+            }
+            setNativeObjectLocked(newNativeObject);
+        }
+!!!8815365.java!!!	createFrom(inout other : SurfaceControl) : void
+        if (other == null) {
+            throw new IllegalArgumentException("other must not be null");
+        }
+
+        long surfaceControlPtr = other.mNativeObject;
+        if (surfaceControlPtr == 0) {
+            throw new NullPointerException(
+                    "null SurfaceControl native object. Are you using a released SurfaceControl?");
+        }
+        long newNativeObject = nativeCreateFromSurfaceControl(surfaceControlPtr);
+
+        synchronized (mLock) {
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
+            }
+            setNativeObjectLocked(newNativeObject);
+        }
+!!!8815493.java!!!	transferFrom(inout other : Surface) : void
+        if (other == null) {
+            throw new IllegalArgumentException("other must not be null");
+        }
+        if (other != this) {
+            final long newPtr;
+            synchronized (other.mLock) {
+                newPtr = other.mNativeObject;
+                other.setNativeObjectLocked(0);
+            }
+
+            synchronized (mLock) {
+                if (mNativeObject != 0) {
+                    nativeRelease(mNativeObject);
+                }
+                setNativeObjectLocked(newPtr);
+            }
+        }
+!!!8815621.java!!!	describeContents() : int
+        return 0;
+!!!8815749.java!!!	readFromParcel(inout source : Parcel) : void
+        if (source == null) {
+            throw new IllegalArgumentException("source must not be null");
+        }
+
+        synchronized (mLock) {
+            // nativeReadFromParcel() will either return mNativeObject, or
+            // create a new native Surface and return it after reducing
+            // the reference count on mNativeObject.  Either way, it is
+            // not necessary to call nativeRelease() here.
+            // NOTE: This must be kept synchronized with the native parceling code
+            // in frameworks/native/libs/Surface.cpp
+            mName = source.readString();
+            mIsSingleBuffered = source.readInt() != 0;
+            setNativeObjectLocked(nativeReadFromParcel(mNativeObject, source));
+        }
+!!!8815877.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        if (dest == null) {
+            throw new IllegalArgumentException("dest must not be null");
+        }
+        synchronized (mLock) {
+            // NOTE: This must be kept synchronized with the native parceling code
+            // in frameworks/native/libs/Surface.cpp
+            dest.writeString(mName);
+            dest.writeInt(mIsSingleBuffered ? 1 : 0);
+            nativeWriteToParcel(mNativeObject, dest);
+        }
+        if ((flags & Parcelable.PARCELABLE_WRITE_RETURN_VALUE) != 0) {
+            release();
+        }
+!!!8816005.java!!!	toString() : String
+        synchronized (mLock) {
+            return "Surface(name=" + mName + ")/@0x" +
+                    Integer.toHexString(System.identityHashCode(this));
+        }
+!!!8816133.java!!!	setNativeObjectLocked(in ptr : long) : void
+        if (mNativeObject != ptr) {
+            if (mNativeObject == 0 && ptr != 0) {
+                mCloseGuard.open("release");
+            } else if (mNativeObject != 0 && ptr == 0) {
+                mCloseGuard.close();
+            }
+            mNativeObject = ptr;
+            mGenerationId += 1;
+            if (mHwuiContext != null) {
+                mHwuiContext.updateSurface();
+            }
+        }
+!!!8816261.java!!!	checkNotReleasedLocked() : void
+        if (mNativeObject == 0) {
+            throw new IllegalStateException("Surface has already been released.");
+        }
+!!!8816389.java!!!	allocateBuffers() : void
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            nativeAllocateBuffers(mNativeObject);
+        }
+!!!8816517.java!!!	setScalingMode(in scalingMode : int) : void
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            int err = nativeSetScalingMode(mNativeObject, scalingMode);
+            if (err != 0) {
+                throw new IllegalArgumentException("Invalid scaling mode: " + scalingMode);
+            }
+        }
+!!!8816645.java!!!	forceScopedDisconnect() : void
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            int err = nativeForceScopedDisconnect(mNativeObject);
+            if (err != 0) {
+                throw new RuntimeException("Failed to disconnect Surface instance (bad object?)");
+            }
+        }
+!!!8816773.java!!!	attachAndQueueBuffer(inout buffer : GraphicBuffer) : void
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            int err = nativeAttachAndQueueBuffer(mNativeObject, buffer);
+            if (err != 0) {
+                throw new RuntimeException(
+                        "Failed to attach and queue buffer to Surface (bad object?)");
+            }
+        }
+!!!8816901.java!!!	isSingleBuffered() : boolean
+        return mIsSingleBuffered;
+!!!8817285.java!!!	rotationToString(in rotation : int) : String
+        switch (rotation) {
+            case Surface.ROTATION_0: {
+                return "ROTATION_0";
+            }
+            case Surface.ROTATION_90: {
+                return "ROATATION_90";
+            }
+            case Surface.ROTATION_180: {
+                return "ROATATION_180";
+            }
+            case Surface.ROTATION_270: {
+                return "ROATATION_270";
+            }
+            default: {
+                throw new IllegalArgumentException("Invalid rotation: " + rotation);
+            }
+        }

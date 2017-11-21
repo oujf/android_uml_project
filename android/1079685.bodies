@@ -1,0 +1,48 @@
+class SplitDependencyLoaderImpl
+!!!5522693.java!!!	SplitDependencyLoaderImpl(inout dependencies : SparseArray)
+            super(dependencies);
+            mCachedResourcePaths = new String[mSplitNames.length + 1][];
+            mCachedClassLoaders = new ClassLoader[mSplitNames.length + 1];
+!!!5522821.java!!!	isSplitCached(in splitIdx : int) : boolean
+            return mCachedClassLoaders[splitIdx] != null;
+!!!5522949.java!!!	constructSplit(in splitIdx : int, inout configSplitIndices : int [[]], in parentSplitIdx : int) : void
+            final ArrayList<String> splitPaths = new ArrayList<>();
+            if (splitIdx == 0) {
+                createOrUpdateClassLoaderLocked(null);
+                mCachedClassLoaders[0] = mClassLoader;
+
+                // Never add the base resources here, they always get added no matter what.
+                for (int configSplitIdx : configSplitIndices) {
+                    splitPaths.add(mSplitResDirs[configSplitIdx - 1]);
+                }
+                mCachedResourcePaths[0] = splitPaths.toArray(new String[splitPaths.size()]);
+                return;
+            }
+
+            // Since we handled the special base case above, parentSplitIdx is always valid.
+            final ClassLoader parent = mCachedClassLoaders[parentSplitIdx];
+            mCachedClassLoaders[splitIdx] = ApplicationLoaders.getDefault().getClassLoader(
+                    mSplitAppDirs[splitIdx - 1], getTargetSdkVersion(), false, null, null, parent);
+
+            Collections.addAll(splitPaths, mCachedResourcePaths[parentSplitIdx]);
+            splitPaths.add(mSplitResDirs[splitIdx - 1]);
+            for (int configSplitIdx : configSplitIndices) {
+                splitPaths.add(mSplitResDirs[configSplitIdx - 1]);
+            }
+            mCachedResourcePaths[splitIdx] = splitPaths.toArray(new String[splitPaths.size()]);
+!!!5523077.java!!!	ensureSplitLoaded(in splitName : String) : int
+            int idx = 0;
+            if (splitName != null) {
+                idx = Arrays.binarySearch(mSplitNames, splitName);
+                if (idx < 0) {
+                    throw new PackageManager.NameNotFoundException(
+                            "Split name '" + splitName + "' is not installed");
+                }
+                idx += 1;
+            }
+            loadDependenciesForSplit(idx);
+            return idx;
+!!!5523205.java!!!	getClassLoaderForSplit(in splitName : String) : ClassLoader
+            return mCachedClassLoaders[ensureSplitLoaded(splitName)];
+!!!5523333.java!!!	getSplitPathsForSplit(in splitName : String) : String
+            return mCachedResourcePaths[ensureSplitLoaded(splitName)];

@@ -1,0 +1,37 @@
+class Merger
+!!!1093253.cpp!!!	addReader(in reader : NBLog::NamedReader) : void
+    mNamedReaders.push_back(reader);
+!!!1093381.cpp!!!	merge() : void
+    int nLogs = mNamedReaders.size();
+    std::vector<std::unique_ptr<NBLog::Reader::Snapshot>> snapshots(nLogs);
+    std::vector<NBLog::FormatEntry::iterator> offsets(nLogs);
+    for (int i = 0; i < nLogs; ++i) {
+        snapshots[i] = mNamedReaders[i].reader()->getSnapshot();
+        offsets[i] = snapshots[i]->begin();
+    }
+    // initialize offsets
+    // TODO custom heap implementation could allow to update top, improving performance
+    // for bursty buffers
+    std::priority_queue<MergeItem, std::vector<MergeItem>, std::greater<MergeItem>> timestamps;
+    for (int i = 0; i < nLogs; ++i)
+    {
+        if (offsets[i] != snapshots[i]->end()) {
+            timespec ts = FormatEntry(offsets[i]).timestamp();
+            timestamps.emplace(ts, i);
+        }
+    }
+
+    while (!timestamps.empty()) {
+        // find minimum timestamp
+        int index = timestamps.top().index;
+        // copy it to the log, increasing offset
+        offsets[index] = FormatEntry(offsets[index]).copyWithAuthor(mFifoWriter, index);
+        // update data structures
+        timestamps.pop();
+        if (offsets[index] != snapshots[index]->end()) {
+            timespec ts = FormatEntry(offsets[index]).timestamp();
+            timestamps.emplace(ts, index);
+        }
+    }
+!!!1093509.cpp!!!	getNamedReaders() : std::vector<NamedReader>
+    return &mNamedReaders;

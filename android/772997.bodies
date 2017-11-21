@@ -1,0 +1,70 @@
+class DozeSensors
+!!!3197445.java!!!	DozeSensors(inout context : Context, inout sensorManager : SensorManager, inout dozeParameters : DozeParameters, inout config : AmbientDisplayConfiguration, inout wakeLock : WakeLock, inout callback : DozeSensors::Callback, inout proxCallback : Consumer<Boolean>)
+        mContext = context;
+        mSensorManager = sensorManager;
+        mDozeParameters = dozeParameters;
+        mConfig = config;
+        mWakeLock = wakeLock;
+        mProxCallback = proxCallback;
+        mResolver = mContext.getContentResolver();
+
+        mSensors = new TriggerSensor[] {
+                new TriggerSensor(
+                        mSensorManager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION),
+                        null /* setting */,
+                        dozeParameters.getPulseOnSigMotion(),
+                        DozeLog.PULSE_REASON_SENSOR_SIGMOTION),
+                mPickupSensor = new TriggerSensor(
+                        mSensorManager.getDefaultSensor(Sensor.TYPE_PICK_UP_GESTURE),
+                        Settings.Secure.DOZE_PULSE_ON_PICK_UP,
+                        config.pulseOnPickupAvailable(),
+                        DozeLog.PULSE_REASON_SENSOR_PICKUP),
+                new TriggerSensor(
+                        findSensorWithType(config.doubleTapSensorType()),
+                        Settings.Secure.DOZE_PULSE_ON_DOUBLE_TAP,
+                        true /* configured */,
+                        DozeLog.PULSE_REASON_SENSOR_DOUBLE_TAP)
+        };
+
+        mProxSensor = new ProxSensor();
+        mCallback = callback;
+!!!3197573.java!!!	findSensorWithType(in type : String) : Sensor
+        if (TextUtils.isEmpty(type)) {
+            return null;
+        }
+        List<Sensor> sensorList = mSensorManager.getSensorList(Sensor.TYPE_ALL);
+        for (Sensor s : sensorList) {
+            if (type.equals(s.getStringType())) {
+                return s;
+            }
+        }
+        return null;
+!!!3197701.java!!!	setListening(inout listen : boolean) : void
+        for (TriggerSensor s : mSensors) {
+            s.setListening(listen);
+            if (listen) {
+                s.registerSettingsObserver(mSettingsObserver);
+            }
+        }
+        if (!listen) {
+            mResolver.unregisterContentObserver(mSettingsObserver);
+        }
+!!!3197829.java!!!	reregisterAllSensors() : void
+        for (TriggerSensor s : mSensors) {
+            s.setListening(false);
+        }
+        for (TriggerSensor s : mSensors) {
+            s.setListening(true);
+        }
+!!!3197957.java!!!	onUserSwitched() : void
+        for (TriggerSensor s : mSensors) {
+            s.updateListener();
+        }
+!!!3198085.java!!!	setProxListening(inout listen : boolean) : void
+        mProxSensor.setRegistered(listen);
+!!!3198213.java!!!	setDisableSensorsInterferingWithProximity(inout disable : boolean) : void
+        mPickupSensor.setDisabled(disable);
+!!!3198341.java!!!	dump(inout pw : PrintWriter) : void
+        for (TriggerSensor s : mSensors) {
+            pw.print("Sensor: "); pw.println(s.toString());
+        }

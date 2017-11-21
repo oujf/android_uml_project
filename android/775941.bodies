@@ -1,0 +1,100 @@
+class FragmentHostManager
+!!!3216645.java!!!	FragmentHostManager(inout context : Context, inout manager : FragmentService, inout rootView : View)
+        mContext = context;
+        mManager = manager;
+        mRootView = rootView;
+        mConfigChanges.applyNewConfig(context.getResources());
+        createFragmentHost(null);
+!!!3216773.java!!!	createFragmentHost(inout savedState : Parcelable) : void
+        mFragments = FragmentController.createController(new HostCallbacks());
+        mFragments.attachHost(null);
+        mLifecycleCallbacks = new FragmentLifecycleCallbacks() {
+            @Override
+            public void onFragmentViewCreated(FragmentManager fm, Fragment f, View v,
+                    Bundle savedInstanceState) {
+                FragmentHostManager.this.onFragmentViewCreated(f);
+            }
+
+            @Override
+            public void onFragmentViewDestroyed(FragmentManager fm, Fragment f) {
+                FragmentHostManager.this.onFragmentViewDestroyed(f);
+            }
+
+            @Override
+            public void onFragmentDestroyed(FragmentManager fm, Fragment f) {
+                Dependency.get(LeakDetector.class).trackGarbage(f);
+            }
+        };
+        mFragments.getFragmentManager().registerFragmentLifecycleCallbacks(mLifecycleCallbacks,
+                true);
+        if (savedState != null) {
+            mFragments.restoreAllState(savedState, (FragmentManagerNonConfig) null);
+        }
+        // For now just keep all fragments in the resumed state.
+        mFragments.dispatchCreate();
+        mFragments.dispatchStart();
+        mFragments.dispatchResume();
+!!!3216901.java!!!	destroyFragmentHost() : Parcelable
+        mFragments.dispatchPause();
+        Parcelable p = mFragments.saveAllState();
+        mFragments.dispatchStop();
+        mFragments.dispatchDestroy();
+        mFragments.getFragmentManager().unregisterFragmentLifecycleCallbacks(mLifecycleCallbacks);
+        return p;
+!!!3217029.java!!!	addTagListener(in tag : String, inout listener : FragmentHostManager::FragmentListener) : FragmentHostManager
+        ArrayList<FragmentListener> listeners = mListeners.get(tag);
+        if (listeners == null) {
+            listeners = new ArrayList<>();
+            mListeners.put(tag, listeners);
+        }
+        listeners.add(listener);
+        Fragment current = getFragmentManager().findFragmentByTag(tag);
+        if (current != null && current.getView() != null) {
+            listener.onFragmentViewCreated(tag, current);
+        }
+        return this;
+!!!3217157.java!!!	removeTagListener(in tag : String, inout listener : FragmentHostManager::FragmentListener) : void
+        ArrayList<FragmentListener> listeners = mListeners.get(tag);
+        if (listeners != null && listeners.remove(listener) && listeners.size() == 0) {
+            mListeners.remove(tag);
+        }
+!!!3217285.java!!!	onFragmentViewCreated(inout fragment : Fragment) : void
+        String tag = fragment.getTag();
+
+        ArrayList<FragmentListener> listeners = mListeners.get(tag);
+        if (listeners != null) {
+            listeners.forEach((listener) -> listener.onFragmentViewCreated(tag, fragment));
+        }
+!!!3217413.java!!!	onFragmentViewDestroyed(inout fragment : Fragment) : void
+        String tag = fragment.getTag();
+
+        ArrayList<FragmentListener> listeners = mListeners.get(tag);
+        if (listeners != null) {
+            listeners.forEach((listener) -> listener.onFragmentViewDestroyed(tag, fragment));
+        }
+!!!3217541.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        if (mConfigChanges.applyNewConfig(mContext.getResources())) {
+            // Save the old state.
+            Parcelable p = destroyFragmentHost();
+            // Generate a new fragment host and restore its state.
+            createFragmentHost(p);
+        } else {
+            mFragments.dispatchConfigurationChanged(newConfig);
+        }
+!!!3217669.java!!!	dump(in prefix : String, inout fd : FileDescriptor, inout writer : PrintWriter, inout args : String [[]]) : void
+        // TODO: Do something?
+!!!3217797.java!!!	findViewById(in id : int) : T
+        return mRootView.findViewById(id);
+!!!3217925.java!!!	getFragmentManager() : FragmentManager
+        return mFragments.getFragmentManager();
+!!!3218053.java!!!	getPluginManager() : FragmentHostManager::PluginFragmentManager
+        return mPlugins;
+!!!3218181.java!!!	destroy() : void
+        mFragments.dispatchDestroy();
+!!!3218565.java!!!	get(inout view : View) : FragmentHostManager
+        try {
+            return Dependency.get(FragmentService.class).getFragmentHostManager(view);
+        } catch (ClassCastException e) {
+            // TODO: Some auto handling here?
+            throw e;
+        }

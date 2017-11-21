@@ -1,0 +1,84 @@
+class ZygoteServer
+!!!10006021.java!!!	registerServerSocket(in socketName : String) : void
+        if (mServerSocket == null) {
+            int fileDesc;
+            final String fullSocketName = ANDROID_SOCKET_PREFIX + socketName;
+            try {
+                String env = System.getenv(fullSocketName);
+                fileDesc = Integer.parseInt(env);
+            } catch (RuntimeException ex) {
+                throw new RuntimeException(fullSocketName + " unset or invalid", ex);
+            }
+
+            try {
+                FileDescriptor fd = new FileDescriptor();
+                fd.setInt$(fileDesc);
+                mServerSocket = new LocalServerSocket(fd);
+            } catch (IOException ex) {
+                throw new RuntimeException(
+                        "Error binding to local socket '" + fileDesc + "'", ex);
+            }
+        }
+!!!10006149.java!!!	acceptCommandPeer(in abiList : String) : ZygoteConnection
+        try {
+            return createNewConnection(mServerSocket.accept(), abiList);
+        } catch (IOException ex) {
+            throw new RuntimeException(
+                    "IOException during accept()", ex);
+        }
+!!!10006277.java!!!	createNewConnection(inout socket : LocalSocket, in abiList : String) : ZygoteConnection
+        return new ZygoteConnection(socket, abiList);
+!!!10006405.java!!!	closeServerSocket() : void
+        try {
+            if (mServerSocket != null) {
+                FileDescriptor fd = mServerSocket.getFileDescriptor();
+                mServerSocket.close();
+                if (fd != null) {
+                    Os.close(fd);
+                }
+            }
+        } catch (IOException ex) {
+            Log.e(TAG, "Zygote:  error closing sockets", ex);
+        } catch (ErrnoException ex) {
+            Log.e(TAG, "Zygote:  error closing descriptor", ex);
+        }
+
+        mServerSocket = null;
+!!!10006533.java!!!	getServerSocketFileDescriptor() : FileDescriptor
+        return mServerSocket.getFileDescriptor();
+!!!10006661.java!!!	runSelectLoop(in abiList : String) : void
+        ArrayList<FileDescriptor> fds = new ArrayList<FileDescriptor>();
+        ArrayList<ZygoteConnection> peers = new ArrayList<ZygoteConnection>();
+
+        fds.add(mServerSocket.getFileDescriptor());
+        peers.add(null);
+
+        while (true) {
+            StructPollfd[] pollFds = new StructPollfd[fds.size()];
+            for (int i = 0; i < pollFds.length; ++i) {
+                pollFds[i] = new StructPollfd();
+                pollFds[i].fd = fds.get(i);
+                pollFds[i].events = (short) POLLIN;
+            }
+            try {
+                Os.poll(pollFds, -1);
+            } catch (ErrnoException ex) {
+                throw new RuntimeException("poll failed", ex);
+            }
+            for (int i = pollFds.length - 1; i >= 0; --i) {
+                if ((pollFds[i].revents & POLLIN) == 0) {
+                    continue;
+                }
+                if (i == 0) {
+                    ZygoteConnection newPeer = acceptCommandPeer(abiList);
+                    peers.add(newPeer);
+                    fds.add(newPeer.getFileDesciptor());
+                } else {
+                    boolean done = peers.get(i).runOnce(this);
+                    if (done) {
+                        peers.remove(i);
+                        fds.remove(i);
+                    }
+                }
+            }
+        }

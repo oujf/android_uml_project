@@ -1,0 +1,740 @@
+class StorageManager
+!!!7670661.java!!!	getNextNonce() : int
+        return mNextNonce.getAndIncrement();
+!!!7671173.java!!!	from(inout context : Context) : StorageManager
+        return context.getSystemService(StorageManager.class);
+!!!7671301.java!!!	StorageManager(inout context : Context, inout looper : Looper)
+        mContext = context;
+        mResolver = context.getContentResolver();
+        mLooper = looper;
+        mStorageManager = IStorageManager.Stub.asInterface(ServiceManager.getServiceOrThrow("mount"));
+!!!7671429.java!!!	registerListener(inout listener : StorageEventListener) : void
+        synchronized (mDelegates) {
+            final StorageEventListenerDelegate delegate = new StorageEventListenerDelegate(listener,
+                    mLooper);
+            try {
+                mStorageManager.registerListener(delegate);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+            mDelegates.add(delegate);
+        }
+!!!7671557.java!!!	unregisterListener(inout listener : StorageEventListener) : void
+        synchronized (mDelegates) {
+            for (Iterator<StorageEventListenerDelegate> i = mDelegates.iterator(); i.hasNext();) {
+                final StorageEventListenerDelegate delegate = i.next();
+                if (delegate.mCallback == listener) {
+                    try {
+                        mStorageManager.unregisterListener(delegate);
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                    i.remove();
+                }
+            }
+        }
+!!!7671941.java!!!	isUsbMassStorageConnected() : boolean
+        return false;
+!!!7672069.java!!!	isUsbMassStorageEnabled() : boolean
+        return false;
+!!!7672197.java!!!	mountObb(in rawPath : String, in key : String, inout listener : OnObbStateChangeListener) : boolean
+        Preconditions.checkNotNull(rawPath, "rawPath cannot be null");
+        Preconditions.checkNotNull(listener, "listener cannot be null");
+
+        try {
+            final String canonicalPath = new File(rawPath).getCanonicalPath();
+            final int nonce = mObbActionListener.addListener(listener);
+            mStorageManager.mountObb(rawPath, canonicalPath, key, mObbActionListener, nonce);
+            return true;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to resolve path: " + rawPath, e);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7672325.java!!!	unmountObb(in rawPath : String, inout force : boolean, inout listener : OnObbStateChangeListener) : boolean
+        Preconditions.checkNotNull(rawPath, "rawPath cannot be null");
+        Preconditions.checkNotNull(listener, "listener cannot be null");
+
+        try {
+            final int nonce = mObbActionListener.addListener(listener);
+            mStorageManager.unmountObb(rawPath, force, mObbActionListener, nonce);
+            return true;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7672453.java!!!	isObbMounted(in rawPath : String) : boolean
+        Preconditions.checkNotNull(rawPath, "rawPath cannot be null");
+
+        try {
+            return mStorageManager.isObbMounted(rawPath);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7672581.java!!!	getMountedObbPath(in rawPath : String) : String
+        Preconditions.checkNotNull(rawPath, "rawPath cannot be null");
+
+        try {
+            return mStorageManager.getMountedObbPath(rawPath);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7672709.java!!!	getDisks() : DiskInfo
+        try {
+            return Arrays.asList(mStorageManager.getDisks());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7672837.java!!!	findDiskById(in id : String) : DiskInfo
+        Preconditions.checkNotNull(id);
+        // TODO; go directly to service to make this faster
+        for (DiskInfo disk : getDisks()) {
+            if (Objects.equals(disk.id, id)) {
+                return disk;
+            }
+        }
+        return null;
+!!!7672965.java!!!	findVolumeById(in id : String) : VolumeInfo
+        Preconditions.checkNotNull(id);
+        // TODO; go directly to service to make this faster
+        for (VolumeInfo vol : getVolumes()) {
+            if (Objects.equals(vol.id, id)) {
+                return vol;
+            }
+        }
+        return null;
+!!!7673093.java!!!	findVolumeByUuid(in fsUuid : String) : VolumeInfo
+        Preconditions.checkNotNull(fsUuid);
+        // TODO; go directly to service to make this faster
+        for (VolumeInfo vol : getVolumes()) {
+            if (Objects.equals(vol.fsUuid, fsUuid)) {
+                return vol;
+            }
+        }
+        return null;
+!!!7673221.java!!!	findRecordByUuid(in fsUuid : String) : VolumeRecord
+        Preconditions.checkNotNull(fsUuid);
+        // TODO; go directly to service to make this faster
+        for (VolumeRecord rec : getVolumeRecords()) {
+            if (Objects.equals(rec.fsUuid, fsUuid)) {
+                return rec;
+            }
+        }
+        return null;
+!!!7673349.java!!!	findPrivateForEmulated(inout emulatedVol : VolumeInfo) : VolumeInfo
+        if (emulatedVol != null) {
+            return findVolumeById(emulatedVol.getId().replace("emulated", "private"));
+        } else {
+            return null;
+        }
+!!!7673477.java!!!	findEmulatedForPrivate(inout privateVol : VolumeInfo) : VolumeInfo
+        if (privateVol != null) {
+            return findVolumeById(privateVol.getId().replace("private", "emulated"));
+        } else {
+            return null;
+        }
+!!!7673605.java!!!	findVolumeByQualifiedUuid(in volumeUuid : String) : VolumeInfo
+        if (Objects.equals(StorageManager.UUID_PRIVATE_INTERNAL, volumeUuid)) {
+            return findVolumeById(VolumeInfo.ID_PRIVATE_INTERNAL);
+        } else if (Objects.equals(StorageManager.UUID_PRIMARY_PHYSICAL, volumeUuid)) {
+            return getPrimaryPhysicalVolume();
+        } else {
+            return findVolumeByUuid(volumeUuid);
+        }
+!!!7673733.java!!!	getUuidForPath(inout path : File) : UUID
+        Preconditions.checkNotNull(path);
+        final String pathString = path.getCanonicalPath();
+        if (FileUtils.contains(Environment.getDataDirectory().getAbsolutePath(), pathString)) {
+            return UUID_DEFAULT;
+        }
+        try {
+            for (VolumeInfo vol : mStorageManager.getVolumes(0)) {
+                if (vol.path != null && FileUtils.contains(vol.path, pathString)) {
+                    // TODO: verify that emulated adopted devices have UUID of
+                    // underlying volume
+                    return convert(vol.fsUuid);
+                }
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        throw new FileNotFoundException("Failed to find a storage device for " + path);
+!!!7673861.java!!!	findPathForUuid(in volumeUuid : String) : File
+        final VolumeInfo vol = findVolumeByQualifiedUuid(volumeUuid);
+        if (vol != null) {
+            return vol.getPath();
+        }
+        throw new FileNotFoundException("Failed to find a storage device for " + volumeUuid);
+!!!7673989.java!!!	getVolumes() : VolumeInfo
+        try {
+            return Arrays.asList(mStorageManager.getVolumes(0));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7674117.java!!!	getWritablePrivateVolumes() : VolumeInfo
+        try {
+            final ArrayList<VolumeInfo> res = new ArrayList<>();
+            for (VolumeInfo vol : mStorageManager.getVolumes(0)) {
+                if (vol.getType() == VolumeInfo.TYPE_PRIVATE && vol.isMountedWritable()) {
+                    res.add(vol);
+                }
+            }
+            return res;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7674245.java!!!	getVolumeRecords() : VolumeRecord
+        try {
+            return Arrays.asList(mStorageManager.getVolumeRecords(0));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7674373.java!!!	getBestVolumeDescription(inout vol : VolumeInfo) : String
+        if (vol == null) return null;
+
+        // Nickname always takes precedence when defined
+        if (!TextUtils.isEmpty(vol.fsUuid)) {
+            final VolumeRecord rec = findRecordByUuid(vol.fsUuid);
+            if (rec != null && !TextUtils.isEmpty(rec.nickname)) {
+                return rec.nickname;
+            }
+        }
+
+        if (!TextUtils.isEmpty(vol.getDescription())) {
+            return vol.getDescription();
+        }
+
+        if (vol.disk != null) {
+            return vol.disk.getDescription();
+        }
+
+        return null;
+!!!7674501.java!!!	getPrimaryPhysicalVolume() : VolumeInfo
+        final List<VolumeInfo> vols = getVolumes();
+        for (VolumeInfo vol : vols) {
+            if (vol.isPrimaryPhysical()) {
+                return vol;
+            }
+        }
+        return null;
+!!!7674629.java!!!	mount(in volId : String) : void
+        try {
+            mStorageManager.mount(volId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7674757.java!!!	unmount(in volId : String) : void
+        try {
+            mStorageManager.unmount(volId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7674885.java!!!	format(in volId : String) : void
+        try {
+            mStorageManager.format(volId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675013.java!!!	benchmark(in volId : String) : long
+        try {
+            return mStorageManager.benchmark(volId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675141.java!!!	partitionPublic(in diskId : String) : void
+        try {
+            mStorageManager.partitionPublic(diskId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675269.java!!!	partitionPrivate(in diskId : String) : void
+        try {
+            mStorageManager.partitionPrivate(diskId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675397.java!!!	partitionMixed(in diskId : String, in ratio : int) : void
+        try {
+            mStorageManager.partitionMixed(diskId, ratio);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675525.java!!!	wipeAdoptableDisks() : void
+        // We only wipe devices in "adoptable" locations, which are in a
+        // long-term stable slot/location on the device, where apps have a
+        // reasonable chance of storing sensitive data. (Apps need to go through
+        // SAF to write to transient volumes.)
+        final List<DiskInfo> disks = getDisks();
+        for (DiskInfo disk : disks) {
+            final String diskId = disk.getId();
+            if (disk.isAdoptable()) {
+                Slog.d(TAG, "Found adoptable " + diskId + "; wiping");
+                try {
+                    // TODO: switch to explicit wipe command when we have it,
+                    // for now rely on the fact that vfat format does a wipe
+                    mStorageManager.partitionPublic(diskId);
+                } catch (Exception e) {
+                    Slog.w(TAG, "Failed to wipe " + diskId + ", but soldiering onward", e);
+                }
+            } else {
+                Slog.d(TAG, "Ignorning non-adoptable disk " + disk.getId());
+            }
+        }
+!!!7675653.java!!!	setVolumeNickname(in fsUuid : String, in nickname : String) : void
+        try {
+            mStorageManager.setVolumeNickname(fsUuid, nickname);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675781.java!!!	setVolumeInited(in fsUuid : String, inout inited : boolean) : void
+        try {
+            mStorageManager.setVolumeUserFlags(fsUuid, inited ? VolumeRecord.USER_FLAG_INITED : 0,
+                    VolumeRecord.USER_FLAG_INITED);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7675909.java!!!	setVolumeSnoozed(in fsUuid : String, inout snoozed : boolean) : void
+        try {
+            mStorageManager.setVolumeUserFlags(fsUuid, snoozed ? VolumeRecord.USER_FLAG_SNOOZED : 0,
+                    VolumeRecord.USER_FLAG_SNOOZED);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7676037.java!!!	forgetVolume(in fsUuid : String) : void
+        try {
+            mStorageManager.forgetVolume(fsUuid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7676165.java!!!	getPrimaryStorageUuid() : String
+        try {
+            return mStorageManager.getPrimaryStorageUuid();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7676293.java!!!	setPrimaryStorageUuid(in volumeUuid : String, inout callback : IPackageMoveObserver) : void
+        try {
+            mStorageManager.setPrimaryStorageUuid(volumeUuid, callback);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7676421.java!!!	getStorageVolume(inout file : File) : StorageVolume
+        return getStorageVolume(getVolumeList(), file);
+!!!7676549.java!!!	getStorageVolume(inout file : File, in userId : int) : StorageVolume
+        return getStorageVolume(getVolumeList(userId, 0), file);
+!!!7676677.java!!!	getStorageVolume(inout volumes : StorageVolume [[]], inout file : File) : StorageVolume
+        if (file == null) {
+            return null;
+        }
+        try {
+            file = file.getCanonicalFile();
+        } catch (IOException ignored) {
+            Slog.d(TAG, "Could not get canonical path for " + file);
+            return null;
+        }
+        for (StorageVolume volume : volumes) {
+            File volumeFile = volume.getPathFile();
+            try {
+                volumeFile = volumeFile.getCanonicalFile();
+            } catch (IOException ignored) {
+                continue;
+            }
+            if (FileUtils.contains(volumeFile, file)) {
+                return volume;
+            }
+        }
+        return null;
+!!!7676805.java!!!	getVolumeState(in mountPoint : String) : String
+        final StorageVolume vol = getStorageVolume(new File(mountPoint));
+        if (vol != null) {
+            return vol.getState();
+        } else {
+            return Environment.MEDIA_UNKNOWN;
+        }
+!!!7676933.java!!!	getStorageVolumes() : StorageVolume
+        final ArrayList<StorageVolume> res = new ArrayList<>();
+        Collections.addAll(res,
+                getVolumeList(UserHandle.myUserId(), FLAG_REAL_STATE | FLAG_INCLUDE_INVISIBLE));
+        return res;
+!!!7677061.java!!!	getPrimaryStorageVolume() : StorageVolume
+        return getVolumeList(UserHandle.myUserId(), FLAG_REAL_STATE | FLAG_INCLUDE_INVISIBLE)[0];
+!!!7677189.java!!!	getPrimaryStoragePathAndSize() : Pair
+        return Pair.create(null,
+                FileUtils.roundStorageSize(Environment.getDataDirectory().getTotalSpace()));
+!!!7677317.java!!!	getPrimaryStorageSize() : long
+        return FileUtils.roundStorageSize(Environment.getDataDirectory().getTotalSpace());
+!!!7677445.java!!!	getVolumeList() : StorageVolume
+        return getVolumeList(mContext.getUserId(), 0);
+!!!7677573.java!!!	getVolumeList(in userId : int, in flags : int) : StorageVolume
+        final IStorageManager storageManager = IStorageManager.Stub.asInterface(
+                ServiceManager.getService("mount"));
+        try {
+            String packageName = ActivityThread.currentOpPackageName();
+            if (packageName == null) {
+                // Package name can be null if the activity thread is running but the app
+                // hasn't bound yet. In this case we fall back to the first package in the
+                // current UID. This works for runtime permissions as permission state is
+                // per UID and permission realted app ops are updated for all UID packages.
+                String[] packageNames = ActivityThread.getPackageManager().getPackagesForUid(
+                        android.os.Process.myUid());
+                if (packageNames == null || packageNames.length <= 0) {
+                    return new StorageVolume[0];
+                }
+                packageName = packageNames[0];
+            }
+            final int uid = ActivityThread.getPackageManager().getPackageUid(packageName,
+                    PackageManager.MATCH_DEBUG_TRIAGED_MISSING, userId);
+            if (uid <= 0) {
+                return new StorageVolume[0];
+            }
+            return storageManager.getVolumeList(uid, packageName, flags);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7677701.java!!!	getVolumePaths() : String
+        StorageVolume[] volumes = getVolumeList();
+        int count = volumes.length;
+        String[] paths = new String[count];
+        for (int i = 0; i < count; i++) {
+            paths[i] = volumes[i].getPath();
+        }
+        return paths;
+!!!7677829.java!!!	getPrimaryVolume() : StorageVolume
+        return getPrimaryVolume(getVolumeList());
+!!!7677957.java!!!	getPrimaryVolume(inout volumes : StorageVolume [[]]) : StorageVolume
+        for (StorageVolume volume : volumes) {
+            if (volume.isPrimary()) {
+                return volume;
+            }
+        }
+        throw new IllegalStateException("Missing primary storage");
+!!!7678085.java!!!	getStorageBytesUntilLow(inout path : File) : long
+        return path.getUsableSpace() - getStorageFullBytes(path);
+!!!7678213.java!!!	getStorageLowBytes(inout path : File) : long
+        final long lowPercent = Settings.Global.getInt(mResolver,
+                Settings.Global.SYS_STORAGE_THRESHOLD_PERCENTAGE, DEFAULT_THRESHOLD_PERCENTAGE);
+        final long lowBytes = (path.getTotalSpace() * lowPercent) / 100;
+
+        final long maxLowBytes = Settings.Global.getLong(mResolver,
+                Settings.Global.SYS_STORAGE_THRESHOLD_MAX_BYTES, DEFAULT_THRESHOLD_MAX_BYTES);
+
+        return Math.min(lowBytes, maxLowBytes);
+!!!7678341.java!!!	getStorageCacheBytes(inout path : File) : long
+        final long cachePercent = Settings.Global.getInt(mResolver,
+                Settings.Global.SYS_STORAGE_CACHE_PERCENTAGE, DEFAULT_CACHE_PERCENTAGE);
+        final long cacheBytes = (path.getTotalSpace() * cachePercent) / 100;
+
+        final long maxCacheBytes = Settings.Global.getLong(mResolver,
+                Settings.Global.SYS_STORAGE_CACHE_MAX_BYTES, DEFAULT_CACHE_MAX_BYTES);
+
+        return Math.min(cacheBytes, maxCacheBytes);
+!!!7678469.java!!!	getStorageFullBytes(inout path : File) : long
+        return Settings.Global.getLong(mResolver, Settings.Global.SYS_STORAGE_FULL_THRESHOLD_BYTES,
+                DEFAULT_FULL_THRESHOLD_BYTES);
+!!!7678597.java!!!	createUserKey(in userId : int, in serialNumber : int, inout ephemeral : boolean) : void
+        try {
+            mStorageManager.createUserKey(userId, serialNumber, ephemeral);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7678725.java!!!	destroyUserKey(in userId : int) : void
+        try {
+            mStorageManager.destroyUserKey(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7678853.java!!!	unlockUserKey(in userId : int, in serialNumber : int, inout token : byte [[]], inout secret : byte [[]]) : void
+        try {
+            mStorageManager.unlockUserKey(userId, serialNumber, token, secret);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7678981.java!!!	lockUserKey(in userId : int) : void
+        try {
+            mStorageManager.lockUserKey(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7679109.java!!!	prepareUserStorage(in volumeUuid : String, in userId : int, in serialNumber : int, in flags : int) : void
+        try {
+            mStorageManager.prepareUserStorage(volumeUuid, userId, serialNumber, flags);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7679237.java!!!	destroyUserStorage(in volumeUuid : String, in userId : int, in flags : int) : void
+        try {
+            mStorageManager.destroyUserStorage(volumeUuid, userId, flags);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7679365.java!!!	secdiscard(in path : String) : void
+        try {
+            mStorageManager.secdiscard(path);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7679493.java!!!	isUserKeyUnlocked(in userId : int) : boolean
+        if (sStorageManager == null) {
+            sStorageManager = IStorageManager.Stub
+                    .asInterface(ServiceManager.getService("mount"));
+        }
+        if (sStorageManager == null) {
+            Slog.w(TAG, "Early during boot, assuming locked");
+            return false;
+        }
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return sStorageManager.isUserKeyUnlocked(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!7679621.java!!!	isEncrypted(inout file : File) : boolean
+        if (FileUtils.contains(Environment.getDataDirectory(), file)) {
+            return isEncrypted();
+        } else if (FileUtils.contains(Environment.getExpandDirectory(), file)) {
+            return true;
+        }
+        // TODO: extend to support shared storage
+        return false;
+!!!7679749.java!!!	isEncryptable() : boolean
+        return RoSystemProperties.CRYPTO_ENCRYPTABLE;
+!!!7679877.java!!!	isEncrypted() : boolean
+        return RoSystemProperties.CRYPTO_ENCRYPTED;
+!!!7680005.java!!!	isFileEncryptedNativeOnly() : boolean
+        if (!isEncrypted()) {
+            return false;
+        }
+        return RoSystemProperties.CRYPTO_FILE_ENCRYPTED;
+!!!7680133.java!!!	isBlockEncrypted() : boolean
+        if (!isEncrypted()) {
+            return false;
+        }
+        return RoSystemProperties.CRYPTO_BLOCK_ENCRYPTED;
+!!!7680261.java!!!	isNonDefaultBlockEncrypted() : boolean
+        if (!isBlockEncrypted()) {
+            return false;
+        }
+
+        try {
+            IStorageManager storageManager = IStorageManager.Stub.asInterface(
+                    ServiceManager.getService("mount"));
+            return storageManager.getPasswordType() != CRYPT_TYPE_DEFAULT;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error getting encryption type");
+            return false;
+        }
+!!!7680389.java!!!	isBlockEncrypting() : boolean
+        final String state = SystemProperties.get("vold.encrypt_progress", "");
+        return !"".equalsIgnoreCase(state);
+!!!7680517.java!!!	inCryptKeeperBounce() : boolean
+        final String status = SystemProperties.get("vold.decrypt");
+        return "trigger_restart_min_framework".equals(status);
+!!!7680645.java!!!	isFileEncryptedEmulatedOnly() : boolean
+        return SystemProperties.getBoolean(StorageManager.PROP_EMULATE_FBE, false);
+!!!7680773.java!!!	isFileEncryptedNativeOrEmulated() : boolean
+        return isFileEncryptedNativeOnly()
+               || isFileEncryptedEmulatedOnly();
+!!!7680901.java!!!	maybeTranslateEmulatedPathToInternal(inout path : File) : File
+        // Disabled now that FUSE has been replaced by sdcardfs
+        return path;
+!!!7681029.java!!!	openProxyFileDescriptor(in mode : int, inout callback : ProxyFileDescriptorCallback, inout handler : Handler, inout factory : ThreadFactory) : ParcelFileDescriptor
+        Preconditions.checkNotNull(callback);
+        MetricsLogger.count(mContext, "storage_open_proxy_file_descriptor", 1);
+        // Retry is needed because the mount point mFuseAppLoop is using may be unmounted before
+        // invoking StorageManagerService#openProxyFileDescriptor. In this case, we need to re-mount
+        // the bridge by calling mountProxyFileDescriptorBridge.
+        while (true) {
+            try {
+                synchronized (mFuseAppLoopLock) {
+                    boolean newlyCreated = false;
+                    if (mFuseAppLoop == null) {
+                        final AppFuseMount mount = mStorageManager.mountProxyFileDescriptorBridge();
+                        if (mount == null) {
+                            throw new IOException("Failed to mount proxy bridge");
+                        }
+                        mFuseAppLoop = new FuseAppLoop(mount.mountPointId, mount.fd, factory);
+                        newlyCreated = true;
+                    }
+                    if (handler == null) {
+                        handler = new Handler(Looper.getMainLooper());
+                    }
+                    try {
+                        final int fileId = mFuseAppLoop.registerCallback(callback, handler);
+                        final ParcelFileDescriptor pfd = mStorageManager.openProxyFileDescriptor(
+                                mFuseAppLoop.getMountPointId(), fileId, mode);
+                        if (pfd == null) {
+                            mFuseAppLoop.unregisterCallback(fileId);
+                            throw new FuseUnavailableMountException(
+                                    mFuseAppLoop.getMountPointId());
+                        }
+                        return pfd;
+                    } catch (FuseUnavailableMountException exception) {
+                        // The bridge is being unmounted. Tried to recreate it unless the bridge was
+                        // just created.
+                        if (newlyCreated) {
+                            throw new IOException(exception);
+                        }
+                        mFuseAppLoop = null;
+                        continue;
+                    }
+                }
+            } catch (RemoteException e) {
+                // Cannot recover from remote exception.
+                throw new IOException(e);
+            }
+        }
+!!!7681157.java!!!	openProxyFileDescriptor(in mode : int, inout callback : ProxyFileDescriptorCallback) : ParcelFileDescriptor
+        return openProxyFileDescriptor(mode, callback, null, null);
+!!!7681285.java!!!	openProxyFileDescriptor(in mode : int, inout callback : ProxyFileDescriptorCallback, inout handler : Handler) : ParcelFileDescriptor
+        Preconditions.checkNotNull(handler);
+        return openProxyFileDescriptor(mode, callback, handler, null);
+!!!7681413.java!!!	getProxyFileDescriptorMountPointId() : int
+        synchronized (mFuseAppLoopLock) {
+            return mFuseAppLoop != null ? mFuseAppLoop.getMountPointId() : -1;
+        }
+!!!7681541.java!!!	getCacheQuotaBytes(inout storageUuid : UUID) : long
+        try {
+            final ApplicationInfo app = mContext.getApplicationInfo();
+            return mStorageManager.getCacheQuotaBytes(convert(storageUuid), app.uid);
+        } catch (ParcelableException e) {
+            e.maybeRethrow(IOException.class);
+            throw new RuntimeException(e);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7681669.java!!!	getCacheQuotaBytes(inout path : File) : long
+        return getCacheQuotaBytes(getUuidForPath(path));
+!!!7681797.java!!!	getCacheSizeBytes(inout storageUuid : UUID) : long
+        try {
+            final ApplicationInfo app = mContext.getApplicationInfo();
+            return mStorageManager.getCacheSizeBytes(convert(storageUuid), app.uid);
+        } catch (ParcelableException e) {
+            e.maybeRethrow(IOException.class);
+            throw new RuntimeException(e);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7681925.java!!!	getCacheSizeBytes(inout path : File) : long
+        return getCacheSizeBytes(getUuidForPath(path));
+!!!7682053.java!!!	getCacheQuotaBytes() : long
+        return getCacheQuotaBytes(mContext.getCacheDir());
+!!!7682181.java!!!	getCacheSizeBytes() : long
+        return getCacheSizeBytes(mContext.getCacheDir());
+!!!7682309.java!!!	getExternalCacheQuotaBytes() : long
+        return getCacheQuotaBytes(mContext.getExternalCacheDir());
+!!!7682437.java!!!	getExternalCacheSizeBytes() : long
+        return getCacheSizeBytes(mContext.getExternalCacheDir());
+!!!7682565.java!!!	getAllocatableBytes(inout storageUuid : UUID) : long
+        return getAllocatableBytes(storageUuid, 0);
+!!!7682693.java!!!	getAllocatableBytes(inout storageUuid : UUID, in flags : int) : long
+        try {
+            return mStorageManager.getAllocatableBytes(convert(storageUuid), flags);
+        } catch (ParcelableException e) {
+            e.maybeRethrow(IOException.class);
+            throw new RuntimeException(e);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7682821.java!!!	getAllocatableBytes(inout path : File, in flags : int) : long
+        return getAllocatableBytes(getUuidForPath(path), flags);
+!!!7682949.java!!!	allocateBytes(inout storageUuid : UUID, in bytes : long) : void
+        allocateBytes(storageUuid, bytes, 0);
+!!!7683077.java!!!	allocateBytes(inout storageUuid : UUID, in bytes : long, in flags : int) : void
+        try {
+            mStorageManager.allocateBytes(convert(storageUuid), bytes, flags);
+        } catch (ParcelableException e) {
+            e.maybeRethrow(IOException.class);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7683205.java!!!	allocateBytes(inout path : File, in bytes : long, in flags : int) : void
+        allocateBytes(getUuidForPath(path), bytes, flags);
+!!!7683333.java!!!	allocateBytes(inout fd : FileDescriptor, in bytes : long) : void
+        allocateBytes(fd, bytes, 0);
+!!!7683461.java!!!	allocateBytes(inout fd : FileDescriptor, in bytes : long, in flags : int) : void
+        final File file = ParcelFileDescriptor.getFile(fd);
+        for (int i = 0; i < 3; i++) {
+            try {
+                final long haveBytes = Os.fstat(fd).st_blocks * 512;
+                final long needBytes = bytes - haveBytes;
+
+                if (needBytes > 0) {
+                    allocateBytes(file, needBytes, flags);
+                }
+
+                Os.posix_fallocate(fd, 0, bytes);
+                return;
+            } catch (ErrnoException e) {
+                if (e.errno == OsConstants.ENOSPC) {
+                    Log.w(TAG, "Odd, not enough space; let's try again?");
+                    continue;
+                }
+                throw e.rethrowAsIOException();
+            }
+        }
+        throw new IOException(
+                "Well this is embarassing; we can't allocate " + bytes + " for " + file);
+!!!7683589.java!!!	setCacheBehavior(inout path : File, in name : String, inout enabled : boolean) : void
+        if (!path.isDirectory()) {
+            throw new IOException("Cache behavior can only be set on directories");
+        }
+        if (enabled) {
+            try {
+                Os.setxattr(path.getAbsolutePath(), name,
+                        "1".getBytes(StandardCharsets.UTF_8), 0);
+            } catch (ErrnoException e) {
+                throw e.rethrowAsIOException();
+            }
+        } else {
+            try {
+                Os.removexattr(path.getAbsolutePath(), name);
+            } catch (ErrnoException e) {
+                if (e.errno != OsConstants.ENODATA) {
+                    throw e.rethrowAsIOException();
+                }
+            }
+        }
+!!!7683717.java!!!	isCacheBehavior(inout path : File, in name : String) : boolean
+        try {
+            Os.getxattr(path.getAbsolutePath(), name);
+            return true;
+        } catch (ErrnoException e) {
+            if (e.errno != OsConstants.ENODATA) {
+                throw e.rethrowAsIOException();
+            } else {
+                return false;
+            }
+        }
+!!!7683845.java!!!	setCacheBehaviorGroup(inout path : File, inout group : boolean) : void
+        setCacheBehavior(path, XATTR_CACHE_GROUP, group);
+!!!7683973.java!!!	isCacheBehaviorGroup(inout path : File) : boolean
+        return isCacheBehavior(path, XATTR_CACHE_GROUP);
+!!!7684101.java!!!	setCacheBehaviorAtomic(inout path : File, inout atomic : boolean) : void
+        setCacheBehaviorGroup(path, atomic);
+!!!7684229.java!!!	isCacheBehaviorAtomic(inout path : File) : boolean
+        return isCacheBehaviorGroup(path);
+!!!7684357.java!!!	setCacheBehaviorTombstone(inout path : File, inout tombstone : boolean) : void
+        setCacheBehavior(path, XATTR_CACHE_TOMBSTONE, tombstone);
+!!!7684485.java!!!	isCacheBehaviorTombstone(inout path : File) : boolean
+        return isCacheBehavior(path, XATTR_CACHE_TOMBSTONE);
+!!!7684613.java!!!	convert(in uuid : String) : UUID
+        if (Objects.equals(uuid, UUID_PRIVATE_INTERNAL)) {
+            return UUID_DEFAULT;
+        } else if (Objects.equals(uuid, UUID_PRIMARY_PHYSICAL)) {
+            return UUID_PRIMARY_PHYSICAL_;
+        } else if (Objects.equals(uuid, UUID_SYSTEM)) {
+            return UUID_SYSTEM_;
+        } else {
+            return UUID.fromString(uuid);
+        }
+!!!7684741.java!!!	convert(inout storageUuid : UUID) : String
+        if (UUID_DEFAULT.equals(storageUuid)) {
+            return UUID_PRIVATE_INTERNAL;
+        } else if (UUID_PRIMARY_PHYSICAL_.equals(storageUuid)) {
+            return UUID_PRIMARY_PHYSICAL;
+        } else if (UUID_SYSTEM_.equals(storageUuid)) {
+            return UUID_SYSTEM;
+        } else {
+            return storageUuid.toString();
+        }

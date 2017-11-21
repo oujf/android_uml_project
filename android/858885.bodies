@@ -1,0 +1,309 @@
+class NotificationIconContainer
+!!!3967621.java!!!	NotificationIconContainer(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        initDimens();
+        setWillNotDraw(!DEBUG);
+!!!3967749.java!!!	initDimens() : void
+        mDotPadding = getResources().getDimensionPixelSize(R.dimen.overflow_icon_dot_padding);
+        mStaticDotRadius = getResources().getDimensionPixelSize(R.dimen.overflow_dot_radius);
+!!!3967877.java!!!	onDraw(inout canvas : Canvas) : void
+        super.onDraw(canvas);
+        Paint paint = new Paint();
+        paint.setColor(Color.RED);
+        paint.setStyle(Paint.Style.STROKE);
+        canvas.drawRect(getActualPaddingStart(), 0, getLayoutEnd(), getHeight(), paint);
+!!!3968005.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        initDimens();
+!!!3968133.java!!!	onLayout(inout changed : boolean, in l : int, in t : int, in r : int, in b : int) : void
+        float centerY = getHeight() / 2.0f;
+        // we layout all our children on the left at the top
+        mIconSize = 0;
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            // We need to layout all children even the GONE ones, such that the heights are
+            // calculated correctly as they are used to calculate how many we can fit on the screen
+            int width = child.getMeasuredWidth();
+            int height = child.getMeasuredHeight();
+            int top = (int) (centerY - height / 2.0f);
+            child.layout(0, top, width, top + height);
+            if (i == 0) {
+                mIconSize = child.getWidth();
+            }
+        }
+        if (mShowAllIcons) {
+            resetViewStates();
+            calculateIconTranslations();
+            applyIconStates();
+        }
+!!!3968261.java!!!	applyIconStates() : void
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            ViewState childState = mIconStates.get(child);
+            if (childState != null) {
+                childState.applyToView(child);
+            }
+        }
+        mAddAnimationStartIndex = -1;
+        mCannedAnimationStartIndex = -1;
+        mDisallowNextAnimation = false;
+!!!3968389.java!!!	onViewAdded(inout child : View) : void
+        super.onViewAdded(child);
+        boolean isReplacingIcon = isReplacingIcon(child);
+        if (!mChangingViewPositions) {
+            IconState v = new IconState();
+            if (isReplacingIcon) {
+                v.justAdded = false;
+                v.justReplaced = true;
+            }
+            mIconStates.put(child, v);
+        }
+        int childIndex = indexOfChild(child);
+        if (childIndex < getChildCount() - 1 && !isReplacingIcon
+            && mIconStates.get(getChildAt(childIndex + 1)).iconAppearAmount > 0.0f) {
+            if (mAddAnimationStartIndex < 0) {
+                mAddAnimationStartIndex = childIndex;
+            } else {
+                mAddAnimationStartIndex = Math.min(mAddAnimationStartIndex, childIndex);
+            }
+        }
+        if (mDark && child instanceof StatusBarIconView) {
+            ((StatusBarIconView) child).setDark(mDark, false, 0);
+        }
+!!!3968517.java!!!	isReplacingIcon(inout child : View) : boolean
+        if (mReplacingIcons == null) {
+            return false;
+        }
+        if (!(child instanceof StatusBarIconView)) {
+            return false;
+        }
+        StatusBarIconView iconView = (StatusBarIconView) child;
+        Icon sourceIcon = iconView.getSourceIcon();
+        String groupKey = iconView.getNotification().getGroupKey();
+        ArrayList<StatusBarIcon> statusBarIcons = mReplacingIcons.get(groupKey);
+        if (statusBarIcons != null) {
+            StatusBarIcon replacedIcon = statusBarIcons.get(0);
+            if (sourceIcon.sameAs(replacedIcon.icon)) {
+                return true;
+            }
+        }
+        return false;
+!!!3968645.java!!!	onViewRemoved(inout child : View) : void
+        super.onViewRemoved(child);
+        if (child instanceof StatusBarIconView) {
+            boolean isReplacingIcon = isReplacingIcon(child);
+            final StatusBarIconView icon = (StatusBarIconView) child;
+            if (icon.getVisibleState() != StatusBarIconView.STATE_HIDDEN
+                    && child.getVisibility() == VISIBLE && isReplacingIcon) {
+                int animationStartIndex = findFirstViewIndexAfter(icon.getTranslationX());
+                if (mAddAnimationStartIndex < 0) {
+                    mAddAnimationStartIndex = animationStartIndex;
+                } else {
+                    mAddAnimationStartIndex = Math.min(mAddAnimationStartIndex, animationStartIndex);
+                }
+            }
+            if (!mChangingViewPositions) {
+                mIconStates.remove(child);
+                if (!isReplacingIcon) {
+                    addTransientView(icon, 0);
+                    icon.setVisibleState(StatusBarIconView.STATE_HIDDEN, true /* animate */,
+                            () -> removeTransientView(icon));
+                }
+            }
+        }
+!!!3968773.java!!!	findFirstViewIndexAfter(in translationX : float) : int
+        for (int i = 0; i < getChildCount(); i++) {
+            View view = getChildAt(i);
+            if (view.getTranslationX() > translationX) {
+                return i;
+            }
+        }
+        return getChildCount();
+!!!3968901.java!!!	resetViewStates() : void
+        for (int i = 0; i < getChildCount(); i++) {
+            View view = getChildAt(i);
+            ViewState iconState = mIconStates.get(view);
+            iconState.initFrom(view);
+            iconState.alpha = 1.0f;
+            iconState.hidden = false;
+        }
+!!!3969029.java!!!	calculateIconTranslations() : void
+        float translationX = getActualPaddingStart();
+        int firstOverflowIndex = -1;
+        int childCount = getChildCount();
+        int maxVisibleIcons = mDark ? MAX_VISIBLE_ICONS_WHEN_DARK : childCount;
+        float layoutEnd = getLayoutEnd();
+        float overflowStart = layoutEnd - mIconSize * (2 + OVERFLOW_EARLY_AMOUNT);
+        boolean hasAmbient = mSpeedBumpIndex != -1 && mSpeedBumpIndex < getChildCount();
+        float visualOverflowStart = 0;
+        for (int i = 0; i < childCount; i++) {
+            View view = getChildAt(i);
+            IconState iconState = mIconStates.get(view);
+            iconState.xTranslation = translationX;
+            boolean forceOverflow = mSpeedBumpIndex != -1 && i >= mSpeedBumpIndex
+                    && iconState.iconAppearAmount > 0.0f || i >= maxVisibleIcons;
+            boolean noOverflowAfter = i == childCount - 1;
+            float drawingScale = mDark && view instanceof StatusBarIconView
+                    ? ((StatusBarIconView) view).getIconScaleFullyDark()
+                    : 1f;
+            if (mOpenedAmount != 0.0f) {
+                noOverflowAfter = noOverflowAfter && !hasAmbient && !forceOverflow;
+            }
+            iconState.visibleState = StatusBarIconView.STATE_ICON;
+            if (firstOverflowIndex == -1 && (forceOverflow
+                    || (translationX >= (noOverflowAfter ? layoutEnd - mIconSize : overflowStart)))) {
+                firstOverflowIndex = noOverflowAfter && !forceOverflow ? i - 1 : i;
+                int totalDotLength = mStaticDotRadius * 6 + 2 * mDotPadding;
+                visualOverflowStart = overflowStart + mIconSize * (1 + OVERFLOW_EARLY_AMOUNT)
+                        - totalDotLength / 2
+                        - mIconSize * 0.5f + mStaticDotRadius;
+                if (forceOverflow) {
+                    visualOverflowStart = Math.min(translationX, visualOverflowStart
+                            + mStaticDotRadius * 2 + mDotPadding);
+                } else {
+                    visualOverflowStart += (translationX - overflowStart) / mIconSize
+                            * (mStaticDotRadius * 2 + mDotPadding);
+                }
+                if (mShowAllIcons) {
+                    // We want to perfectly position the overflow in the static state, such that
+                    // it's perfectly centered instead of measuring it from the end.
+                    mVisualOverflowAdaption = 0;
+                    if (firstOverflowIndex != -1) {
+                        View firstOverflowView = getChildAt(i);
+                        IconState overflowState = mIconStates.get(firstOverflowView);
+                        float totalAmount = layoutEnd - overflowState.xTranslation;
+                        float newPosition = overflowState.xTranslation + totalAmount / 2
+                                - totalDotLength / 2
+                                - mIconSize * 0.5f + mStaticDotRadius;
+                        mVisualOverflowAdaption = newPosition - visualOverflowStart;
+                        visualOverflowStart = newPosition;
+                    }
+                } else {
+                    visualOverflowStart += mVisualOverflowAdaption * (1f - mOpenedAmount);
+                }
+            }
+            translationX += iconState.iconAppearAmount * view.getWidth() * drawingScale;
+        }
+        if (firstOverflowIndex != -1) {
+            int numDots = 1;
+            translationX = visualOverflowStart;
+            for (int i = firstOverflowIndex; i < childCount; i++) {
+                View view = getChildAt(i);
+                IconState iconState = mIconStates.get(view);
+                int dotWidth = mStaticDotRadius * 2 + mDotPadding;
+                iconState.xTranslation = translationX;
+                if (numDots <= 3) {
+                    if (numDots == 1 && iconState.iconAppearAmount < 0.8f) {
+                        iconState.visibleState = StatusBarIconView.STATE_ICON;
+                        numDots--;
+                    } else {
+                        iconState.visibleState = StatusBarIconView.STATE_DOT;
+                    }
+                    translationX += (numDots == 3 ? 3 * dotWidth : dotWidth)
+                            * iconState.iconAppearAmount;
+                } else {
+                    iconState.visibleState = StatusBarIconView.STATE_HIDDEN;
+                }
+                numDots++;
+            }
+        }
+        boolean center = mDark;
+        if (center && translationX < getLayoutEnd()) {
+            float delta = (getLayoutEnd() - translationX) / 2;
+            if (firstOverflowIndex != -1) {
+                // If we have an overflow, only count those half for centering because the dots
+                // don't have a lot of visual weight.
+                float deltaIgnoringOverflow = (getLayoutEnd() - visualOverflowStart) / 2;
+                delta = (deltaIgnoringOverflow + delta) / 2;
+            }
+            for (int i = 0; i < childCount; i++) {
+                View view = getChildAt(i);
+                IconState iconState = mIconStates.get(view);
+                iconState.xTranslation += delta;
+            }
+        }
+
+        if (isLayoutRtl()) {
+            for (int i = 0; i < childCount; i++) {
+                View view = getChildAt(i);
+                IconState iconState = mIconStates.get(view);
+                iconState.xTranslation = getWidth() - iconState.xTranslation - view.getWidth();
+            }
+        }
+!!!3969157.java!!!	getLayoutEnd() : float
+        return getActualWidth() - getActualPaddingEnd();
+!!!3969285.java!!!	getActualPaddingEnd() : float
+        if (mActualPaddingEnd == NO_VALUE) {
+            return getPaddingEnd();
+        }
+        return mActualPaddingEnd;
+!!!3969413.java!!!	getActualPaddingStart() : float
+        if (mActualPaddingStart == NO_VALUE) {
+            return getPaddingStart();
+        }
+        return mActualPaddingStart;
+!!!3969541.java!!!	setShowAllIcons(inout showAllIcons : boolean) : void
+        mShowAllIcons = showAllIcons;
+!!!3969669.java!!!	setActualLayoutWidth(in actualLayoutWidth : int) : void
+        mActualLayoutWidth = actualLayoutWidth;
+        if (DEBUG) {
+            invalidate();
+        }
+!!!3969797.java!!!	setActualPaddingEnd(in paddingEnd : float) : void
+        mActualPaddingEnd = paddingEnd;
+        if (DEBUG) {
+            invalidate();
+        }
+!!!3969925.java!!!	setActualPaddingStart(in paddingStart : float) : void
+        mActualPaddingStart = paddingStart;
+        if (DEBUG) {
+            invalidate();
+        }
+!!!3970053.java!!!	getActualWidth() : int
+        if (mActualLayoutWidth == NO_VALUE) {
+            return getWidth();
+        }
+        return mActualLayoutWidth;
+!!!3970181.java!!!	setChangingViewPositions(inout changingViewPositions : boolean) : void
+        mChangingViewPositions = changingViewPositions;
+!!!3970309.java!!!	setDark(inout dark : boolean, inout fade : boolean, in delay : long) : void
+        mDark = dark;
+        mDisallowNextAnimation |= !fade;
+        for (int i = 0; i < getChildCount(); i++) {
+            View view = getChildAt(i);
+            if (view instanceof StatusBarIconView) {
+                ((StatusBarIconView) view).setDark(dark, fade, delay);
+                if (!dark && fade) {
+                    getIconState((StatusBarIconView) view).justUndarkened = true;
+                }
+            }
+        }
+!!!3970437.java!!!	getIconState(inout icon : StatusBarIconView) : NotificationIconContainer::IconState
+        return mIconStates.get(icon);
+!!!3970565.java!!!	setSpeedBumpIndex(in speedBumpIndex : int) : void
+        mSpeedBumpIndex = speedBumpIndex;
+!!!3970693.java!!!	setOpenedAmount(in expandAmount : float) : void
+        mOpenedAmount = expandAmount;
+!!!3970821.java!!!	getVisualOverflowAdaption() : float
+        return mVisualOverflowAdaption;
+!!!3970949.java!!!	setVisualOverflowAdaption(in visualOverflowAdaption : float) : void
+        mVisualOverflowAdaption = visualOverflowAdaption;
+!!!3971077.java!!!	hasOverflow() : boolean
+        float width = (getChildCount() + OVERFLOW_EARLY_AMOUNT) * mIconSize;
+        return width - (getWidth() - getActualPaddingStart() - getActualPaddingEnd()) > 0;
+!!!3971205.java!!!	getIconSize() : int
+        return mIconSize;
+!!!3971333.java!!!	setAnimationsEnabled(inout enabled : boolean) : void
+        if (!enabled && mAnimationsEnabled) {
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                ViewState childState = mIconStates.get(child);
+                if (childState != null) {
+                    childState.cancelAnimations(child);
+                    childState.applyToView(child);
+                }
+            }
+        }
+        mAnimationsEnabled = enabled;
+!!!3971461.java!!!	setReplacingIcons(inout replacingIcons : ArrayMap<String, ArrayList<StatusBarIcon>>) : void
+        mReplacingIcons = replacingIcons;

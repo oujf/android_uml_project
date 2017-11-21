@@ -1,0 +1,155 @@
+class QSTileImpl
+!!!3395077.java!!!	QSTileImpl(inout host : QSHost)
+        mHost = host;
+        mContext = host.getContext();
+!!!3395205.java!!!	setListening(inout listener : Object, inout listening : boolean) : void
+        if (listening) {
+            if (mListeners.add(listener) && mListeners.size() == 1) {
+                if (DEBUG) Log.d(TAG, "setListening " + true);
+                mHandler.obtainMessage(H.SET_LISTENING, 1, 0).sendToTarget();
+            }
+        } else {
+            if (mListeners.remove(listener) && mListeners.size() == 0) {
+                if (DEBUG) Log.d(TAG, "setListening " + false);
+                mHandler.obtainMessage(H.SET_LISTENING, 0, 0).sendToTarget();
+            }
+        }
+!!!3395333.java!!!	getTileSpec() : String
+        return mTileSpec;
+!!!3395461.java!!!	setTileSpec(in tileSpec : String) : void
+        mTileSpec = tileSpec;
+!!!3395589.java!!!	getHost() : QSHost
+        return mHost;
+!!!3395717.java!!!	createTileView(inout context : Context) : QSIconView
+        return new QSIconViewImpl(context);
+!!!3395845.java!!!	getDetailAdapter() : DetailAdapter
+        return null; // optional
+!!!3395973.java!!!	createDetailAdapter() : DetailAdapter
+        throw new UnsupportedOperationException();
+!!!3396101.java!!!	isAvailable() : boolean
+        return true;
+!!!3396229.java!!!	addCallback(inout callback : Callback) : void
+        mHandler.obtainMessage(H.ADD_CALLBACK, callback).sendToTarget();
+!!!3396357.java!!!	removeCallback(inout callback : Callback) : void
+        mHandler.obtainMessage(H.REMOVE_CALLBACK, callback).sendToTarget();
+!!!3396485.java!!!	removeCallbacks() : void
+        mHandler.sendEmptyMessage(H.REMOVE_CALLBACKS);
+!!!3396613.java!!!	click() : void
+        mMetricsLogger.write(populate(new LogMaker(ACTION_QS_CLICK).setType(TYPE_ACTION)));
+        mHandler.sendEmptyMessage(H.CLICK);
+!!!3396741.java!!!	secondaryClick() : void
+        mMetricsLogger.write(populate(new LogMaker(ACTION_QS_SECONDARY_CLICK).setType(TYPE_ACTION)));
+        mHandler.sendEmptyMessage(H.SECONDARY_CLICK);
+!!!3396869.java!!!	longClick() : void
+        mMetricsLogger.write(populate(new LogMaker(ACTION_QS_LONG_PRESS).setType(TYPE_ACTION)));
+        mHandler.sendEmptyMessage(H.LONG_CLICK);
+!!!3396997.java!!!	populate(inout logMaker : LogMaker) : LogMaker
+        if (mState instanceof BooleanState) {
+            logMaker.addTaggedData(FIELD_QS_VALUE, ((BooleanState) mState).value ? 1 : 0);
+        }
+        return logMaker.setSubtype(getMetricsCategory())
+                .addTaggedData(FIELD_QS_POSITION, mHost.indexOf(mTileSpec));
+!!!3397125.java!!!	showDetail(inout show : boolean) : void
+        mHandler.obtainMessage(H.SHOW_DETAIL, show ? 1 : 0, 0).sendToTarget();
+!!!3397253.java!!!	refreshState() : void
+        refreshState(null);
+!!!3397381.java!!!	refreshState(inout arg : Object) : void
+        mHandler.obtainMessage(H.REFRESH_STATE, arg).sendToTarget();
+!!!3397509.java!!!	clearState() : void
+        mHandler.sendEmptyMessage(H.CLEAR_STATE);
+!!!3397637.java!!!	userSwitch(in newUserId : int) : void
+        mHandler.obtainMessage(H.USER_SWITCH, newUserId, 0).sendToTarget();
+!!!3397765.java!!!	fireToggleStateChanged(inout state : boolean) : void
+        mHandler.obtainMessage(H.TOGGLE_STATE_CHANGED, state ? 1 : 0, 0).sendToTarget();
+!!!3397893.java!!!	fireScanStateChanged(inout state : boolean) : void
+        mHandler.obtainMessage(H.SCAN_STATE_CHANGED, state ? 1 : 0, 0).sendToTarget();
+!!!3398021.java!!!	destroy() : void
+        mHandler.sendEmptyMessage(H.DESTROY);
+!!!3398149.java!!!	getState() : TState
+        return mState;
+!!!3398277.java!!!	setDetailListening(inout listening : boolean) : void
+        // optional
+!!!3398405.java!!!	handleAddCallback(inout callback : Callback) : void
+        mCallbacks.add(callback);
+        callback.onStateChanged(mState);
+!!!3398533.java!!!	handleRemoveCallback(inout callback : Callback) : void
+        mCallbacks.remove(callback);
+!!!3398661.java!!!	handleRemoveCallbacks() : void
+        mCallbacks.clear();
+!!!3398789.java!!!	handleSecondaryClick() : void
+        // Default to normal click.
+        handleClick();
+!!!3398917.java!!!	handleLongClick() : void
+        Dependency.get(ActivityStarter.class).postStartActivityDismissingKeyguard(
+                getLongClickIntent(), 0);
+!!!3399173.java!!!	handleClearState() : void
+        mTmpState = newTileState();
+        mState = newTileState();
+!!!3399301.java!!!	handleRefreshState(inout arg : Object) : void
+        handleUpdateState(mTmpState, arg);
+        final boolean changed = mTmpState.copyTo(mState);
+        if (changed) {
+            handleStateChanged();
+        }
+!!!3399429.java!!!	handleStateChanged() : void
+        boolean delayAnnouncement = shouldAnnouncementBeDelayed();
+        if (mCallbacks.size() != 0) {
+            for (int i = 0; i < mCallbacks.size(); i++) {
+                mCallbacks.get(i).onStateChanged(mState);
+            }
+            if (mAnnounceNextStateChange && !delayAnnouncement) {
+                String announcement = composeChangeAnnouncement();
+                if (announcement != null) {
+                    mCallbacks.get(0).onAnnouncementRequested(announcement);
+                }
+            }
+        }
+        mAnnounceNextStateChange = mAnnounceNextStateChange && delayAnnouncement;
+!!!3399557.java!!!	shouldAnnouncementBeDelayed() : boolean
+        return false;
+!!!3399685.java!!!	composeChangeAnnouncement() : String
+        return null;
+!!!3399813.java!!!	handleShowDetail(inout show : boolean) : void
+        mShowingDetail = show;
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            mCallbacks.get(i).onShowDetail(show);
+        }
+!!!3399941.java!!!	isShowingDetail() : boolean
+        return mShowingDetail;
+!!!3400069.java!!!	handleToggleStateChanged(inout state : boolean) : void
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            mCallbacks.get(i).onToggleStateChanged(state);
+        }
+!!!3400197.java!!!	handleScanStateChanged(inout state : boolean) : void
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            mCallbacks.get(i).onScanStateChanged(state);
+        }
+!!!3400325.java!!!	handleUserSwitch(in newUserId : int) : void
+        handleRefreshState(null);
+!!!3400581.java!!!	handleDestroy() : void
+        setListening(false);
+        mCallbacks.clear();
+!!!3400709.java!!!	checkIfRestrictionEnforcedByAdminOnly(inout state : State, in userRestriction : String) : void
+        EnforcedAdmin admin = RestrictedLockUtils.checkIfRestrictionEnforced(mContext,
+                userRestriction, ActivityManager.getCurrentUser());
+        if (admin != null && !RestrictedLockUtils.hasBaseUserRestriction(mContext,
+                userRestriction, ActivityManager.getCurrentUser())) {
+            state.disabledByPolicy = true;
+            mEnforcedAdmin = admin;
+        } else {
+            state.disabledByPolicy = false;
+            mEnforcedAdmin = null;
+        }
+!!!3400965.java!!!	getColorForState(inout context : Context, in state : int) : int
+        switch (state) {
+            case Tile.STATE_UNAVAILABLE:
+                return Utils.getDisabled(context,
+                        Utils.getColorAttr(context, android.R.attr.colorForeground));
+            case Tile.STATE_INACTIVE:
+                return Utils.getColorAttr(context, android.R.attr.textColorHint);
+            case Tile.STATE_ACTIVE:
+                return Utils.getColorAttr(context, android.R.attr.textColorPrimary);
+            default:
+                Log.e("QSTile", "Invalid state " + state);
+                return 0;
+        }

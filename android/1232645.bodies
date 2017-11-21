@@ -1,0 +1,145 @@
+class WordIterator
+!!!8293637.java!!!	WordIterator()
+        this(Locale.getDefault());
+!!!8293765.java!!!	WordIterator(inout locale : Locale)
+        mIterator = BreakIterator.getWordInstance(locale);
+!!!8293893.java!!!	setCharSequence(inout charSequence : CharSequence, in start : int, in end : int) : void
+        if (0 <= start && end <= charSequence.length()) {
+            mCharSeq = charSequence;
+            mStart = Math.max(0, start - WINDOW_WIDTH);
+            mEnd = Math.min(charSequence.length(), end + WINDOW_WIDTH);
+            mIterator.setText(new CharSequenceCharacterIterator(charSequence, mStart, mEnd));
+        } else {
+            throw new IndexOutOfBoundsException("input indexes are outside the CharSequence");
+        }
+!!!8294021.java!!!	preceding(in offset : int) : int
+        checkOffsetIsValid(offset);
+        while (true) {
+            offset = mIterator.preceding(offset);
+            if (offset == BreakIterator.DONE || isOnLetterOrDigit(offset)) {
+                return offset;
+            }
+        }
+!!!8294149.java!!!	following(in offset : int) : int
+        checkOffsetIsValid(offset);
+        while (true) {
+            offset = mIterator.following(offset);
+            if (offset == BreakIterator.DONE || isAfterLetterOrDigit(offset)) {
+                return offset;
+            }
+        }
+!!!8294277.java!!!	isBoundary(in offset : int) : boolean
+        checkOffsetIsValid(offset);
+        return mIterator.isBoundary(offset);
+!!!8294405.java!!!	nextBoundary(in offset : int) : int
+        checkOffsetIsValid(offset);
+        return mIterator.following(offset);
+!!!8294533.java!!!	prevBoundary(in offset : int) : int
+        checkOffsetIsValid(offset);
+        return mIterator.preceding(offset);
+!!!8294661.java!!!	getBeginning(in offset : int) : int
+        // TODO: Check if usage of this can be updated to getBeginning(offset, true) if
+        // so this method can be removed.
+        return getBeginning(offset, false);
+!!!8294789.java!!!	getEnd(in offset : int) : int
+        // TODO: Check if usage of this can be updated to getEnd(offset, true), if
+        // so this method can be removed.
+        return getEnd(offset, false);
+!!!8294917.java!!!	getPrevWordBeginningOnTwoWordsBoundary(in offset : int) : int
+        return getBeginning(offset, true);
+!!!8295045.java!!!	getNextWordEndOnTwoWordBoundary(in offset : int) : int
+        return getEnd(offset, true);
+!!!8295173.java!!!	getBeginning(in offset : int, inout getPrevWordBeginningOnTwoWordsBoundary : boolean) : int
+        checkOffsetIsValid(offset);
+
+        if (isOnLetterOrDigit(offset)) {
+            if (mIterator.isBoundary(offset)
+                    && (!isAfterLetterOrDigit(offset)
+                            || !getPrevWordBeginningOnTwoWordsBoundary)) {
+                return offset;
+            } else {
+                return mIterator.preceding(offset);
+            }
+        } else {
+            if (isAfterLetterOrDigit(offset)) {
+                return mIterator.preceding(offset);
+            }
+        }
+        return BreakIterator.DONE;
+!!!8295301.java!!!	getEnd(in offset : int, inout getNextWordEndOnTwoWordBoundary : boolean) : int
+        checkOffsetIsValid(offset);
+
+        if (isAfterLetterOrDigit(offset)) {
+            if (mIterator.isBoundary(offset)
+                    && (!isOnLetterOrDigit(offset) || !getNextWordEndOnTwoWordBoundary)) {
+                return offset;
+            } else {
+                return mIterator.following(offset);
+            }
+        } else {
+            if (isOnLetterOrDigit(offset)) {
+                return mIterator.following(offset);
+            }
+        }
+        return BreakIterator.DONE;
+!!!8295429.java!!!	getPunctuationBeginning(in offset : int) : int
+        checkOffsetIsValid(offset);
+        while (offset != BreakIterator.DONE && !isPunctuationStartBoundary(offset)) {
+            offset = prevBoundary(offset);
+        }
+        // No need to shift offset, prevBoundary handles that.
+        return offset;
+!!!8295557.java!!!	getPunctuationEnd(in offset : int) : int
+        checkOffsetIsValid(offset);
+        while (offset != BreakIterator.DONE && !isPunctuationEndBoundary(offset)) {
+            offset = nextBoundary(offset);
+        }
+        // No need to shift offset, nextBoundary handles that.
+        return offset;
+!!!8295685.java!!!	isAfterPunctuation(in offset : int) : boolean
+        if (mStart < offset && offset <= mEnd) {
+            final int codePoint = Character.codePointBefore(mCharSeq, offset);
+            return isPunctuation(codePoint);
+        }
+        return false;
+!!!8295813.java!!!	isOnPunctuation(in offset : int) : boolean
+        if (mStart <= offset && offset < mEnd) {
+            final int codePoint = Character.codePointAt(mCharSeq, offset);
+            return isPunctuation(codePoint);
+        }
+        return false;
+!!!8295941.java!!!	isMidWordPunctuation(inout locale : Locale, in codePoint : int) : boolean
+        final int wb = UCharacter.getIntPropertyValue(codePoint, UProperty.WORD_BREAK);
+        return (wb == UCharacter.WordBreak.MIDLETTER
+                || wb == UCharacter.WordBreak.MIDNUMLET
+                || wb == UCharacter.WordBreak.SINGLE_QUOTE);
+!!!8296069.java!!!	isPunctuationStartBoundary(in offset : int) : boolean
+        return isOnPunctuation(offset) && !isAfterPunctuation(offset);
+!!!8296197.java!!!	isPunctuationEndBoundary(in offset : int) : boolean
+        return !isOnPunctuation(offset) && isAfterPunctuation(offset);
+!!!8296325.java!!!	isPunctuation(in cp : int) : boolean
+        final int type = Character.getType(cp);
+        return (type == Character.CONNECTOR_PUNCTUATION
+                || type == Character.DASH_PUNCTUATION
+                || type == Character.END_PUNCTUATION
+                || type == Character.FINAL_QUOTE_PUNCTUATION
+                || type == Character.INITIAL_QUOTE_PUNCTUATION
+                || type == Character.OTHER_PUNCTUATION
+                || type == Character.START_PUNCTUATION);
+!!!8296453.java!!!	isAfterLetterOrDigit(in offset : int) : boolean
+        if (mStart < offset && offset <= mEnd) {
+            final int codePoint = Character.codePointBefore(mCharSeq, offset);
+            if (Character.isLetterOrDigit(codePoint)) return true;
+        }
+        return false;
+!!!8296581.java!!!	isOnLetterOrDigit(in offset : int) : boolean
+        if (mStart <= offset && offset < mEnd) {
+            final int codePoint = Character.codePointAt(mCharSeq, offset);
+            if (Character.isLetterOrDigit(codePoint)) return true;
+        }
+        return false;
+!!!8296709.java!!!	checkOffsetIsValid(in offset : int) : void
+        if (!(mStart <= offset && offset <= mEnd)) {
+            throw new IllegalArgumentException("Invalid offset: " + (offset) +
+                    ". Valid range is [" + mStart + ", " + mEnd + "]");
+        }

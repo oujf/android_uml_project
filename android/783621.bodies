@@ -1,0 +1,93 @@
+class WorkLockActivity
+!!!3261957.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+
+        registerReceiverAsUser(mLockEventReceiver, UserHandle.ALL,
+                new IntentFilter(Intent.ACTION_DEVICE_LOCKED_CHANGED), /* permission */ null,
+                /* scheduler */ null);
+
+        // Once the receiver is registered, check whether anything happened between now and the time
+        // when this activity was launched. If it did and the user is unlocked now, just quit.
+        if (!getKeyguardManager().isDeviceLocked(getTargetUserId())) {
+            finish();
+            return;
+        }
+
+        // Draw captions overlaid on the content view, so the whole window is one solid color.
+        setOverlayWithDecorCaptionEnabled(true);
+
+        // Blank out the activity. When it is on-screen it will look like a Recents thumbnail with
+        // redaction switched on.
+        final View blankView = new View(this);
+        blankView.setContentDescription(getString(R.string.accessibility_desc_work_lock));
+        blankView.setBackgroundColor(getPrimaryColor());
+        setContentView(blankView);
+!!!3262085.java!!!	onWindowFocusChanged(inout hasFocus : boolean) : void
+        if (hasFocus) {
+            showConfirmCredentialActivity();
+        }
+!!!3262213.java!!!	onDestroy() : void
+        unregisterReceiver(mLockEventReceiver);
+        super.onDestroy();
+!!!3262341.java!!!	onBackPressed() : void
+        // Ignore back presses.
+        return;
+!!!3262469.java!!!	setTaskDescription(inout taskDescription : TaskDescription) : void
+        // Leave unset so we use the previous activity's task description.
+!!!3262597.java!!!	showConfirmCredentialActivity() : void
+        if (isFinishing() || !getKeyguardManager().isDeviceLocked(getTargetUserId())) {
+            // Don't show the confirm credentials screen if we are already unlocked / unlocking.
+            return;
+        }
+
+        final Intent credential = getKeyguardManager()
+                .createConfirmDeviceCredentialIntent(null, null, getTargetUserId());
+        if (credential == null) {
+            return;
+        }
+
+        final ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchTaskId(getTaskId());
+
+        // Bring this activity back to the foreground after confirming credentials.
+        final PendingIntent target = PendingIntent.getActivity(this, /* request */ -1, getIntent(),
+                PendingIntent.FLAG_CANCEL_CURRENT |
+                PendingIntent.FLAG_ONE_SHOT |
+                PendingIntent.FLAG_IMMUTABLE, options.toBundle());
+
+        credential.putExtra(Intent.EXTRA_INTENT, target.getIntentSender());
+        try {
+            ActivityManager.getService().startConfirmDeviceCredentialIntent(credential,
+                    getChallengeOptions().toBundle());
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to start confirm credential intent", e);
+        }
+!!!3262725.java!!!	getChallengeOptions() : ActivityOptions
+        // If we are taking up the whole screen, just use the default animation of clipping the
+        // credentials activity into the entire foreground.
+        if (!isInMultiWindowMode()) {
+            return ActivityOptions.makeBasic();
+        }
+
+        // Otherwise, animate the transition from this part of the screen to fullscreen
+        // using our own decor as the starting position.
+        final View view = getWindow().getDecorView();
+        return ActivityOptions.makeScaleUpAnimation(view, 0, 0, view.getWidth(), view.getHeight());
+!!!3262853.java!!!	getKeyguardManager() : KeyguardManager
+        if (mKgm == null) {
+            mKgm = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        }
+        return mKgm;
+!!!3262981.java!!!	getTargetUserId() : int
+        return getIntent().getIntExtra(Intent.EXTRA_USER_ID, UserHandle.myUserId());
+!!!3263109.java!!!	getPrimaryColor() : int
+        final TaskDescription taskDescription = (TaskDescription)
+                getIntent().getExtra(EXTRA_TASK_DESCRIPTION);
+        if (taskDescription != null && Color.alpha(taskDescription.getPrimaryColor()) == 255) {
+            return taskDescription.getPrimaryColor();
+        } else {
+            // No task description. Use an organization color set by the policy controller.
+            final DevicePolicyManager devicePolicyManager = (DevicePolicyManager)
+                    getSystemService(Context.DEVICE_POLICY_SERVICE);
+            return devicePolicyManager.getOrganizationColorForUser(getTargetUserId());
+        }

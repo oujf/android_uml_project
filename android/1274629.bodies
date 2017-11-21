@@ -1,0 +1,110 @@
+class HidlSupport
+!!!7470853.java!!!	deepEquals(inout lft : Object, inout rgt : Object) : boolean
+        if (lft == rgt) {
+            return true;
+        }
+        if (lft == null || rgt == null) {
+            return false;
+        }
+
+        Class<?> lftClazz = lft.getClass();
+        Class<?> rgtClazz = rgt.getClass();
+        if (lftClazz != rgtClazz) {
+            return false;
+        }
+
+        if (lftClazz.isArray()) {
+            Class<?> lftElementType = lftClazz.getComponentType();
+            if (lftElementType != rgtClazz.getComponentType()) {
+                return false;
+            }
+
+            if (lftElementType.isPrimitive()) {
+                return Objects.deepEquals(lft, rgt);
+            }
+
+            Object[] lftArray = (Object[])lft;
+            Object[] rgtArray = (Object[])rgt;
+            return (lftArray.length == rgtArray.length) &&
+                   IntStream.range(0, lftArray.length).allMatch(
+                        i -> deepEquals(lftArray[i], rgtArray[i]));
+        }
+
+        if (lft instanceof List<?>) {
+            List<Object> lftList = (List<Object>)lft;
+            List<Object> rgtList = (List<Object>)rgt;
+            if (lftList.size() != rgtList.size()) {
+                return false;
+            }
+
+            Iterator<Object> lftIter = lftList.iterator();
+            return rgtList.stream()
+                    .allMatch(rgtElement -> deepEquals(lftIter.next(), rgtElement));
+        }
+
+        throwErrorIfUnsupportedType(lft);
+
+        return lft.equals(rgt);
+!!!7470981.java!!!	deepHashCode(inout o : Object) : int
+        if (o == null) {
+            return 0;
+        }
+        Class<?> clazz = o.getClass();
+        if (clazz.isArray()) {
+            Class<?> elementType = clazz.getComponentType();
+            if (elementType.isPrimitive()) {
+                return primitiveArrayHashCode(o);
+            }
+            return Arrays.hashCode(Arrays.stream((Object[])o)
+                    .mapToInt(element -> deepHashCode(element))
+                    .toArray());
+        }
+
+        if (o instanceof List<?>) {
+            return Arrays.hashCode(((List<Object>)o).stream()
+                    .mapToInt(element -> deepHashCode(element))
+                    .toArray());
+        }
+
+        throwErrorIfUnsupportedType(o);
+
+        return o.hashCode();
+!!!7471109.java!!!	throwErrorIfUnsupportedType(inout o : Object) : void
+        if (o instanceof Collection<?> && !(o instanceof List<?>)) {
+            throw new UnsupportedOperationException(
+                    "Cannot check equality on collections other than lists: " +
+                    o.getClass().getName());
+        }
+
+        if (o instanceof Map<?, ?>) {
+            throw new UnsupportedOperationException(
+                    "Cannot check equality on maps");
+        }
+!!!7471237.java!!!	primitiveArrayHashCode(inout o : Object) : int
+        Class<?> elementType = o.getClass().getComponentType();
+        if (elementType == boolean.class) {
+            return Arrays.hashCode(((boolean[])o));
+        }
+        if (elementType == byte.class) {
+            return Arrays.hashCode(((byte[])o));
+        }
+        if (elementType == char.class) {
+            return Arrays.hashCode(((char[])o));
+        }
+        if (elementType == double.class) {
+            return Arrays.hashCode(((double[])o));
+        }
+        if (elementType == float.class) {
+            return Arrays.hashCode(((float[])o));
+        }
+        if (elementType == int.class) {
+            return Arrays.hashCode(((int[])o));
+        }
+        if (elementType == long.class) {
+            return Arrays.hashCode(((long[])o));
+        }
+        if (elementType == short.class) {
+            return Arrays.hashCode(((short[])o));
+        }
+        // Should not reach here.
+        throw new UnsupportedOperationException();

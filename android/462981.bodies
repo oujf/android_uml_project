@@ -1,0 +1,198 @@
+class MediaExtractor
+!!!1296901.cpp!!!	Create(in source : sp<DataSource>, in mime : char = NULL) : sp<IMediaExtractor>
+    ALOGV("MediaExtractor::Create %s", mime);
+
+    if (!property_get_bool("media.stagefright.extractremote", true)) {
+        // local extractor
+        ALOGW("creating media extractor in calling process");
+        return CreateFromService(source, mime);
+    } else {
+        // remote extractor
+        ALOGV("get service manager");
+        sp<IBinder> binder = defaultServiceManager()->getService(String16("media.extractor"));
+
+        if (binder != 0) {
+            sp<IMediaExtractorService> mediaExService(interface_cast<IMediaExtractorService>(binder));
+            sp<IMediaExtractor> ex = mediaExService->makeExtractor(source->asIDataSource(), mime);
+            return ex;
+        } else {
+            ALOGE("extractor service not running");
+            return NULL;
+        }
+    }
+    return NULL;
+!!!1297029.cpp!!!	CreateFromService(in source : sp<DataSource>, in mime : char = NULL) : sp<MediaExtractor>
+
+    ALOGV("MediaExtractor::CreateFromService %s", mime);
+    RegisterDefaultSniffers();
+
+    // initialize source decryption if needed
+    source->DrmInitialization(nullptr /* mime */);
+
+    sp<AMessage> meta;
+
+    String8 tmp;
+    if (mime == NULL) {
+        float confidence;
+        if (!sniff(source, &tmp, &confidence, &meta)) {
+            ALOGW("FAILED to autodetect media content.");
+
+            return NULL;
+        }
+
+        mime = tmp.string();
+        ALOGV("Autodetected media content as '%s' with confidence %.2f",
+             mime, confidence);
+    }
+
+    MediaExtractor *ret = NULL;
+    if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MPEG4)
+            || !strcasecmp(mime, "audio/mp4")) {
+        ret = new MPEG4Extractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
+        ret = new MP3Extractor(source, meta);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AMR_NB)
+            || !strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AMR_WB)) {
+        ret = new AMRExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_FLAC)) {
+        ret = new FLACExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_WAV)) {
+        ret = new WAVExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_OGG)) {
+        ret = new OggExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MATROSKA)) {
+        ret = new MatroskaExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MPEG2TS)) {
+        ret = new MPEG2TSExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC_ADTS)) {
+        ret = new AACExtractor(source, meta);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MPEG2PS)) {
+        ret = new MPEG2PSExtractor(source);
+    } else if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MIDI)) {
+        ret = new MidiExtractor(source);
+    }
+
+    if (ret != NULL) {
+       // track the container format (mpeg, aac, wvm, etc)
+       if (MEDIA_LOG) {
+          if (ret->mAnalyticsItem != NULL) {
+              size_t ntracks = ret->countTracks();
+              ret->mAnalyticsItem->setCString(kExtractorFormat,  ret->name());
+              // tracks (size_t)
+              ret->mAnalyticsItem->setInt32(kExtractorTracks,  ntracks);
+              // metadata
+              sp<MetaData> pMetaData = ret->getMetaData();
+              if (pMetaData != NULL) {
+                String8 xx = pMetaData->toString();
+                // 'titl' -- but this verges into PII
+                // 'mime'
+                const char *mime = NULL;
+                if (pMetaData->findCString(kKeyMIMEType, &mime)) {
+                    ret->mAnalyticsItem->setCString(kExtractorMime,  mime);
+                }
+                // what else is interesting and not already available?
+              }
+	  }
+       }
+    }
+
+    return ret;
+!!!1297541.cpp!!!	getMetaData() : sp<MetaData>
+    return new MetaData;
+!!!1297669.cpp!!!	getMetrics(inout reply : Parcel) : status_t
+
+    if (mAnalyticsItem == NULL || reply == NULL) {
+        return UNKNOWN_ERROR;
+    }
+
+    populateMetrics();
+    mAnalyticsItem->writeToParcel(reply);
+
+    return OK;
+!!!1297797.cpp!!!	flags() : uint32_t
+    return CAN_SEEK_BACKWARD | CAN_SEEK_FORWARD | CAN_PAUSE | CAN_SEEK;
+!!!1298437.cpp!!!	MediaExtractor()
+    if (!LOG_NDEBUG) {
+        uid_t uid = getuid();
+        struct passwd *pw = getpwuid(uid);
+        ALOGI("extractor created in uid: %d (%s)", getuid(), pw->pw_name);
+    }
+
+    mAnalyticsItem = NULL;
+    if (MEDIA_LOG) {
+        mAnalyticsItem = new MediaAnalyticsItem(kKeyExtractor);
+        (void) mAnalyticsItem->generateSessionID();
+    }
+!!!1298565.cpp!!!	~MediaExtractor()
+
+    // log the current record, provided it has some information worth recording
+    if (MEDIA_LOG) {
+        if (mAnalyticsItem != NULL) {
+            if (mAnalyticsItem->count() > 0) {
+                mAnalyticsItem->setFinalized(true);
+                mAnalyticsItem->selfrecord();
+            }
+        }
+    }
+    if (mAnalyticsItem != NULL) {
+        delete mAnalyticsItem;
+        mAnalyticsItem = NULL;
+    }
+!!!1298693.cpp!!!	populateMetrics() : void
+    ALOGV("MediaExtractor::populateMetrics");
+    // normally overridden in subclasses
+!!!1298821.cpp!!!	RegisterSniffer_l(in func : MediaExtractor::SnifferFunc) : void
+    for (List<SnifferFunc>::iterator it = gSniffers.begin();
+         it != gSniffers.end(); ++it) {
+        if (*it == func) {
+            return;
+        }
+    }
+
+    gSniffers.push_back(func);
+!!!1298949.cpp!!!	sniff(in source : sp<DataSource>, inout mimeType : String8, inout confidence : float, inout meta : sp<AMessage>) : bool
+    *mimeType = "";
+    *confidence = 0.0f;
+    meta->clear();
+
+    {
+        Mutex::Autolock autoLock(gSnifferMutex);
+        if (!gSniffersRegistered) {
+            return false;
+        }
+    }
+
+    for (List<SnifferFunc>::iterator it = gSniffers.begin();
+         it != gSniffers.end(); ++it) {
+        String8 newMimeType;
+        float newConfidence;
+        sp<AMessage> newMeta;
+        if ((*it)(source, &newMimeType, &newConfidence, &newMeta)) {
+            if (newConfidence > *confidence) {
+                *mimeType = newMimeType;
+                *confidence = newConfidence;
+                *meta = newMeta;
+            }
+        }
+    }
+
+    return *confidence > 0.0;
+!!!1299077.cpp!!!	RegisterDefaultSniffers() : void
+    Mutex::Autolock autoLock(gSnifferMutex);
+    if (gSniffersRegistered) {
+        return;
+    }
+
+    RegisterSniffer_l(SniffMPEG4);
+    RegisterSniffer_l(SniffMatroska);
+    RegisterSniffer_l(SniffOgg);
+    RegisterSniffer_l(SniffWAV);
+    RegisterSniffer_l(SniffFLAC);
+    RegisterSniffer_l(SniffAMR);
+    RegisterSniffer_l(SniffMPEG2TS);
+    RegisterSniffer_l(SniffMP3);
+    RegisterSniffer_l(SniffAAC);
+    RegisterSniffer_l(SniffMPEG2PS);
+    RegisterSniffer_l(SniffMidi);
+
+    gSniffersRegistered = true;

@@ -1,0 +1,80 @@
+class UserSpecifiedFocusComparator
+!!!8709125.java!!!	UserSpecifiedFocusComparator(inout nextFocusGetter : FocusFinder::UserSpecifiedFocusComparator::NextFocusGetter)
+            mNextFocusGetter = nextFocusGetter;
+!!!8709253.java!!!	recycle() : void
+            mRoot = null;
+            mHeadsOfChains.clear();
+            mIsConnectedTo.clear();
+            mOriginalOrdinal.clear();
+            mNextFoci.clear();
+!!!8709381.java!!!	setFocusables(inout focusables : List<View>, inout root : View) : void
+            mRoot = root;
+            for (int i = 0; i < focusables.size(); ++i) {
+                mOriginalOrdinal.put(focusables.get(i), i);
+            }
+
+            for (int i = focusables.size() - 1; i >= 0; i--) {
+                final View view = focusables.get(i);
+                final View next = mNextFocusGetter.get(mRoot, view);
+                if (next != null && mOriginalOrdinal.containsKey(next)) {
+                    mNextFoci.put(view, next);
+                    mIsConnectedTo.add(next);
+                }
+            }
+
+            for (int i = focusables.size() - 1; i >= 0; i--) {
+                final View view = focusables.get(i);
+                final View next = mNextFoci.get(view);
+                if (next != null && !mIsConnectedTo.contains(view)) {
+                    setHeadOfChain(view);
+                }
+            }
+!!!8709509.java!!!	setHeadOfChain(inout head : View) : void
+            for (View view = head; view != null; view = mNextFoci.get(view)) {
+                final View otherHead = mHeadsOfChains.get(view);
+                if (otherHead != null) {
+                    if (otherHead == head) {
+                        return; // This view has already had its head set properly
+                    }
+                    // A hydra -- multi-headed focus chain (e.g. A->C and B->C)
+                    // Use the one we've already chosen instead and reset this chain.
+                    view = head;
+                    head = otherHead;
+                }
+                mHeadsOfChains.put(view, head);
+            }
+!!!8709637.java!!!	compare(inout first : View, inout second : View) : int
+            if (first == second) {
+                return 0;
+            }
+            // Order between views within a chain is immaterial -- next/previous is
+            // within a chain is handled elsewhere.
+            View firstHead = mHeadsOfChains.get(first);
+            View secondHead = mHeadsOfChains.get(second);
+            if (firstHead == secondHead && firstHead != null) {
+                if (first == firstHead) {
+                    return -1; // first is the head, it should be first
+                } else if (second == firstHead) {
+                    return 1; // second is the head, it should be first
+                } else if (mNextFoci.get(first) != null) {
+                    return -1; // first is not the end of the chain
+                } else {
+                    return 1; // first is end of chain
+                }
+            }
+            boolean involvesChain = false;
+            if (firstHead != null) {
+                first = firstHead;
+                involvesChain = true;
+            }
+            if (secondHead != null) {
+                second = secondHead;
+                involvesChain = true;
+            }
+
+            if (involvesChain) {
+                // keep original order between chains
+                return mOriginalOrdinal.get(first) < mOriginalOrdinal.get(second) ? -1 : 1;
+            } else {
+                return 0;
+            }

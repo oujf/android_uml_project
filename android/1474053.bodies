@@ -1,0 +1,74 @@
+class ProcessTextIntentActionsHandler
+!!!9448709.java!!!	ProcessTextIntentActionsHandler(inout editor : Editor)
+            mEditor = Preconditions.checkNotNull(editor);
+            mTextView = Preconditions.checkNotNull(mEditor.mTextView);
+            mContext = Preconditions.checkNotNull(mTextView.getContext());
+            mPackageManager = Preconditions.checkNotNull(mContext.getPackageManager());
+            mPackageName = Preconditions.checkNotNull(mContext.getPackageName());
+!!!9448837.java!!!	onInitializeMenu(inout menu : Menu) : void
+            final int size = mSupportedActivities.size();
+            loadSupportedActivities();
+            for (int i = 0; i < size; i++) {
+                final ResolveInfo resolveInfo = mSupportedActivities.get(i);
+                menu.add(Menu.NONE, Menu.NONE,
+                        Editor.MENU_ITEM_ORDER_PROCESS_TEXT_INTENT_ACTIONS_START + i++,
+                        getLabel(resolveInfo))
+                        .setIntent(createProcessTextIntentForResolveInfo(resolveInfo))
+                        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            }
+!!!9448965.java!!!	performMenuItemAction(inout item : MenuItem) : boolean
+            return fireIntent(item.getIntent());
+!!!9449093.java!!!	initializeAccessibilityActions() : void
+            mAccessibilityIntents.clear();
+            mAccessibilityActions.clear();
+            int i = 0;
+            loadSupportedActivities();
+            for (ResolveInfo resolveInfo : mSupportedActivities) {
+                int actionId = TextView.ACCESSIBILITY_ACTION_PROCESS_TEXT_START_ID + i++;
+                mAccessibilityActions.put(
+                        actionId,
+                        new AccessibilityNodeInfo.AccessibilityAction(
+                                actionId, getLabel(resolveInfo)));
+                mAccessibilityIntents.put(
+                        actionId, createProcessTextIntentForResolveInfo(resolveInfo));
+            }
+!!!9449221.java!!!	onInitializeAccessibilityNodeInfo(inout nodeInfo : AccessibilityNodeInfo) : void
+            for (int i = 0; i < mAccessibilityActions.size(); i++) {
+                nodeInfo.addAction(mAccessibilityActions.valueAt(i));
+            }
+!!!9449349.java!!!	performAccessibilityAction(in actionId : int) : boolean
+            return fireIntent(mAccessibilityIntents.get(actionId));
+!!!9449477.java!!!	fireIntent(inout intent : Intent) : boolean
+            if (intent != null && Intent.ACTION_PROCESS_TEXT.equals(intent.getAction())) {
+                intent.putExtra(Intent.EXTRA_PROCESS_TEXT, mTextView.getSelectedText());
+                mEditor.mPreserveSelection = true;
+                mTextView.startActivityForResult(intent, TextView.PROCESS_TEXT_REQUEST_CODE);
+                return true;
+            }
+            return false;
+!!!9449605.java!!!	loadSupportedActivities() : void
+            mSupportedActivities.clear();
+            PackageManager packageManager = mTextView.getContext().getPackageManager();
+            List<ResolveInfo> unfiltered =
+                    packageManager.queryIntentActivities(createProcessTextIntent(), 0);
+            for (ResolveInfo info : unfiltered) {
+                if (isSupportedActivity(info)) {
+                    mSupportedActivities.add(info);
+                }
+            }
+!!!9449733.java!!!	isSupportedActivity(inout info : ResolveInfo) : boolean
+            return mPackageName.equals(info.activityInfo.packageName)
+                    || info.activityInfo.exported
+                            && (info.activityInfo.permission == null
+                                    || mContext.checkSelfPermission(info.activityInfo.permission)
+                                            == PackageManager.PERMISSION_GRANTED);
+!!!9449861.java!!!	createProcessTextIntentForResolveInfo(inout info : ResolveInfo) : Intent
+            return createProcessTextIntent()
+                    .putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, !mTextView.isTextEditable())
+                    .setClassName(info.activityInfo.packageName, info.activityInfo.name);
+!!!9449989.java!!!	createProcessTextIntent() : Intent
+            return new Intent()
+                    .setAction(Intent.ACTION_PROCESS_TEXT)
+                    .setType("text/plain");
+!!!9450117.java!!!	getLabel(inout resolveInfo : ResolveInfo) : CharSequence
+            return resolveInfo.loadLabel(mPackageManager);

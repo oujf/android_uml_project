@@ -1,0 +1,28 @@
+class RestorePackageMonitor
+!!!10919813.java!!!	onPackageAdded(in packageName : String, in uid : int) : void
+            synchronized (mLock) {
+                if (mRestorePendingAppPermissions == null) {
+                    return;
+                }
+                if (UserHandle.getUserId(uid) != UserHandle.USER_SYSTEM) {
+                    return;
+                }
+                final int count = mRestorePendingAppPermissions.size();
+                for (int i = count - 1; i >= 0; i--) {
+                    PendingAppPermission pendingAppPermission =
+                            mRestorePendingAppPermissions.get(i);
+                    if (!pendingAppPermission.packageName.equals(packageName)) {
+                        continue;
+                    }
+                    if (pendingAppPermission.apply(
+                            mAccountManagerService.mContext.getPackageManager())) {
+                        mRestorePendingAppPermissions.remove(i);
+                    }
+                }
+                if (mRestorePendingAppPermissions.isEmpty()
+                        && mRestoreCancelCommand != null) {
+                    mAccountManagerService.mHandler.removeCallbacks(mRestoreCancelCommand);
+                    mRestoreCancelCommand.run();
+                    mRestoreCancelCommand = null;
+                }
+            }

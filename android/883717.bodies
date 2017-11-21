@@ -1,0 +1,68 @@
+class EmergencyCryptkeeperText
+!!!4126725.java!!!	EmergencyCryptkeeperText(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        setVisibility(GONE);
+!!!4126853.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        mKeyguardUpdateMonitor = KeyguardUpdateMonitor.getInstance(mContext);
+        mKeyguardUpdateMonitor.registerCallback(mCallback);
+        getContext().registerReceiver(mReceiver,
+                new IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED));
+        update();
+!!!4126981.java!!!	onDetachedFromWindow() : void
+        super.onDetachedFromWindow();
+        if (mKeyguardUpdateMonitor != null) {
+            mKeyguardUpdateMonitor.removeCallback(mCallback);
+        }
+        getContext().unregisterReceiver(mReceiver);
+!!!4127109.java!!!	update() : void
+        boolean hasMobile = ConnectivityManager.from(mContext)
+                .isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
+        boolean airplaneMode = (Settings.Global.getInt(mContext.getContentResolver(),
+                Settings.Global.AIRPLANE_MODE_ON, 0) == 1);
+
+        if (!hasMobile || airplaneMode) {
+            setText(null);
+            setVisibility(GONE);
+            return;
+        }
+
+        boolean allSimsMissing = true;
+        CharSequence displayText = null;
+
+        List<SubscriptionInfo> subs = mKeyguardUpdateMonitor.getSubscriptionInfo(false);
+        final int N = subs.size();
+        for (int i = 0; i < N; i++) {
+            int subId = subs.get(i).getSubscriptionId();
+            IccCardConstants.State simState = mKeyguardUpdateMonitor.getSimState(subId);
+            CharSequence carrierName = subs.get(i).getCarrierName();
+            if (simState.iccCardExist() && !TextUtils.isEmpty(carrierName)) {
+                allSimsMissing = false;
+                displayText = carrierName;
+            }
+        }
+        if (allSimsMissing) {
+            if (N != 0) {
+                // Shows "Emergency calls only" on devices that are voice-capable.
+                // This depends on mPlmn containing the text "Emergency calls only" when the radio
+                // has some connectivity. Otherwise it should show "No service"
+                // Grab the first subscription, because they all should contain the emergency text,
+                // described above.
+                displayText = subs.get(0).getCarrierName();
+            } else {
+                // We don't have a SubscriptionInfo to get the emergency calls only from.
+                // Grab it from the old sticky broadcast if possible instead. We can use it
+                // here because no subscriptions are active, so we don't have
+                // to worry about MSIM clashing.
+                displayText = getContext().getText(
+                        com.android.internal.R.string.emergency_calls_only);
+                Intent i = getContext().registerReceiver(null,
+                        new IntentFilter(TelephonyIntents.SPN_STRINGS_UPDATED_ACTION));
+                if (i != null) {
+                    displayText = i.getStringExtra(TelephonyIntents.EXTRA_PLMN);
+                }
+            }
+        }
+
+        setText(displayText);
+        setVisibility(TextUtils.isEmpty(displayText) ? GONE : VISIBLE);

@@ -1,0 +1,659 @@
+class ValueAnimator
+!!!4925573.java!!!	setDurationScale(in durationScale : float) : void
+        sDurationScale = durationScale;
+!!!4925701.java!!!	getDurationScale() : float
+        return sDurationScale;
+!!!4925829.java!!!	areAnimatorsEnabled() : boolean
+        return !(sDurationScale == 0);
+!!!4926085.java!!!	ofInt(inout  : int...values) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator();
+        anim.setIntValues(values);
+        return anim;
+!!!4926213.java!!!	ofArgb(inout  : int...values) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator();
+        anim.setIntValues(values);
+        anim.setEvaluator(ArgbEvaluator.getInstance());
+        return anim;
+!!!4926341.java!!!	ofFloat(inout  : float...values) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator();
+        anim.setFloatValues(values);
+        return anim;
+!!!4926469.java!!!	ofPropertyValuesHolder(inout  : PropertyValuesHolder...values) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator();
+        anim.setValues(values);
+        return anim;
+!!!4926597.java!!!	ofObject(inout evaluator : TypeEvaluator, inout  : Object...values) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator();
+        anim.setObjectValues(values);
+        anim.setEvaluator(evaluator);
+        return anim;
+!!!4926725.java!!!	setIntValues(inout  : int...values) : void
+        if (values == null || values.length == 0) {
+            return;
+        }
+        if (mValues == null || mValues.length == 0) {
+            setValues(PropertyValuesHolder.ofInt("", values));
+        } else {
+            PropertyValuesHolder valuesHolder = mValues[0];
+            valuesHolder.setIntValues(values);
+        }
+        // New property/values/target should cause re-initialization prior to starting
+        mInitialized = false;
+!!!4926853.java!!!	setFloatValues(inout  : float...values) : void
+        if (values == null || values.length == 0) {
+            return;
+        }
+        if (mValues == null || mValues.length == 0) {
+            setValues(PropertyValuesHolder.ofFloat("", values));
+        } else {
+            PropertyValuesHolder valuesHolder = mValues[0];
+            valuesHolder.setFloatValues(values);
+        }
+        // New property/values/target should cause re-initialization prior to starting
+        mInitialized = false;
+!!!4926981.java!!!	setObjectValues(inout  : Object...values) : void
+        if (values == null || values.length == 0) {
+            return;
+        }
+        if (mValues == null || mValues.length == 0) {
+            setValues(PropertyValuesHolder.ofObject("", null, values));
+        } else {
+            PropertyValuesHolder valuesHolder = mValues[0];
+            valuesHolder.setObjectValues(values);
+        }
+        // New property/values/target should cause re-initialization prior to starting
+        mInitialized = false;
+!!!4927109.java!!!	setValues(inout  : PropertyValuesHolder...values) : void
+        int numValues = values.length;
+        mValues = values;
+        mValuesMap = new HashMap<String, PropertyValuesHolder>(numValues);
+        for (int i = 0; i < numValues; ++i) {
+            PropertyValuesHolder valuesHolder = values[i];
+            mValuesMap.put(valuesHolder.getPropertyName(), valuesHolder);
+        }
+        // New property/values/target should cause re-initialization prior to starting
+        mInitialized = false;
+!!!4927237.java!!!	getValues() : PropertyValuesHolder
+        return mValues;
+!!!4927365.java!!!	initAnimation() : void
+        if (!mInitialized) {
+            int numValues = mValues.length;
+            for (int i = 0; i < numValues; ++i) {
+                mValues[i].init();
+            }
+            mInitialized = true;
+        }
+!!!4927493.java!!!	setDuration(in duration : long) : ValueAnimator
+        if (duration < 0) {
+            throw new IllegalArgumentException("Animators cannot have negative duration: " +
+                    duration);
+        }
+        mDuration = duration;
+        return this;
+!!!4927621.java!!!	getScaledDuration() : long
+        return (long)(mDuration * sDurationScale);
+!!!4927749.java!!!	getDuration() : long
+        return mDuration;
+!!!4927877.java!!!	getTotalDuration() : long
+        if (mRepeatCount == INFINITE) {
+            return DURATION_INFINITE;
+        } else {
+            return mStartDelay + (mDuration * (mRepeatCount + 1));
+        }
+!!!4928005.java!!!	setCurrentPlayTime(in playTime : long) : void
+        float fraction = mDuration > 0 ? (float) playTime / mDuration : 1;
+        setCurrentFraction(fraction);
+!!!4928133.java!!!	setCurrentFraction(in fraction : float) : void
+        initAnimation();
+        fraction = clampFraction(fraction);
+        mStartTimeCommitted = true; // do not allow start time to be compensated for jank
+        if (isPulsingInternal()) {
+            long seekTime = (long) (getScaledDuration() * fraction);
+            long currentTime = AnimationUtils.currentAnimationTimeMillis();
+            // Only modify the start time when the animation is running. Seek fraction will ensure
+            // non-running animations skip to the correct start time.
+            mStartTime = currentTime - seekTime;
+        } else {
+            // If the animation loop hasn't started, or during start delay, the startTime will be
+            // adjusted once the delay has passed based on seek fraction.
+            mSeekFraction = fraction;
+        }
+        mOverallFraction = fraction;
+        final float currentIterationFraction = getCurrentIterationFraction(fraction, mReversing);
+        animateValue(currentIterationFraction);
+!!!4928261.java!!!	getCurrentIteration(in fraction : float) : int
+        fraction = clampFraction(fraction);
+        // If the overall fraction is a positive integer, we consider the current iteration to be
+        // complete. In other words, the fraction for the current iteration would be 1, and the
+        // current iteration would be overall fraction - 1.
+        double iteration = Math.floor(fraction);
+        if (fraction == iteration && fraction > 0) {
+            iteration--;
+        }
+        return (int) iteration;
+!!!4928389.java!!!	getCurrentIterationFraction(in fraction : float, inout inReverse : boolean) : float
+        fraction = clampFraction(fraction);
+        int iteration = getCurrentIteration(fraction);
+        float currentFraction = fraction - iteration;
+        return shouldPlayBackward(iteration, inReverse) ? 1f - currentFraction : currentFraction;
+!!!4928517.java!!!	clampFraction(in fraction : float) : float
+        if (fraction < 0) {
+            fraction = 0;
+        } else if (mRepeatCount != INFINITE) {
+            fraction = Math.min(fraction, mRepeatCount + 1);
+        }
+        return fraction;
+!!!4928645.java!!!	shouldPlayBackward(in iteration : int, inout inReverse : boolean) : boolean
+        if (iteration > 0 && mRepeatMode == REVERSE &&
+                (iteration < (mRepeatCount + 1) || mRepeatCount == INFINITE)) {
+            // if we were seeked to some other iteration in a reversing animator,
+            // figure out the correct direction to start playing based on the iteration
+            if (inReverse) {
+                return (iteration % 2) == 0;
+            } else {
+                return (iteration % 2) != 0;
+            }
+        } else {
+            return inReverse;
+        }
+!!!4928773.java!!!	getCurrentPlayTime() : long
+        if (!mInitialized || (!mStarted && mSeekFraction < 0)) {
+            return 0;
+        }
+        if (mSeekFraction >= 0) {
+            return (long) (mDuration * mSeekFraction);
+        }
+        float durationScale = sDurationScale == 0 ? 1 : sDurationScale;
+        return (long) ((AnimationUtils.currentAnimationTimeMillis() - mStartTime) / durationScale);
+!!!4928901.java!!!	getStartDelay() : long
+        return mStartDelay;
+!!!4929029.java!!!	setStartDelay(in startDelay : long) : void
+        // Clamp start delay to non-negative range.
+        if (startDelay < 0) {
+            Log.w(TAG, "Start delay should always be non-negative");
+            startDelay = 0;
+        }
+        mStartDelay = startDelay;
+!!!4929157.java!!!	getFrameDelay() : long
+        return AnimationHandler.getInstance().getFrameDelay();
+!!!4929285.java!!!	setFrameDelay(in frameDelay : long) : void
+        AnimationHandler.getInstance().setFrameDelay(frameDelay);
+!!!4929413.java!!!	getAnimatedValue() : Object
+        if (mValues != null && mValues.length > 0) {
+            return mValues[0].getAnimatedValue();
+        }
+        // Shouldn't get here; should always have values unless ValueAnimator was set up wrong
+        return null;
+!!!4929541.java!!!	getAnimatedValue(in propertyName : String) : Object
+        PropertyValuesHolder valuesHolder = mValuesMap.get(propertyName);
+        if (valuesHolder != null) {
+            return valuesHolder.getAnimatedValue();
+        } else {
+            // At least avoid crashing if called with bogus propertyName
+            return null;
+        }
+!!!4929669.java!!!	setRepeatCount(in value : int) : void
+        mRepeatCount = value;
+!!!4929797.java!!!	getRepeatCount() : int
+        return mRepeatCount;
+!!!4929925.java!!!	setRepeatMode(in value : int) : void
+        mRepeatMode = value;
+!!!4930053.java!!!	getRepeatMode() : int
+        return mRepeatMode;
+!!!4930181.java!!!	addUpdateListener(inout listener : ValueAnimator::AnimatorUpdateListener) : void
+        if (mUpdateListeners == null) {
+            mUpdateListeners = new ArrayList<AnimatorUpdateListener>();
+        }
+        mUpdateListeners.add(listener);
+!!!4930309.java!!!	removeAllUpdateListeners() : void
+        if (mUpdateListeners == null) {
+            return;
+        }
+        mUpdateListeners.clear();
+        mUpdateListeners = null;
+!!!4930437.java!!!	removeUpdateListener(inout listener : ValueAnimator::AnimatorUpdateListener) : void
+        if (mUpdateListeners == null) {
+            return;
+        }
+        mUpdateListeners.remove(listener);
+        if (mUpdateListeners.size() == 0) {
+            mUpdateListeners = null;
+        }
+!!!4930565.java!!!	setInterpolator(inout value : TimeInterpolator) : void
+        if (value != null) {
+            mInterpolator = value;
+        } else {
+            mInterpolator = new LinearInterpolator();
+        }
+!!!4930693.java!!!	getInterpolator() : TimeInterpolator
+        return mInterpolator;
+!!!4930821.java!!!	setEvaluator(inout value : TypeEvaluator) : void
+        if (value != null && mValues != null && mValues.length > 0) {
+            mValues[0].setEvaluator(value);
+        }
+!!!4930949.java!!!	notifyStartListeners() : void
+        if (mListeners != null && !mStartListenersCalled) {
+            ArrayList<AnimatorListener> tmpListeners =
+                    (ArrayList<AnimatorListener>) mListeners.clone();
+            int numListeners = tmpListeners.size();
+            for (int i = 0; i < numListeners; ++i) {
+                tmpListeners.get(i).onAnimationStart(this, mReversing);
+            }
+        }
+        mStartListenersCalled = true;
+!!!4931077.java!!!	start(inout playBackwards : boolean) : void
+        if (Looper.myLooper() == null) {
+            throw new AndroidRuntimeException("Animators may only be run on Looper threads");
+        }
+        mReversing = playBackwards;
+        mSelfPulse = !mSuppressSelfPulseRequested;
+        // Special case: reversing from seek-to-0 should act as if not seeked at all.
+        if (playBackwards && mSeekFraction != -1 && mSeekFraction != 0) {
+            if (mRepeatCount == INFINITE) {
+                // Calculate the fraction of the current iteration.
+                float fraction = (float) (mSeekFraction - Math.floor(mSeekFraction));
+                mSeekFraction = 1 - fraction;
+            } else {
+                mSeekFraction = 1 + mRepeatCount - mSeekFraction;
+            }
+        }
+        mStarted = true;
+        mPaused = false;
+        mRunning = false;
+        mAnimationEndRequested = false;
+        // Resets mLastFrameTime when start() is called, so that if the animation was running,
+        // calling start() would put the animation in the
+        // started-but-not-yet-reached-the-first-frame phase.
+        mLastFrameTime = -1;
+        mFirstFrameTime = -1;
+        mStartTime = -1;
+        addAnimationCallback(0);
+
+        if (mStartDelay == 0 || mSeekFraction >= 0 || mReversing) {
+            // If there's no start delay, init the animation and notify start listeners right away
+            // to be consistent with the previous behavior. Otherwise, postpone this until the first
+            // frame after the start delay.
+            startAnimation();
+            if (mSeekFraction == -1) {
+                // No seek, start at play time 0. Note that the reason we are not using fraction 0
+                // is because for animations with 0 duration, we want to be consistent with pre-N
+                // behavior: skip to the final value immediately.
+                setCurrentPlayTime(0);
+            } else {
+                setCurrentFraction(mSeekFraction);
+            }
+        }
+!!!4931205.java!!!	startWithoutPulsing(inout inReverse : boolean) : void
+        mSuppressSelfPulseRequested = true;
+        if (inReverse) {
+            reverse();
+        } else {
+            start();
+        }
+        mSuppressSelfPulseRequested = false;
+!!!4931333.java!!!	start() : void
+        start(false);
+!!!4931461.java!!!	cancel() : void
+        if (Looper.myLooper() == null) {
+            throw new AndroidRuntimeException("Animators may only be run on Looper threads");
+        }
+
+        // If end has already been requested, through a previous end() or cancel() call, no-op
+        // until animation starts again.
+        if (mAnimationEndRequested) {
+            return;
+        }
+
+        // Only cancel if the animation is actually running or has been started and is about
+        // to run
+        // Only notify listeners if the animator has actually started
+        if ((mStarted || mRunning) && mListeners != null) {
+            if (!mRunning) {
+                // If it's not yet running, then start listeners weren't called. Call them now.
+                notifyStartListeners();
+            }
+            ArrayList<AnimatorListener> tmpListeners =
+                    (ArrayList<AnimatorListener>) mListeners.clone();
+            for (AnimatorListener listener : tmpListeners) {
+                listener.onAnimationCancel(this);
+            }
+        }
+        endAnimation();
+
+!!!4931589.java!!!	end() : void
+        if (Looper.myLooper() == null) {
+            throw new AndroidRuntimeException("Animators may only be run on Looper threads");
+        }
+        if (!mRunning) {
+            // Special case if the animation has not yet started; get it ready for ending
+            startAnimation();
+            mStarted = true;
+        } else if (!mInitialized) {
+            initAnimation();
+        }
+        animateValue(shouldPlayBackward(mRepeatCount, mReversing) ? 0f : 1f);
+        endAnimation();
+!!!4931717.java!!!	resume() : void
+        if (Looper.myLooper() == null) {
+            throw new AndroidRuntimeException("Animators may only be resumed from the same " +
+                    "thread that the animator was started on");
+        }
+        if (mPaused && !mResumed) {
+            mResumed = true;
+            if (mPauseTime > 0) {
+                addAnimationCallback(0);
+            }
+        }
+        super.resume();
+!!!4931845.java!!!	pause() : void
+        boolean previouslyPaused = mPaused;
+        super.pause();
+        if (!previouslyPaused && mPaused) {
+            mPauseTime = -1;
+            mResumed = false;
+        }
+!!!4931973.java!!!	isRunning() : boolean
+        return mRunning;
+!!!4932101.java!!!	isStarted() : boolean
+        return mStarted;
+!!!4932229.java!!!	reverse() : void
+        if (isPulsingInternal()) {
+            long currentTime = AnimationUtils.currentAnimationTimeMillis();
+            long currentPlayTime = currentTime - mStartTime;
+            long timeLeft = getScaledDuration() - currentPlayTime;
+            mStartTime = currentTime - timeLeft;
+            mStartTimeCommitted = true; // do not allow start time to be compensated for jank
+            mReversing = !mReversing;
+        } else if (mStarted) {
+            mReversing = !mReversing;
+            end();
+        } else {
+            start(true);
+        }
+!!!4932357.java!!!	canReverse() : boolean
+        return true;
+!!!4932485.java!!!	endAnimation() : void
+        if (mAnimationEndRequested) {
+            return;
+        }
+        removeAnimationCallback();
+
+        mAnimationEndRequested = true;
+        mPaused = false;
+        boolean notify = (mStarted || mRunning) && mListeners != null;
+        if (notify && !mRunning) {
+            // If it's not yet running, then start listeners weren't called. Call them now.
+            notifyStartListeners();
+        }
+        mRunning = false;
+        mStarted = false;
+        mStartListenersCalled = false;
+        mLastFrameTime = -1;
+        mFirstFrameTime = -1;
+        mStartTime = -1;
+        if (notify && mListeners != null) {
+            ArrayList<AnimatorListener> tmpListeners =
+                    (ArrayList<AnimatorListener>) mListeners.clone();
+            int numListeners = tmpListeners.size();
+            for (int i = 0; i < numListeners; ++i) {
+                tmpListeners.get(i).onAnimationEnd(this, mReversing);
+            }
+        }
+        // mReversing needs to be reset *after* notifying the listeners for the end callbacks.
+        mReversing = false;
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
+            Trace.asyncTraceEnd(Trace.TRACE_TAG_VIEW, getNameForTrace(),
+                    System.identityHashCode(this));
+        }
+!!!4932613.java!!!	startAnimation() : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
+            Trace.asyncTraceBegin(Trace.TRACE_TAG_VIEW, getNameForTrace(),
+                    System.identityHashCode(this));
+        }
+
+        mAnimationEndRequested = false;
+        initAnimation();
+        mRunning = true;
+        if (mSeekFraction >= 0) {
+            mOverallFraction = mSeekFraction;
+        } else {
+            mOverallFraction = 0f;
+        }
+        if (mListeners != null) {
+            notifyStartListeners();
+        }
+!!!4932741.java!!!	isPulsingInternal() : boolean
+        return mLastFrameTime >= 0;
+!!!4932869.java!!!	getNameForTrace() : String
+        return "animator";
+!!!4932997.java!!!	commitAnimationFrame(in frameTime : long) : void
+        if (!mStartTimeCommitted) {
+            mStartTimeCommitted = true;
+            long adjustment = frameTime - mLastFrameTime;
+            if (adjustment > 0) {
+                mStartTime += adjustment;
+                if (DEBUG) {
+                    Log.d(TAG, "Adjusted start time by " + adjustment + " ms: " + toString());
+                }
+            }
+        }
+!!!4933125.java!!!	animateBasedOnTime(in currentTime : long) : boolean
+        boolean done = false;
+        if (mRunning) {
+            final long scaledDuration = getScaledDuration();
+            final float fraction = scaledDuration > 0 ?
+                    (float)(currentTime - mStartTime) / scaledDuration : 1f;
+            final float lastFraction = mOverallFraction;
+            final boolean newIteration = (int) fraction > (int) lastFraction;
+            final boolean lastIterationFinished = (fraction >= mRepeatCount + 1) &&
+                    (mRepeatCount != INFINITE);
+            if (scaledDuration == 0) {
+                // 0 duration animator, ignore the repeat count and skip to the end
+                done = true;
+            } else if (newIteration && !lastIterationFinished) {
+                // Time to repeat
+                if (mListeners != null) {
+                    int numListeners = mListeners.size();
+                    for (int i = 0; i < numListeners; ++i) {
+                        mListeners.get(i).onAnimationRepeat(this);
+                    }
+                }
+            } else if (lastIterationFinished) {
+                done = true;
+            }
+            mOverallFraction = clampFraction(fraction);
+            float currentIterationFraction = getCurrentIterationFraction(
+                    mOverallFraction, mReversing);
+            animateValue(currentIterationFraction);
+        }
+        return done;
+!!!4933253.java!!!	animateBasedOnPlayTime(in currentPlayTime : long, in lastPlayTime : long, inout inReverse : boolean) : void
+        if (currentPlayTime < 0 || lastPlayTime < 0) {
+            throw new UnsupportedOperationException("Error: Play time should never be negative.");
+        }
+
+        initAnimation();
+        // Check whether repeat callback is needed only when repeat count is non-zero
+        if (mRepeatCount > 0) {
+            int iteration = (int) (currentPlayTime / mDuration);
+            int lastIteration = (int) (lastPlayTime / mDuration);
+
+            // Clamp iteration to [0, mRepeatCount]
+            iteration = Math.min(iteration, mRepeatCount);
+            lastIteration = Math.min(lastIteration, mRepeatCount);
+
+            if (iteration != lastIteration) {
+                if (mListeners != null) {
+                    int numListeners = mListeners.size();
+                    for (int i = 0; i < numListeners; ++i) {
+                        mListeners.get(i).onAnimationRepeat(this);
+                    }
+                }
+            }
+        }
+
+        if (mRepeatCount != INFINITE && currentPlayTime >= (mRepeatCount + 1) * mDuration) {
+            skipToEndValue(inReverse);
+        } else {
+            // Find the current fraction:
+            float fraction = currentPlayTime / (float) mDuration;
+            fraction = getCurrentIterationFraction(fraction, inReverse);
+            animateValue(fraction);
+        }
+!!!4933381.java!!!	skipToEndValue(inout inReverse : boolean) : void
+        initAnimation();
+        float endFraction = inReverse ? 0f : 1f;
+        if (mRepeatCount % 2 == 1 && mRepeatMode == REVERSE) {
+            // This would end on fraction = 0
+            endFraction = 0f;
+        }
+        animateValue(endFraction);
+!!!4933509.java!!!	isInitialized() : boolean
+        return mInitialized;
+!!!4933637.java!!!	doAnimationFrame(in frameTime : long) : boolean
+        if (mStartTime < 0) {
+            // First frame. If there is start delay, start delay count down will happen *after* this
+            // frame.
+            mStartTime = mReversing ? frameTime : frameTime + (long) (mStartDelay * sDurationScale);
+        }
+
+        // Handle pause/resume
+        if (mPaused) {
+            mPauseTime = frameTime;
+            removeAnimationCallback();
+            return false;
+        } else if (mResumed) {
+            mResumed = false;
+            if (mPauseTime > 0) {
+                // Offset by the duration that the animation was paused
+                mStartTime += (frameTime - mPauseTime);
+            }
+        }
+
+        if (!mRunning) {
+            // If not running, that means the animation is in the start delay phase of a forward
+            // running animation. In the case of reversing, we want to run start delay in the end.
+            if (mStartTime > frameTime && mSeekFraction == -1) {
+                // This is when no seek fraction is set during start delay. If developers change the
+                // seek fraction during the delay, animation will start from the seeked position
+                // right away.
+                return false;
+            } else {
+                // If mRunning is not set by now, that means non-zero start delay,
+                // no seeking, not reversing. At this point, start delay has passed.
+                mRunning = true;
+                startAnimation();
+            }
+        }
+
+        if (mLastFrameTime < 0) {
+            if (mSeekFraction >= 0) {
+                long seekTime = (long) (getScaledDuration() * mSeekFraction);
+                mStartTime = frameTime - seekTime;
+                mSeekFraction = -1;
+            }
+            mStartTimeCommitted = false; // allow start time to be compensated for jank
+        }
+        mLastFrameTime = frameTime;
+        // The frame time might be before the start time during the first frame of
+        // an animation.  The "current time" must always be on or after the start
+        // time to avoid animating frames at negative time intervals.  In practice, this
+        // is very rare and only happens when seeking backwards.
+        final long currentTime = Math.max(frameTime, mStartTime);
+        boolean finished = animateBasedOnTime(currentTime);
+
+        if (finished) {
+            endAnimation();
+        }
+        return finished;
+!!!4933765.java!!!	pulseAnimationFrame(in frameTime : long) : boolean
+        if (mSelfPulse) {
+            // Pulse animation frame will *always* be after calling start(). If mSelfPulse isn't
+            // set to false at this point, that means child animators did not call super's start().
+            // This can happen when the Animator is just a non-animating wrapper around a real
+            // functional animation. In this case, we can't really pulse a frame into the animation,
+            // because the animation cannot necessarily be properly initialized (i.e. no start/end
+            // values set).
+            return false;
+        }
+        return doAnimationFrame(frameTime);
+!!!4933893.java!!!	addOneShotCommitCallback() : void
+        if (!mSelfPulse) {
+            return;
+        }
+        getAnimationHandler().addOneShotCommitCallback(this);
+!!!4934021.java!!!	removeAnimationCallback() : void
+        if (!mSelfPulse) {
+            return;
+        }
+        getAnimationHandler().removeCallback(this);
+!!!4934149.java!!!	addAnimationCallback(in delay : long) : void
+        if (!mSelfPulse) {
+            return;
+        }
+        getAnimationHandler().addAnimationFrameCallback(this, delay);
+!!!4934277.java!!!	getAnimatedFraction() : float
+        return mCurrentFraction;
+!!!4934405.java!!!	animateValue(in fraction : float) : void
+        fraction = mInterpolator.getInterpolation(fraction);
+        mCurrentFraction = fraction;
+        int numValues = mValues.length;
+        for (int i = 0; i < numValues; ++i) {
+            mValues[i].calculateValue(fraction);
+        }
+        if (mUpdateListeners != null) {
+            int numListeners = mUpdateListeners.size();
+            for (int i = 0; i < numListeners; ++i) {
+                mUpdateListeners.get(i).onAnimationUpdate(this);
+            }
+        }
+!!!4934533.java!!!	clone() : ValueAnimator
+        final ValueAnimator anim = (ValueAnimator) super.clone();
+        if (mUpdateListeners != null) {
+            anim.mUpdateListeners = new ArrayList<AnimatorUpdateListener>(mUpdateListeners);
+        }
+        anim.mSeekFraction = -1;
+        anim.mReversing = false;
+        anim.mInitialized = false;
+        anim.mStarted = false;
+        anim.mRunning = false;
+        anim.mPaused = false;
+        anim.mResumed = false;
+        anim.mStartListenersCalled = false;
+        anim.mStartTime = -1;
+        anim.mStartTimeCommitted = false;
+        anim.mAnimationEndRequested = false;
+        anim.mPauseTime = -1;
+        anim.mLastFrameTime = -1;
+        anim.mFirstFrameTime = -1;
+        anim.mOverallFraction = 0;
+        anim.mCurrentFraction = 0;
+        anim.mSelfPulse = true;
+        anim.mSuppressSelfPulseRequested = false;
+
+        PropertyValuesHolder[] oldValues = mValues;
+        if (oldValues != null) {
+            int numValues = oldValues.length;
+            anim.mValues = new PropertyValuesHolder[numValues];
+            anim.mValuesMap = new HashMap<String, PropertyValuesHolder>(numValues);
+            for (int i = 0; i < numValues; ++i) {
+                PropertyValuesHolder newValuesHolder = oldValues[i].clone();
+                anim.mValues[i] = newValuesHolder;
+                anim.mValuesMap.put(newValuesHolder.getPropertyName(), newValuesHolder);
+            }
+        }
+        return anim;
+!!!4934789.java!!!	getCurrentAnimationsCount() : int
+        return AnimationHandler.getAnimationCount();
+!!!4934917.java!!!	toString() : String
+        String returnVal = "ValueAnimator@" + Integer.toHexString(hashCode());
+        if (mValues != null) {
+            for (int i = 0; i < mValues.length; ++i) {
+                returnVal += "\n    " + mValues[i].toString();
+            }
+        }
+        return returnVal;
+!!!4935045.java!!!	setAllowRunningAsynchronously(inout mayRunAsync : boolean) : void
+        // It is up to subclasses to support this, if they can.
+!!!4935173.java!!!	getAnimationHandler() : AnimationHandler
+        return AnimationHandler.getInstance();

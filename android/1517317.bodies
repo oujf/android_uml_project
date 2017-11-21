@@ -1,0 +1,75 @@
+class LocaleUtils
+!!!9946373.java!!!	calculateMatchingSubScore(in supported : ULocale, in desired : ULocale) : byte
+        // Assuming supported/desired is fully expanded.
+        if (supported.equals(desired)) {
+            return 3;  // Exact match.
+        }
+
+        // Skip language matching since it was already done in calculateMatchingScore.
+
+        final String supportedScript = supported.getScript();
+        if (supportedScript.isEmpty() || !supportedScript.equals(desired.getScript())) {
+            // TODO: Need subscript matching. For example, Hanb should match with Bopo.
+            return 1;
+        }
+
+        final String supportedCountry = supported.getCountry();
+        if (supportedCountry.isEmpty() || !supportedCountry.equals(desired.getCountry())) {
+            return 2;
+        }
+
+        // Ignore others e.g. variants, extensions.
+        return 3;
+!!!9947141.java!!!	filterByLanguage(inout sources : List<T>, inout extractor : LocaleUtils::LocaleExtractor, inout preferredLocales : LocaleList, inout dest : ArrayList<T>) : void
+        if (preferredLocales.isEmpty()) {
+            return;
+        }
+
+        final int numPreferredLocales = preferredLocales.size();
+        final HashMap<String, ScoreEntry> scoreboard = new HashMap<>();
+        final byte[] score = new byte[numPreferredLocales];
+        final ULocale[] preferredULocaleCache = new ULocale[numPreferredLocales];
+
+        final int sourceSize = sources.size();
+        for (int i = 0; i < sourceSize; ++i) {
+            final Locale locale = extractor.get(sources.get(i));
+            if (locale == null) {
+                continue;
+            }
+
+            boolean canSkip = true;
+            for (int j = 0; j < numPreferredLocales; ++j) {
+                final Locale preferredLocale = preferredLocales.get(j);
+                if (!TextUtils.equals(locale.getLanguage(), preferredLocale.getLanguage())) {
+                    score[j] = 0;
+                    continue;
+                }
+                if (preferredULocaleCache[j] == null) {
+                    preferredULocaleCache[j] = ULocale.addLikelySubtags(
+                            ULocale.forLocale(preferredLocale));
+                }
+                score[j] = calculateMatchingSubScore(
+                        preferredULocaleCache[j],
+                        ULocale.addLikelySubtags(ULocale.forLocale(locale)));
+                if (canSkip && score[j] != 0) {
+                    canSkip = false;
+                }
+            }
+            if (canSkip) {
+                continue;
+            }
+
+            final String lang = locale.getLanguage();
+            final ScoreEntry bestScore = scoreboard.get(lang);
+            if (bestScore == null) {
+                scoreboard.put(lang, new ScoreEntry(score, i));
+            } else {
+                bestScore.updateIfBetter(score, i);
+            }
+        }
+
+        final ScoreEntry[] result = scoreboard.values().toArray(new ScoreEntry[scoreboard.size()]);
+        Arrays.sort(result);
+        for (final ScoreEntry entry : result) {
+            dest.add(sources.get(entry.mIndex));
+        }

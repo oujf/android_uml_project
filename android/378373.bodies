@@ -1,0 +1,53 @@
+class PipeReader
+!!!1095173.cpp!!!	PipeReader(inout pipe : Pipe)
+    android_atomic_inc(&pipe.mReaders);
+!!!1095301.cpp!!!	~PipeReader()
+#if !LOG_NDEBUG
+    int32_t readers =
+#else
+    (void)
+#endif
+            android_atomic_dec(&mPipe.mReaders);
+    ALOG_ASSERT(readers > 0);
+!!!1095685.cpp!!!	availableToRead() : ssize_t
+    if (CC_UNLIKELY(!mNegotiated)) {
+        return NEGOTIATE;
+    }
+    size_t lost;
+    ssize_t avail = mFifoReader.available(&lost);
+    if (avail == -EOVERFLOW || lost > 0) {
+        mFramesOverrun += lost;
+        ++mOverruns;
+        avail = OVERRUN;
+    }
+    return avail;
+!!!1095813.cpp!!!	read(inout buffer : void, in count : size_t) : ssize_t
+    size_t lost;
+    ssize_t actual = mFifoReader.read(buffer, count, NULL /*timeout*/, &lost);
+    ALOG_ASSERT(actual <= count);
+    if (actual == -EOVERFLOW || lost > 0) {
+        mFramesOverrun += lost;
+        ++mOverruns;
+        actual = OVERRUN;
+    }
+    if (actual <= 0) {
+        return actual;
+    }
+    mFramesRead += (size_t) actual;
+    return actual;
+!!!1095941.cpp!!!	flush() : ssize_t
+    if (CC_UNLIKELY(!mNegotiated)) {
+        return NEGOTIATE;
+    }
+    size_t lost;
+    ssize_t flushed = mFifoReader.flush(&lost);
+    if (flushed == -EOVERFLOW || lost > 0) {
+        mFramesOverrun += lost;
+        ++mOverruns;
+        flushed = OVERRUN;
+    }
+    if (flushed <= 0) {
+        return flushed;
+    }
+    mFramesRead += (size_t) flushed;  // we consider flushed frames as read, but not lost frames
+    return flushed;

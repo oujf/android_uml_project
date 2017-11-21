@@ -1,0 +1,225 @@
+class PinnerService
+!!!10814085.java!!!	PinnerService(inout context : Context)
+        super(context);
+
+        mContext = context;
+        mShouldPinCamera = context.getResources().getBoolean(
+                com.android.internal.R.bool.config_pinnerCameraApp);
+        mPinnerHandler = new PinnerHandler(BackgroundThread.get().getLooper());
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+        filter.addDataScheme("package");
+        mContext.registerReceiver(mBroadcastReceiver, filter);
+!!!10814213.java!!!	onStart() : void
+        if (DEBUG) {
+            Slog.i(TAG, "Starting PinnerService");
+        }
+        mBinderService = new BinderService();
+        publishBinderService("pinner", mBinderService);
+        publishLocalService(PinnerService.class, this);
+
+        mPinnerHandler.obtainMessage(PinnerHandler.PIN_ONSTART_MSG).sendToTarget();
+        mPinnerHandler.obtainMessage(PinnerHandler.PIN_CAMERA_MSG, UserHandle.USER_SYSTEM, 0)
+                .sendToTarget();
+!!!10814341.java!!!	onSwitchUser(in userHandle : int) : void
+        mPinnerHandler.obtainMessage(PinnerHandler.PIN_CAMERA_MSG, userHandle, 0).sendToTarget();
+!!!10814469.java!!!	update(inout updatedPackages : ArraySet) : void
+        ApplicationInfo cameraInfo = getCameraInfo(UserHandle.USER_SYSTEM);
+        if (cameraInfo != null && updatedPackages.contains(cameraInfo.packageName)) {
+            Slog.i(TAG, "Updating pinned files.");
+            mPinnerHandler.obtainMessage(PinnerHandler.PIN_CAMERA_MSG, UserHandle.USER_SYSTEM, 0)
+                    .sendToTarget();
+        }
+!!!10814597.java!!!	handlePinOnStart() : void
+         // Files to pin come from the overlay and can be specified per-device config
+        String[] filesToPin = mContext.getResources().getStringArray(
+                com.android.internal.R.array.config_defaultPinnerServiceFiles);
+        synchronized(this) {
+            // Continue trying to pin remaining files even if there is a failure
+            for (int i = 0; i < filesToPin.length; i++){
+                PinnedFile pf = pinFile(filesToPin[i], 0, 0, 0);
+                if (pf != null) {
+                    mPinnedFiles.add(pf);
+                    if (DEBUG) {
+                        Slog.i(TAG, "Pinned file = " + pf.mFilename);
+                    }
+                } else {
+                    Slog.e(TAG, "Failed to pin file = " + filesToPin[i]);
+                }
+            }
+        }
+!!!10814725.java!!!	handlePinCamera(in userHandle : int) : void
+        if (mShouldPinCamera) {
+            synchronized(this) {
+                boolean success = pinCamera(userHandle);
+                if (!success) {
+                    //this is not necessarily an error
+                    if (DEBUG) {
+                        Slog.v(TAG, "Failed to pin camera.");
+                    }
+                }
+            }
+        }
+!!!10814853.java!!!	alreadyPinned(in userHandle : int) : boolean
+        ApplicationInfo cameraInfo = getCameraInfo(userHandle);
+        if (cameraInfo == null ) {
+            return false;
+        }
+        for (int i = 0; i < mPinnedCameraFiles.size(); i++) {
+            if (mPinnedCameraFiles.get(i).mFilename.equals(cameraInfo.sourceDir)) {
+                if (DEBUG) {
+                  Slog.v(TAG, "Camera is already pinned");
+                }
+                return true;
+            }
+        }
+        return false;
+!!!10814981.java!!!	unpinCameraApp() : void
+        for (int i = 0; i < mPinnedCameraFiles.size(); i++) {
+            unpinFile(mPinnedCameraFiles.get(i));
+        }
+        mPinnedCameraFiles.clear();
+!!!10815109.java!!!	isResolverActivity(inout info : ActivityInfo) : boolean
+        return ResolverActivity.class.getName().equals(info.name);
+!!!10815237.java!!!	getCameraInfo(in userHandle : int) : ApplicationInfo
+        //  find the camera via an intent
+        //  use INTENT_ACTION_STILL_IMAGE_CAMERA instead of _SECURE.  On a
+        //  device without a fbe enabled, the _SECURE intent will never get set.
+        Intent cameraIntent = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+        PackageManager pm = mContext.getPackageManager();
+        ResolveInfo cameraResolveInfo = pm.resolveActivityAsUser(cameraIntent,
+                PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_DIRECT_BOOT_AWARE
+                        | PackageManager.MATCH_DIRECT_BOOT_UNAWARE,
+                userHandle);
+        if (cameraResolveInfo == null ) {
+            //this is not necessarily an error
+            if (DEBUG) {
+              Slog.v(TAG, "Unable to resolve camera intent");
+            }
+            return null;
+        }
+
+        if (isResolverActivity(cameraResolveInfo.activityInfo))
+        {
+            if (DEBUG) {
+              Slog.v(TAG, "cameraIntent returned resolverActivity");
+            }
+            return null;
+        }
+
+        return cameraResolveInfo.activityInfo.applicationInfo;
+!!!10815365.java!!!	pinCamera(in userHandle : int) : boolean
+        ApplicationInfo cameraInfo = getCameraInfo(userHandle);
+        if (cameraInfo == null) {
+            return false;
+        }
+
+        //unpin after checking that the camera intent has resolved
+        //this prevents us from thrashing when switching users with
+        //FBE enabled, because the intent won't resolve until the unlock
+        unpinCameraApp();
+
+        //pin APK
+        String camAPK = cameraInfo.sourceDir;
+        PinnedFile pf = pinFile(camAPK, 0, 0, MAX_CAMERA_PIN_SIZE);
+        if (pf == null) {
+            Slog.e(TAG, "Failed to pin " + camAPK);
+            return false;
+        }
+        if (DEBUG) {
+            Slog.i(TAG, "Pinned " + pf.mFilename);
+        }
+        mPinnedCameraFiles.add(pf);
+
+        // determine the ABI from either ApplicationInfo or Build
+        String arch = "arm";
+        if (cameraInfo.primaryCpuAbi != null
+            && VMRuntime.is64BitAbi(cameraInfo.primaryCpuAbi)) {
+            arch = arch + "64";
+        } else {
+            if (VMRuntime.is64BitAbi(Build.SUPPORTED_ABIS[0])) {
+                arch = arch + "64";
+            }
+        }
+
+        // get the path to the odex or oat file
+        String baseCodePath = cameraInfo.getBaseCodePath();
+        String[] files = null;
+        try {
+            files = DexFile.getDexFileOutputPaths(baseCodePath, arch);
+        } catch (IOException ioe) {}
+        if (files == null) {
+            return true;
+        }
+
+        //not pinning the oat/odex is not a fatal error
+        for (String file : files) {
+            pf = pinFile(file, 0, 0, MAX_CAMERA_PIN_SIZE);
+            if (pf != null) {
+                mPinnedCameraFiles.add(pf);
+                if (DEBUG) {
+                    Slog.i(TAG, "Pinned " + pf.mFilename);
+                }
+            }
+        }
+
+        return true;
+!!!10815493.java!!!	pinFile(in fileToPin : String, in offset : long, in length : long, in maxSize : long) : PinnerService::PinnedFile
+        FileDescriptor fd = new FileDescriptor();
+        try {
+            fd = Os.open(fileToPin,
+                    OsConstants.O_RDONLY | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW,
+                    OsConstants.O_RDONLY);
+
+            StructStat sb = Os.fstat(fd);
+
+            if (offset + length > sb.st_size) {
+                Os.close(fd);
+                Slog.e(TAG, "Failed to pin file " + fileToPin +
+                        ", request extends beyond end of file.  offset + length =  "
+                        + (offset + length) + ", file length = " + sb.st_size);
+                return null;
+            }
+
+            if (length == 0) {
+                length = sb.st_size - offset;
+            }
+
+            if (maxSize > 0 && length > maxSize) {
+                Slog.e(TAG, "Could not pin file " + fileToPin +
+                        ", size = " + length + ", maxSize = " + maxSize);
+                Os.close(fd);
+                return null;
+            }
+
+            long address = Os.mmap(0, length, OsConstants.PROT_READ,
+                    OsConstants.MAP_PRIVATE, fd, offset);
+            Os.close(fd);
+
+            Os.mlock(address, length);
+
+            return new PinnedFile(address, length, fileToPin);
+        } catch (ErrnoException e) {
+            Slog.e(TAG, "Could not pin file " + fileToPin + " with error " + e.getMessage());
+            if(fd.valid()) {
+                try {
+                    Os.close(fd);
+                }
+                catch (ErrnoException eClose) {
+                    Slog.e(TAG, "Failed to close fd, error = " + eClose.getMessage());
+                }
+            }
+            return null;
+        }
+!!!10815621.java!!!	unpinFile(inout pf : PinnerService::PinnedFile) : boolean
+        try {
+            Os.munlock(pf.mAddress, pf.mLength);
+        } catch (ErrnoException e) {
+            Slog.e(TAG, "Failed to unpin file " + pf.mFilename + " with error " + e.getMessage());
+            return false;
+        }
+        if (DEBUG) {
+            Slog.i(TAG, "Unpinned file " + pf.mFilename );
+        }
+        return true;

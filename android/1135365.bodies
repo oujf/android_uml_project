@@ -1,0 +1,74 @@
+class BluetoothDeviceFilterUtils
+!!!6077061.java!!!	patternToString(inout p : Pattern) : String
+        return p == null ? null : p.pattern();
+!!!6077189.java!!!	patternFromString(in s : String) : Pattern
+        return s == null ? null : Pattern.compile(s);
+!!!6077317.java!!!	matches(inout filter : ScanFilter, inout device : BluetoothDevice) : boolean
+        boolean result = matchesAddress(filter.getDeviceAddress(), device)
+                && matchesServiceUuid(filter.getServiceUuid(), filter.getServiceUuidMask(), device);
+        if (DEBUG) debugLogMatchResult(result, device, filter);
+        return result;
+!!!6077445.java!!!	matchesAddress(in deviceAddress : String, inout device : BluetoothDevice) : boolean
+        final boolean result = deviceAddress == null
+                || (device != null && deviceAddress.equals(device.getAddress()));
+        if (DEBUG) debugLogMatchResult(result, device, deviceAddress);
+        return result;
+!!!6077573.java!!!	matchesServiceUuids(inout serviceUuids : List<ParcelUuid>, inout serviceUuidMasks : List<ParcelUuid>, inout device : BluetoothDevice) : boolean
+        for (int i = 0; i < serviceUuids.size(); i++) {
+            ParcelUuid uuid = serviceUuids.get(i);
+            ParcelUuid uuidMask = serviceUuidMasks.get(i);
+            if (!matchesServiceUuid(uuid, uuidMask, device)) {
+                return false;
+            }
+        }
+        return true;
+!!!6077701.java!!!	matchesServiceUuid(inout serviceUuid : ParcelUuid, inout serviceUuidMask : ParcelUuid, inout device : BluetoothDevice) : boolean
+        final boolean result = serviceUuid == null ||
+                ScanFilter.matchesServiceUuids(
+                        serviceUuid,
+                        serviceUuidMask,
+                        Arrays.asList(device.getUuids()));
+        if (DEBUG) debugLogMatchResult(result, device, serviceUuid);
+        return result;
+!!!6077829.java!!!	matchesName(inout namePattern : Pattern, inout device : BluetoothDevice) : boolean
+        boolean result;
+        if (namePattern == null)  {
+            result = true;
+        } else if (device == null) {
+            result = false;
+        } else {
+            final String name = device.getName();
+            result = name != null && namePattern.matcher(name).find();
+        }
+        if (DEBUG) debugLogMatchResult(result, device, namePattern);
+        return result;
+!!!6077957.java!!!	matchesName(inout namePattern : Pattern, inout device : ScanResult) : boolean
+        boolean result;
+        if (namePattern == null)  {
+            result = true;
+        } else if (device == null) {
+            result = false;
+        } else {
+            final String name = device.SSID;
+            result = name != null && namePattern.matcher(name).find();
+        }
+        if (DEBUG) debugLogMatchResult(result, device, namePattern);
+        return result;
+!!!6078085.java!!!	debugLogMatchResult(inout result : boolean, inout device : BluetoothDevice, inout criteria : Object) : void
+        Log.i(LOG_TAG, getDeviceDisplayNameInternal(device) + (result ? " ~ " : " !~ ") + criteria);
+!!!6078213.java!!!	debugLogMatchResult(inout result : boolean, inout device : ScanResult, inout criteria : Object) : void
+        Log.i(LOG_TAG, getDeviceDisplayNameInternal(device) + (result ? " ~ " : " !~ ") + criteria);
+!!!6078341.java!!!	getDeviceDisplayNameInternal(inout device : BluetoothDevice) : String
+        return firstNotEmpty(device.getAliasName(), device.getAddress());
+!!!6078469.java!!!	getDeviceDisplayNameInternal(inout device : ScanResult) : String
+        return firstNotEmpty(device.SSID, device.BSSID);
+!!!6078597.java!!!	getDeviceMacAddress(inout device : Parcelable) : String
+        if (device instanceof BluetoothDevice) {
+            return ((BluetoothDevice) device).getAddress();
+        } else if (device instanceof ScanResult) {
+            return ((ScanResult) device).BSSID;
+        } else if (device instanceof android.bluetooth.le.ScanResult) {
+            return getDeviceMacAddress(((android.bluetooth.le.ScanResult) device).getDevice());
+        } else {
+            throw new IllegalArgumentException("Unknown device type: " + device);
+        }

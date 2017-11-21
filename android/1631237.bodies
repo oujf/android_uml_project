@@ -1,0 +1,70 @@
+class AccountManagerInternalImpl
+!!!10949381.java!!!	requestAccountAccess(inout account : Account, in packageName : String, in userId : int, inout callback : RemoteCallback) : void
+            if (account == null) {
+                Slog.w(TAG, "account cannot be null");
+                return;
+            }
+            if (packageName == null) {
+                Slog.w(TAG, "packageName cannot be null");
+                return;
+            }
+            if (userId < UserHandle.USER_SYSTEM) {
+                Slog.w(TAG, "user id must be concrete");
+                return;
+            }
+            if (callback == null) {
+                Slog.w(TAG, "callback cannot be null");
+                return;
+            }
+
+            int visibility =
+                resolveAccountVisibility(account, packageName, getUserAccounts(userId));
+            if (visibility == AccountManager.VISIBILITY_NOT_VISIBLE) {
+                Slog.w(TAG, "requestAccountAccess: account is hidden");
+                return;
+            }
+
+            if (AccountManagerService.this.hasAccountAccess(account, packageName,
+                    new UserHandle(userId))) {
+                Bundle result = new Bundle();
+                result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, true);
+                callback.sendResult(result);
+                return;
+            }
+
+            final int uid;
+            try {
+                uid = mPackageManager.getPackageUidAsUser(packageName, userId);
+            } catch (NameNotFoundException e) {
+                Slog.e(TAG, "Unknown package " + packageName);
+                return;
+            }
+
+            Intent intent = newRequestAccountAccessIntent(account, packageName, uid, callback);
+            final UserAccounts userAccounts;
+            synchronized (mUsers) {
+                userAccounts = mUsers.get(userId);
+            }
+            SystemNotificationChannels.createAccountChannelForPackage(packageName, uid, mContext);
+            doNotification(userAccounts, account, null, intent, packageName, userId);
+!!!10949509.java!!!	addOnAppPermissionChangeListener(inout listener : AccountManagerInternal::OnAppPermissionChangeListener) : void
+            // Listeners are a final CopyOnWriteArrayList, hence no lock needed.
+            mAppPermissionChangeListeners.add(listener);
+!!!10949637.java!!!	hasAccountAccess(inout account : Account, in uid : int) : boolean
+            return AccountManagerService.this.hasAccountAccess(account, null, uid);
+!!!10949765.java!!!	backupAccountAccessPermissions(in userId : int) : byte
+            synchronized (mLock) {
+                if (mBackupHelper == null) {
+                    mBackupHelper = new AccountManagerBackupHelper(
+                            AccountManagerService.this, this);
+                }
+                return mBackupHelper.backupAccountAccessPermissions(userId);
+            }
+!!!10949893.java!!!	restoreAccountAccessPermissions(inout data : byte [[]], in userId : int) : void
+            synchronized (mLock) {
+                if (mBackupHelper == null) {
+                    mBackupHelper = new AccountManagerBackupHelper(
+                            AccountManagerService.this, this);
+                }
+                mBackupHelper.restoreAccountAccessPermissions(data, userId);
+            }

@@ -1,0 +1,157 @@
+class TaskStackContainers
+!!!12696325.java!!!	addStackToDisplay(inout stack : TaskStack, inout onTop : boolean) : void
+            if (stack.mStackId == HOME_STACK_ID) {
+                if (mHomeStack != null) {
+                    throw new IllegalArgumentException("attachStack: HOME_STACK_ID (0) not first.");
+                }
+                mHomeStack = stack;
+            }
+            addChild(stack, onTop);
+            stack.onDisplayChanged(DisplayContent.this);
+!!!12696453.java!!!	removeStackFromDisplay(inout stack : TaskStack) : void
+            removeChild(stack);
+            stack.onRemovedFromDisplay();
+!!!12696581.java!!!	addChild(inout stack : TaskStack, inout toTop : boolean) : void
+            final int addIndex = findPositionForStack(toTop ? mChildren.size() : 0, stack,
+                    true /* adding */);
+            addChild(stack, addIndex);
+            setLayoutNeeded();
+!!!12696709.java!!!	positionChildAt(in position : int, inout child : TaskStack, inout includingParents : boolean) : void
+            if (StackId.isAlwaysOnTop(child.mStackId) && position != POSITION_TOP) {
+                // This stack is always-on-top, override the default behavior.
+                Slog.w(TAG_WM, "Ignoring move of always-on-top stack=" + this + " to bottom");
+
+                // Moving to its current position, as we must call super but we don't want to
+                // perform any meaningful action.
+                final int currentPosition = mChildren.indexOf(child);
+                super.positionChildAt(currentPosition, child, false /* includingParents */);
+                return;
+            }
+
+            final int targetPosition = findPositionForStack(position, child, false /* adding */);
+            super.positionChildAt(targetPosition, child, includingParents);
+
+            setLayoutNeeded();
+!!!12696837.java!!!	findPositionForStack(in requestedPosition : int, inout stack : TaskStack, inout adding : boolean) : int
+            final int topChildPosition = mChildren.size() - 1;
+            boolean toTop = requestedPosition == POSITION_TOP;
+            toTop |= adding ? requestedPosition >= topChildPosition + 1
+                    : requestedPosition >= topChildPosition;
+            int targetPosition = requestedPosition;
+
+            if (toTop && stack.mStackId != PINNED_STACK_ID
+                    && getStackById(PINNED_STACK_ID) != null) {
+                // The pinned stack is always the top most stack (always-on-top) when it is present.
+                TaskStack topStack = mChildren.get(topChildPosition);
+                if (topStack.mStackId != PINNED_STACK_ID) {
+                    throw new IllegalStateException("Pinned stack isn't top stack??? " + mChildren);
+                }
+
+                // So, stack is moved just below the pinned stack.
+                // When we're adding a new stack the target is the current pinned stack position.
+                // When we're positioning an existing stack the target is the position below pinned
+                // stack, because WindowContainer#positionAt() first removes element and then adds
+                // it to specified place.
+                targetPosition = adding ? topChildPosition : topChildPosition - 1;
+            }
+
+            return targetPosition;
+!!!12696965.java!!!	forAllWindows(inout callback : ToBooleanFunction, inout traverseTopToBottom : boolean) : boolean
+            if (traverseTopToBottom) {
+                if (super.forAllWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+                if (forAllExitingAppTokenWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+            } else {
+                if (forAllExitingAppTokenWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+                if (super.forAllWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+            }
+            return false;
+!!!12697093.java!!!	forAllExitingAppTokenWindows(inout callback : ToBooleanFunction, inout traverseTopToBottom : boolean) : boolean
+            // For legacy reasons we process the TaskStack.mExitingAppTokens first here before the
+            // app tokens.
+            // TODO: Investigate if we need to continue to do this or if we can just process them
+            // in-order.
+            if (traverseTopToBottom) {
+                for (int i = mChildren.size() - 1; i >= 0; --i) {
+                    final AppTokenList appTokens = mChildren.get(i).mExitingAppTokens;
+                    for (int j = appTokens.size() - 1; j >= 0; --j) {
+                        if (appTokens.get(j).forAllWindowsUnchecked(callback,
+                                traverseTopToBottom)) {
+                            return true;
+                        }
+                    }
+                }
+            } else {
+                final int count = mChildren.size();
+                for (int i = 0; i < count; ++i) {
+                    final AppTokenList appTokens = mChildren.get(i).mExitingAppTokens;
+                    final int appTokensCount = appTokens.size();
+                    for (int j = 0; j < appTokensCount; j++) {
+                        if (appTokens.get(j).forAllWindowsUnchecked(callback,
+                                traverseTopToBottom)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+!!!12697221.java!!!	setExitingTokensHasVisible(inout hasVisible : boolean) : void
+            for (int i = mChildren.size() - 1; i >= 0; --i) {
+                final AppTokenList appTokens = mChildren.get(i).mExitingAppTokens;
+                for (int j = appTokens.size() - 1; j >= 0; --j) {
+                    appTokens.get(j).hasVisible = hasVisible;
+                }
+            }
+!!!12697349.java!!!	removeExistingAppTokensIfPossible() : void
+            for (int i = mChildren.size() - 1; i >= 0; --i) {
+                final AppTokenList appTokens = mChildren.get(i).mExitingAppTokens;
+                for (int j = appTokens.size() - 1; j >= 0; --j) {
+                    final AppWindowToken token = appTokens.get(j);
+                    if (!token.hasVisible && !mService.mClosingApps.contains(token)
+                            && (!token.mIsExiting || token.isEmpty())) {
+                        // Make sure there is no animation running on this token, so any windows
+                        // associated with it will be removed as soon as their animations are
+                        // complete.
+                        token.mAppAnimator.clearAnimation();
+                        token.mAppAnimator.animating = false;
+                        if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT) Slog.v(TAG,
+                                "performLayout: App token exiting now removed" + token);
+                        token.removeIfPossible();
+                    }
+                }
+            }
+!!!12697477.java!!!	getOrientation() : int
+            if (isStackVisible(DOCKED_STACK_ID) || isStackVisible(FREEFORM_WORKSPACE_STACK_ID)) {
+                // Apps and their containers are not allowed to specify an orientation while the
+                // docked or freeform stack is visible...except for the home stack/task if the
+                // docked stack is minimized and it actually set something.
+                if (mHomeStack != null && mHomeStack.isVisible()
+                        && mDividerControllerLocked.isMinimizedDock()) {
+                    final int orientation = mHomeStack.getOrientation();
+                    if (orientation != SCREEN_ORIENTATION_UNSET) {
+                        return orientation;
+                    }
+                }
+                return SCREEN_ORIENTATION_UNSPECIFIED;
+            }
+
+            final int orientation = super.getOrientation();
+            if (orientation != SCREEN_ORIENTATION_UNSET
+                    && orientation != SCREEN_ORIENTATION_BEHIND) {
+                if (DEBUG_ORIENTATION) Slog.v(TAG_WM,
+                        "App is requesting an orientation, return " + orientation);
+                return orientation;
+            }
+
+            if (DEBUG_ORIENTATION) Slog.v(TAG_WM,
+                    "No app is requesting an orientation, return " + mLastOrientation);
+            // The next app has not been requested to be visible, so we keep the current orientation
+            // to prevent freezing/unfreezing the display too early.
+            return mLastOrientation;

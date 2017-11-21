@@ -1,0 +1,259 @@
+class BnGraphicBufferProducer
+!!!14298117.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch(code) {
+        case REQUEST_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int bufferIdx   = data.readInt32();
+            sp<GraphicBuffer> buffer;
+            int result = requestBuffer(bufferIdx, &buffer);
+            reply->writeInt32(buffer != 0);
+            if (buffer != 0) {
+                reply->write(*buffer);
+            }
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case SET_MAX_DEQUEUED_BUFFER_COUNT: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int maxDequeuedBuffers = data.readInt32();
+            int result = setMaxDequeuedBufferCount(maxDequeuedBuffers);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case SET_ASYNC_MODE: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            bool async = data.readInt32();
+            int result = setAsyncMode(async);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case DEQUEUE_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            uint32_t width = data.readUint32();
+            uint32_t height = data.readUint32();
+            PixelFormat format = static_cast<PixelFormat>(data.readInt32());
+            uint32_t usage = data.readUint32();
+            bool getTimestamps = data.readBool();
+
+            int buf = 0;
+            sp<Fence> fence = Fence::NO_FENCE;
+            FrameEventHistoryDelta frameTimestamps;
+            int result = dequeueBuffer(&buf, &fence, width, height, format,
+                    usage, getTimestamps ? &frameTimestamps : nullptr);
+
+            reply->writeInt32(buf);
+            reply->write(*fence);
+            if (getTimestamps) {
+                reply->write(frameTimestamps);
+            }
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case DETACH_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int slot = data.readInt32();
+            int result = detachBuffer(slot);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case DETACH_NEXT_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            sp<GraphicBuffer> buffer;
+            sp<Fence> fence;
+            int32_t result = detachNextBuffer(&buffer, &fence);
+            reply->writeInt32(result);
+            if (result == NO_ERROR) {
+                reply->writeInt32(buffer != NULL);
+                if (buffer != NULL) {
+                    reply->write(*buffer);
+                }
+                reply->writeInt32(fence != NULL);
+                if (fence != NULL) {
+                    reply->write(*fence);
+                }
+            }
+            return NO_ERROR;
+        }
+        case ATTACH_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            sp<GraphicBuffer> buffer = new GraphicBuffer();
+            status_t result = data.read(*buffer.get());
+            int slot = 0;
+            if (result == NO_ERROR) {
+                result = attachBuffer(&slot, buffer);
+            }
+            reply->writeInt32(slot);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case QUEUE_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+
+            int buf = data.readInt32();
+            QueueBufferInput input(data);
+            QueueBufferOutput output;
+            status_t result = queueBuffer(buf, input, &output);
+            reply->write(output);
+            reply->writeInt32(result);
+
+            return NO_ERROR;
+        }
+        case CANCEL_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int buf = data.readInt32();
+            sp<Fence> fence = new Fence();
+            status_t result = data.read(*fence.get());
+            if (result == NO_ERROR) {
+                result = cancelBuffer(buf, fence);
+            }
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case QUERY: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int value = 0;
+            int what = data.readInt32();
+            int res = query(what, &value);
+            reply->writeInt32(value);
+            reply->writeInt32(res);
+            return NO_ERROR;
+        }
+        case CONNECT: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            sp<IProducerListener> listener;
+            if (data.readInt32() == 1) {
+                listener = IProducerListener::asInterface(data.readStrongBinder());
+            }
+            int api = data.readInt32();
+            bool producerControlledByApp = data.readInt32();
+            QueueBufferOutput output;
+            status_t res = connect(listener, api, producerControlledByApp, &output);
+            reply->write(output);
+            reply->writeInt32(res);
+            return NO_ERROR;
+        }
+        case DISCONNECT: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            int api = data.readInt32();
+            DisconnectMode mode = static_cast<DisconnectMode>(data.readInt32());
+            status_t res = disconnect(api, mode);
+            reply->writeInt32(res);
+            return NO_ERROR;
+        }
+        case SET_SIDEBAND_STREAM: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            sp<NativeHandle> stream;
+            if (data.readInt32()) {
+                stream = NativeHandle::create(data.readNativeHandle(), true);
+            }
+            status_t result = setSidebandStream(stream);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case ALLOCATE_BUFFERS: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            uint32_t width = data.readUint32();
+            uint32_t height = data.readUint32();
+            PixelFormat format = static_cast<PixelFormat>(data.readInt32());
+            uint32_t usage = data.readUint32();
+            allocateBuffers(width, height, format, usage);
+            return NO_ERROR;
+        }
+        case ALLOW_ALLOCATION: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            bool allow = static_cast<bool>(data.readInt32());
+            status_t result = allowAllocation(allow);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case SET_GENERATION_NUMBER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            uint32_t generationNumber = data.readUint32();
+            status_t result = setGenerationNumber(generationNumber);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case GET_CONSUMER_NAME: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            reply->writeString8(getConsumerName());
+            return NO_ERROR;
+        }
+        case SET_SHARED_BUFFER_MODE: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            bool sharedBufferMode = data.readInt32();
+            status_t result = setSharedBufferMode(sharedBufferMode);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case SET_AUTO_REFRESH: {
+            CHECK_INTERFACE(IGraphicBuffer, data, reply);
+            bool autoRefresh = data.readInt32();
+            status_t result = setAutoRefresh(autoRefresh);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case SET_DEQUEUE_TIMEOUT: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            nsecs_t timeout = data.readInt64();
+            status_t result = setDequeueTimeout(timeout);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        }
+        case GET_LAST_QUEUED_BUFFER: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            sp<GraphicBuffer> buffer(nullptr);
+            sp<Fence> fence(Fence::NO_FENCE);
+            float transform[16] = {};
+            status_t result = getLastQueuedBuffer(&buffer, &fence, transform);
+            reply->writeInt32(result);
+            if (result != NO_ERROR) {
+                return result;
+            }
+            if (!buffer.get()) {
+                reply->writeBool(false);
+            } else {
+                reply->writeBool(true);
+                result = reply->write(*buffer);
+                if (result == NO_ERROR) {
+                    reply->write(transform, sizeof(float) * 16);
+                }
+            }
+            if (result != NO_ERROR) {
+                ALOGE("getLastQueuedBuffer failed to write buffer: %d", result);
+                return result;
+            }
+            result = reply->write(*fence);
+            if (result != NO_ERROR) {
+                ALOGE("getLastQueuedBuffer failed to write fence: %d", result);
+                return result;
+            }
+            return NO_ERROR;
+        }
+        case GET_FRAME_TIMESTAMPS: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            FrameEventHistoryDelta frameTimestamps;
+            getFrameTimestamps(&frameTimestamps);
+            status_t result = reply->write(frameTimestamps);
+            if (result != NO_ERROR) {
+                ALOGE("BnGBP::GET_FRAME_TIMESTAMPS failed to write buffer: %d",
+                        result);
+                return result;
+            }
+            return NO_ERROR;
+        }
+        case GET_UNIQUE_ID: {
+            CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
+            uint64_t outId = 0;
+            status_t actualResult = getUniqueId(&outId);
+            status_t result = reply->writeInt32(actualResult);
+            if (result != NO_ERROR) {
+                return result;
+            }
+            result = reply->writeUint64(outId);
+            if (result != NO_ERROR) {
+                return result;
+            }
+            return NO_ERROR;
+        }
+    }
+    return BBinder::onTransact(code, data, reply, flags);

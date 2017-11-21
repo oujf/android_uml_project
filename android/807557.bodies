@@ -1,0 +1,206 @@
+class CustomTile
+!!!3407109.java!!!	CustomTile(inout host : QSTileHost, in action : String)
+        super(host);
+        mWindowManager = WindowManagerGlobal.getWindowManagerService();
+        mComponent = ComponentName.unflattenFromString(action);
+        mTile = new Tile();
+        setTileIcon();
+        mServiceManager = host.getTileServices().getTileWrapper(this);
+        mService = mServiceManager.getTileService();
+        mServiceManager.setTileChangeListener(this);
+        mUser = ActivityManager.getCurrentUser();
+!!!3407237.java!!!	setTileIcon() : void
+        try {
+            PackageManager pm = mContext.getPackageManager();
+            int flags = PackageManager.MATCH_DIRECT_BOOT_UNAWARE | PackageManager.MATCH_DIRECT_BOOT_AWARE;
+            if (isSystemApp(pm)) {
+                flags |= PackageManager.MATCH_DISABLED_COMPONENTS;
+            }
+            ServiceInfo info = pm.getServiceInfo(mComponent, flags);
+            int icon = info.icon != 0 ? info.icon
+                    : info.applicationInfo.icon;
+            // Update the icon if its not set or is the default icon.
+            boolean updateIcon = mTile.getIcon() == null
+                    || iconEquals(mTile.getIcon(), mDefaultIcon);
+            mDefaultIcon = icon != 0 ? android.graphics.drawable.Icon
+                    .createWithResource(mComponent.getPackageName(), icon) : null;
+            if (updateIcon) {
+                mTile.setIcon(mDefaultIcon);
+            }
+            // Update the label if there is no label.
+            if (mTile.getLabel() == null) {
+                mTile.setLabel(info.loadLabel(pm));
+            }
+        } catch (Exception e) {
+            mDefaultIcon = null;
+        }
+!!!3407365.java!!!	isSystemApp(inout pm : PackageManager) : boolean
+        return pm.getApplicationInfo(mComponent.getPackageName(), 0).isSystemApp();
+!!!3407493.java!!!	iconEquals(inout icon1 : android.graphics.drawable.Icon, inout icon2 : android.graphics.drawable.Icon) : boolean
+        if (icon1 == icon2) {
+            return true;
+        }
+        if (icon1 == null || icon2 == null) {
+            return false;
+        }
+        if (icon1.getType() != android.graphics.drawable.Icon.TYPE_RESOURCE
+                || icon2.getType() != android.graphics.drawable.Icon.TYPE_RESOURCE) {
+            return false;
+        }
+        if (icon1.getResId() != icon2.getResId()) {
+            return false;
+        }
+        if (!Objects.equal(icon1.getResPackage(), icon2.getResPackage())) {
+            return false;
+        }
+        return true;
+!!!3407621.java!!!	onTileChanged(inout tile : ComponentName) : void
+        setTileIcon();
+!!!3407749.java!!!	isAvailable() : boolean
+        return mDefaultIcon != null;
+!!!3407877.java!!!	getUser() : int
+        return mUser;
+!!!3408005.java!!!	getComponent() : ComponentName
+        return mComponent;
+!!!3408133.java!!!	populate(inout logMaker : LogMaker) : LogMaker
+        return super.populate(logMaker).setComponentName(mComponent);
+!!!3408261.java!!!	getQsTile() : Tile
+        return mTile;
+!!!3408389.java!!!	updateState(inout tile : Tile) : void
+        mTile.setIcon(tile.getIcon());
+        mTile.setLabel(tile.getLabel());
+        mTile.setContentDescription(tile.getContentDescription());
+        mTile.setState(tile.getState());
+!!!3408517.java!!!	onDialogShown() : void
+        mIsShowingDialog = true;
+!!!3408645.java!!!	onDialogHidden() : void
+        mIsShowingDialog = false;
+        try {
+            if (DEBUG) Log.d(TAG, "Removing token");
+            mWindowManager.removeWindowToken(mToken, DEFAULT_DISPLAY);
+        } catch (RemoteException e) {
+        }
+!!!3408773.java!!!	setListening(inout listening : boolean) : void
+        if (mListening == listening) return;
+        mListening = listening;
+        try {
+            if (listening) {
+                setTileIcon();
+                refreshState();
+                if (!mServiceManager.isActiveTile()) {
+                    mServiceManager.setBindRequested(true);
+                    mService.onStartListening();
+                }
+            } else {
+                mService.onStopListening();
+                if (mIsTokenGranted && !mIsShowingDialog) {
+                    try {
+                        if (DEBUG) Log.d(TAG, "Removing token");
+                        mWindowManager.removeWindowToken(mToken, DEFAULT_DISPLAY);
+                    } catch (RemoteException e) {
+                    }
+                    mIsTokenGranted = false;
+                }
+                mIsShowingDialog = false;
+                mServiceManager.setBindRequested(false);
+            }
+        } catch (RemoteException e) {
+            // Called through wrapper, won't happen here.
+        }
+!!!3408901.java!!!	handleDestroy() : void
+        super.handleDestroy();
+        if (mIsTokenGranted) {
+            try {
+                if (DEBUG) Log.d(TAG, "Removing token");
+                mWindowManager.removeWindowToken(mToken, DEFAULT_DISPLAY);
+            } catch (RemoteException e) {
+            }
+        }
+        mHost.getTileServices().freeService(this, mServiceManager);
+!!!3409029.java!!!	newTileState() : State
+        State state = new State();
+        return state;
+!!!3409157.java!!!	getLongClickIntent() : Intent
+        Intent i = new Intent(TileService.ACTION_QS_TILE_PREFERENCES);
+        i.setPackage(mComponent.getPackageName());
+        i = resolveIntent(i);
+        if (i != null) {
+            i.putExtra(Intent.EXTRA_COMPONENT_NAME, mComponent);
+            i.putExtra(TileService.EXTRA_STATE, mTile.getState());
+            return i;
+        }
+        return new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(
+                Uri.fromParts("package", mComponent.getPackageName(), null));
+!!!3409285.java!!!	resolveIntent(inout i : Intent) : Intent
+        ResolveInfo result = mContext.getPackageManager().resolveActivityAsUser(i, 0,
+                ActivityManager.getCurrentUser());
+        return result != null ? new Intent(TileService.ACTION_QS_TILE_PREFERENCES)
+                .setClassName(result.activityInfo.packageName, result.activityInfo.name) : null;
+!!!3409413.java!!!	handleClick() : void
+        if (mTile.getState() == Tile.STATE_UNAVAILABLE) {
+            return;
+        }
+        try {
+            if (DEBUG) Log.d(TAG, "Adding token");
+            mWindowManager.addWindowToken(mToken, TYPE_QS_DIALOG, DEFAULT_DISPLAY);
+            mIsTokenGranted = true;
+        } catch (RemoteException e) {
+        }
+        try {
+            if (mServiceManager.isActiveTile()) {
+                mServiceManager.setBindRequested(true);
+                mService.onStartListening();
+            }
+            mService.onClick(mToken);
+        } catch (RemoteException e) {
+            // Called through wrapper, won't happen here.
+        }
+!!!3409541.java!!!	getTileLabel() : CharSequence
+        return getState().label;
+!!!3409669.java!!!	handleUpdateState(inout state : State, inout arg : Object) : void
+        int tileState = mTile.getState();
+        if (mServiceManager.hasPendingBind()) {
+            tileState = Tile.STATE_UNAVAILABLE;
+        }
+        state.state = tileState;
+        Drawable drawable;
+        try {
+            drawable = mTile.getIcon().loadDrawable(mContext);
+        } catch (Exception e) {
+            Log.w(TAG, "Invalid icon, forcing into unavailable state");
+            state.state = Tile.STATE_UNAVAILABLE;
+            drawable = mDefaultIcon.loadDrawable(mContext);
+        }
+        state.icon = new DrawableIcon(drawable);
+        state.label = mTile.getLabel();
+        if (mTile.getContentDescription() != null) {
+            state.contentDescription = mTile.getContentDescription();
+        } else {
+            state.contentDescription = state.label;
+        }
+!!!3409797.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_CUSTOM;
+!!!3409925.java!!!	startUnlockAndRun() : void
+        Dependency.get(ActivityStarter.class).postQSRunnableDismissingKeyguard(() -> {
+            try {
+                mService.onUnlockComplete();
+            } catch (RemoteException e) {
+            }
+        });
+!!!3410053.java!!!	toSpec(inout name : ComponentName) : String
+        return PREFIX + name.flattenToShortString() + ")";
+!!!3410181.java!!!	getComponentFromSpec(in spec : String) : ComponentName
+        final String action = spec.substring(PREFIX.length(), spec.length() - 1);
+        if (action.isEmpty()) {
+            throw new IllegalArgumentException("Empty custom tile spec action");
+        }
+        return ComponentName.unflattenFromString(action);
+!!!3410309.java!!!	create(inout host : QSTileHost, in spec : String) : QSTile
+        if (spec == null || !spec.startsWith(PREFIX) || !spec.endsWith(")")) {
+            throw new IllegalArgumentException("Bad custom tile spec: " + spec);
+        }
+        final String action = spec.substring(PREFIX.length(), spec.length() - 1);
+        if (action.isEmpty()) {
+            throw new IllegalArgumentException("Empty custom tile spec action");
+        }
+        return new CustomTile(host, action);

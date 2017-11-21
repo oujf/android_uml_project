@@ -1,0 +1,96 @@
+class PlayerBase
+!!!758533.cpp!!!	PlayerBase()
+    ALOGD("PlayerBase::PlayerBase()");
+    // use checkService() to avoid blocking if audio service is not up yet
+    sp<IBinder> binder = defaultServiceManager()->checkService(String16("audio"));
+    if (binder == 0) {
+        ALOGE("PlayerBase(): binding to audio service failed, service up?");
+    } else {
+        mAudioManager = interface_cast<IAudioManager>(binder);
+    }
+!!!758661.cpp!!!	~PlayerBase()
+    ALOGD("PlayerBase::~PlayerBase()");
+    baseDestroy();
+!!!758917.cpp!!!	start() : void
+    (void)startWithStatus();
+!!!759045.cpp!!!	pause() : void
+    if (playerPause() == NO_ERROR) {
+        ALOGD("PlayerBase::pause() from IPlayer");
+        servicePlayerEvent(PLAYER_STATE_PAUSED);
+    } else {
+        ALOGD("PlayerBase::pause() no AudioTrack to pause from IPlayer");
+    }
+!!!759173.cpp!!!	stop() : void
+    if (playerStop() == NO_ERROR) {
+        ALOGD("PlayerBase::stop() from IPlayer");
+        servicePlayerEvent(PLAYER_STATE_STOPPED);
+    } else {
+        ALOGD("PlayerBase::stop() no AudioTrack to stop from IPlayer");
+    }
+!!!759301.cpp!!!	setVolume(in vol : float) : void
+    {
+        Mutex::Autolock _l(mSettingsLock);
+        mVolumeMultiplierL = vol;
+        mVolumeMultiplierR = vol;
+    }
+    if (playerSetVolume() == NO_ERROR) {
+        ALOGD("PlayerBase::setVolume() from IPlayer");
+    } else {
+        ALOGD("PlayerBase::setVolume() no AudioTrack for volume control from IPlayer");
+    }
+!!!759429.cpp!!!	setPan(in pan : float) : void
+    {
+        Mutex::Autolock _l(mSettingsLock);
+        pan = min(max(-1.0f, pan), 1.0f);
+        if (pan >= 0.0f) {
+            mPanMultiplierL = 1.0f - pan;
+            mPanMultiplierR = 1.0f;
+        } else {
+            mPanMultiplierL = 1.0f;
+            mPanMultiplierR = 1.0f + pan;
+        }
+    }
+    if (playerSetVolume() == NO_ERROR) {
+        ALOGD("PlayerBase::setPan() from IPlayer");
+    } else {
+        ALOGD("PlayerBase::setPan() no AudioTrack for volume control from IPlayer");
+    }
+!!!759813.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t) : status_t
+    return BnPlayer::onTransact(code, data, reply, flags);
+!!!759941.cpp!!!	startWithStatus() : status_t
+    status_t status = playerStart();
+    if (status == NO_ERROR) {
+        ALOGD("PlayerBase::start() from IPlayer");
+        servicePlayerEvent(PLAYER_STATE_STARTED);
+    } else {
+        ALOGD("PlayerBase::start() no AudioTrack to start from IPlayer");
+    }
+    return status;
+!!!760069.cpp!!!	reportEvent(in event : player_state_t) : void
+    servicePlayerEvent(event);
+!!!760197.cpp!!!	init(in playerType : player_type_t, in usage : audio_usage_t) : void
+    if (mAudioManager == 0) {
+                ALOGE("AudioPlayer realize: no audio service, player will not be registered");
+    } else {
+        mPIId = mAudioManager->trackPlayer(playerType, usage, AUDIO_CONTENT_TYPE_UNKNOWN, this);
+    }
+!!!760325.cpp!!!	baseDestroy() : void
+    serviceReleasePlayer();
+    if (mAudioManager != 0) {
+        mAudioManager.clear();
+    }
+!!!760965.cpp!!!	servicePlayerEvent(in event : player_state_t) : void
+    if (mAudioManager != 0) {
+        // only report state change
+        Mutex::Autolock _l(mPlayerStateLock);
+        if (event != mLastReportedEvent
+                && mPIId != PLAYER_PIID_INVALID) {
+            mLastReportedEvent = event;
+            mAudioManager->playerEvent(mPIId, event);
+        }
+    }
+!!!761093.cpp!!!	serviceReleasePlayer() : void
+    if (mAudioManager != 0
+            && mPIId != PLAYER_PIID_INVALID) {
+        mAudioManager->releasePlayer(mPIId);
+    }

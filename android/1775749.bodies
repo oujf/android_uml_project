@@ -1,0 +1,187 @@
+class Vr2dDisplay
+!!!12544005.java!!!	Vr2dDisplay(inout displayManager : DisplayManager, inout activityManagerInternal : ActivityManagerInternal, inout vrManager : IVrManager)
+        mDisplayManager = displayManager;
+        mActivityManagerInternal = activityManagerInternal;
+        mVrManager = vrManager;
+        mVirtualDisplayWidth = DEFAULT_VR_DISPLAY_WIDTH;
+        mVirtualDisplayHeight = DEFAULT_VR_DISPLAY_HEIGHT;
+        mVirtualDisplayDpi = DEFAULT_VR_DISPLAY_DPI;
+!!!12544133.java!!!	init(inout context : Context) : void
+        startVrModeListener();
+        startDebugOnlyBroadcastReceiver(context);
+!!!12544261.java!!!	updateVirtualDisplay() : void
+        if (DEBUG) {
+            Log.i(TAG, "isVrMode: " + mIsVrModeEnabled + ", override: " + mIsVrModeOverrideEnabled);
+        }
+
+        if (mIsVrModeEnabled || mIsVrModeOverrideEnabled) {
+            // TODO: Consider not creating the display until ActivityManager needs one on
+            // which to display a 2D application.
+            startVirtualDisplay();
+        } else {
+            // Stop virtual display to test exit condition
+            stopVirtualDisplay();
+        }
+!!!12544389.java!!!	startDebugOnlyBroadcastReceiver(inout context : Context) : void
+        if (DEBUG) {
+            IntentFilter intentFilter = new IntentFilter(DEBUG_ACTION_SET_MODE);
+            intentFilter.addAction(DEBUG_ACTION_SET_SURFACE);
+
+            context.registerReceiver(new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    final String action = intent.getAction();
+                    if (DEBUG_ACTION_SET_MODE.equals(action)) {
+                        mIsVrModeOverrideEnabled =
+                                intent.getBooleanExtra(DEBUG_EXTRA_MODE_ON, false);
+                        updateVirtualDisplay();
+                    } else if (DEBUG_ACTION_SET_SURFACE.equals(action)) {
+                        if (mVirtualDisplay != null) {
+                            if (intent.hasExtra(DEBUG_EXTRA_SURFACE)) {
+                                setSurfaceLocked(intent.getParcelableExtra(DEBUG_EXTRA_SURFACE));
+                            }
+                        } else {
+                            Log.w(TAG, "Cannot set the surface because the VD is null.");
+                        }
+                    }
+                }
+            }, intentFilter);
+        }
+!!!12544517.java!!!	startVrModeListener() : void
+        if (mVrManager != null) {
+            try {
+                mVrManager.registerPersistentVrStateListener(mVrStateCallbacks);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not register VR State listener.", e);
+            }
+        }
+!!!12544645.java!!!	setVirtualDisplayProperties(inout compatDisplayProperties : Vr2dDisplayProperties) : void
+        synchronized(mVdLock) {
+            if (DEBUG) {
+                Log.i(TAG, "VD setVirtualDisplayProperties: res = "
+                        + compatDisplayProperties.getWidth() + "X"
+                        + compatDisplayProperties.getHeight() + ", dpi = "
+                        + compatDisplayProperties.getDpi());
+            }
+
+            if (compatDisplayProperties.getWidth() < MIN_VR_DISPLAY_WIDTH ||
+                compatDisplayProperties.getHeight() < MIN_VR_DISPLAY_HEIGHT ||
+                compatDisplayProperties.getDpi() < MIN_VR_DISPLAY_DPI) {
+                throw new IllegalArgumentException (
+                        "Illegal argument: height, width, dpi cannot be negative. res = "
+                        + compatDisplayProperties.getWidth() + "X"
+                        + compatDisplayProperties.getHeight()
+                        + ", dpi = " + compatDisplayProperties.getDpi());
+            }
+
+            mVirtualDisplayWidth = compatDisplayProperties.getWidth();
+            mVirtualDisplayHeight = compatDisplayProperties.getHeight();
+            mVirtualDisplayDpi = compatDisplayProperties.getDpi();
+
+            if (mVirtualDisplay != null) {
+                mVirtualDisplay.resize(mVirtualDisplayWidth, mVirtualDisplayHeight,
+                    mVirtualDisplayDpi);
+                ImageReader oldImageReader = mImageReader;
+                mImageReader = null;
+                startImageReader();
+                oldImageReader.close();
+            }
+        }
+!!!12544773.java!!!	getVirtualDisplayId() : int
+        synchronized(mVdLock) {
+            if (mVirtualDisplay != null) {
+                int virtualDisplayId = mVirtualDisplay.getDisplay().getDisplayId();
+                if (DEBUG) {
+                    Log.i(TAG, "VD id: " + virtualDisplayId);
+                }
+                return virtualDisplayId;
+            }
+        }
+        return INVALID_DISPLAY;
+!!!12544901.java!!!	startVirtualDisplay() : void
+        if (DEBUG) {
+            Log.d(TAG, "Request to start VD, DM:" + mDisplayManager);
+        }
+
+        if (mDisplayManager == null) {
+            Log.w(TAG, "Cannot create virtual display because mDisplayManager == null");
+            return;
+        }
+
+        synchronized (mVdLock) {
+            if (mVirtualDisplay != null) {
+                Log.i(TAG, "VD already exists, ignoring request");
+                return;
+            }
+
+            int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH;
+            mVirtualDisplay = mDisplayManager.createVirtualDisplay(null /* projection */,
+                    DISPLAY_NAME, mVirtualDisplayWidth, mVirtualDisplayHeight, mVirtualDisplayDpi,
+                    null /* surface */, flags, null /* callback */, null /* handler */,
+                    UNIQUE_DISPLAY_ID);
+
+            if (mVirtualDisplay != null) {
+                mActivityManagerInternal.setVr2dDisplayId(
+                    mVirtualDisplay.getDisplay().getDisplayId());
+                // Now create the ImageReader to supply a Surface to the new virtual display.
+                startImageReader();
+            } else {
+                Log.w(TAG, "Virtual display id is null after createVirtualDisplay");
+                mActivityManagerInternal.setVr2dDisplayId(INVALID_DISPLAY);
+                return;
+            }
+        }
+
+        Log.i(TAG, "VD created: " + mVirtualDisplay);
+!!!12545029.java!!!	stopVirtualDisplay() : void
+        if (mStopVDRunnable == null) {
+           mStopVDRunnable = new Runnable() {
+               @Override
+               public void run() {
+                    if (mIsVrModeEnabled) {
+                        Log.i(TAG, "Virtual Display destruction stopped: VrMode is back on.");
+                    } else {
+                        Log.i(TAG, "Stopping Virtual Display");
+                        synchronized (mVdLock) {
+                            mActivityManagerInternal.setVr2dDisplayId(INVALID_DISPLAY);
+                            setSurfaceLocked(null); // clean up and release the surface first.
+                            if (mVirtualDisplay != null) {
+                                mVirtualDisplay.release();
+                                mVirtualDisplay = null;
+                            }
+                            stopImageReader();
+                        }
+                    }
+               }
+           };
+        }
+
+        mHandler.removeCallbacks(mStopVDRunnable);
+        mHandler.postDelayed(mStopVDRunnable, STOP_VIRTUAL_DISPLAY_DELAY_MILLIS);
+!!!12545157.java!!!	setSurfaceLocked(inout surface : Surface) : void
+        // Change the surface to either a valid surface or a null value.
+        if (mSurface != surface && (surface == null || surface.isValid())) {
+            Log.i(TAG, "Setting the new surface from " + mSurface + " to " + surface);
+            if (mVirtualDisplay != null) {
+                mVirtualDisplay.setSurface(surface);
+            }
+            if (mSurface != null) {
+                mSurface.release();
+            }
+            mSurface = surface;
+        }
+!!!12545285.java!!!	startImageReader() : void
+        if (mImageReader == null) {
+            mImageReader = ImageReader.newInstance(mVirtualDisplayWidth, mVirtualDisplayHeight,
+                PixelFormat.RGBA_8888, 2 /* maxImages */);
+            Log.i(TAG, "VD startImageReader: res = " + mVirtualDisplayWidth + "X" +
+                    mVirtualDisplayHeight + ", dpi = " + mVirtualDisplayDpi);
+        }
+        synchronized (mVdLock) {
+            setSurfaceLocked(mImageReader.getSurface());
+        }
+!!!12545413.java!!!	stopImageReader() : void
+        if (mImageReader != null) {
+            mImageReader.close();
+            mImageReader = null;
+        }

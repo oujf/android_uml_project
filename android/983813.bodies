@@ -1,0 +1,257 @@
+class ClipData
+!!!6097669.java!!!	ClipData(inout label : CharSequence, inout mimeTypes : String [[]], inout item : ClipData::Item)
+        mClipDescription = new ClipDescription(label, mimeTypes);
+        if (item == null) {
+            throw new NullPointerException("item is null");
+        }
+        mIcon = null;
+        mItems = new ArrayList<Item>();
+        mItems.add(item);
+!!!6097797.java!!!	ClipData(inout description : ClipDescription, inout item : ClipData::Item)
+        mClipDescription = description;
+        if (item == null) {
+            throw new NullPointerException("item is null");
+        }
+        mIcon = null;
+        mItems = new ArrayList<Item>();
+        mItems.add(item);
+!!!6097925.java!!!	ClipData(inout description : ClipDescription, inout items : ArrayList<Item>)
+        mClipDescription = description;
+        if (items == null) {
+            throw new NullPointerException("item is null");
+        }
+        mIcon = null;
+        mItems = items;
+!!!6098053.java!!!	ClipData(inout other : ClipData)
+        mClipDescription = other.mClipDescription;
+        mIcon = other.mIcon;
+        mItems = new ArrayList<Item>(other.mItems);
+!!!6098181.java!!!	newPlainText(inout label : CharSequence, inout text : CharSequence) : ClipData
+        Item item = new Item(text);
+        return new ClipData(label, MIMETYPES_TEXT_PLAIN, item);
+!!!6098309.java!!!	newHtmlText(inout label : CharSequence, inout text : CharSequence, in htmlText : String) : ClipData
+        Item item = new Item(text, htmlText);
+        return new ClipData(label, MIMETYPES_TEXT_HTML, item);
+!!!6098437.java!!!	newIntent(inout label : CharSequence, inout intent : Intent) : ClipData
+        Item item = new Item(intent);
+        return new ClipData(label, MIMETYPES_TEXT_INTENT, item);
+!!!6098565.java!!!	newUri(inout resolver : ContentResolver, inout label : CharSequence, inout uri : Uri) : ClipData
+        Item item = new Item(uri);
+        String[] mimeTypes = getMimeTypes(resolver, uri);
+        return new ClipData(label, mimeTypes, item);
+!!!6098693.java!!!	getMimeTypes(inout resolver : ContentResolver, inout uri : Uri) : String
+        String[] mimeTypes = null;
+        if (SCHEME_CONTENT.equals(uri.getScheme())) {
+            String realType = resolver.getType(uri);
+            mimeTypes = resolver.getStreamTypes(uri, "*/*");
+            if (realType != null) {
+                if (mimeTypes == null) {
+                    mimeTypes = new String[] { realType };
+                } else if (!ArrayUtils.contains(mimeTypes, realType)) {
+                    String[] tmp = new String[mimeTypes.length + 1];
+                    tmp[0] = realType;
+                    System.arraycopy(mimeTypes, 0, tmp, 1, mimeTypes.length);
+                    mimeTypes = tmp;
+                }
+            }
+        }
+        if (mimeTypes == null) {
+            mimeTypes = MIMETYPES_TEXT_URILIST;
+        }
+        return mimeTypes;
+!!!6098821.java!!!	newRawUri(inout label : CharSequence, inout uri : Uri) : ClipData
+        Item item = new Item(uri);
+        return new ClipData(label, MIMETYPES_TEXT_URILIST, item);
+!!!6098949.java!!!	getDescription() : ClipDescription
+        return mClipDescription;
+!!!6099077.java!!!	addItem(inout item : ClipData::Item) : void
+        if (item == null) {
+            throw new NullPointerException("item is null");
+        }
+        mItems.add(item);
+!!!6099205.java!!!	addItem(inout item : ClipData::Item, inout resolver : ContentResolver) : void
+        addItem(resolver, item);
+!!!6099333.java!!!	addItem(inout resolver : ContentResolver, inout item : ClipData::Item) : void
+        addItem(item);
+
+        if (item.getHtmlText() != null) {
+            mClipDescription.addMimeTypes(MIMETYPES_TEXT_HTML);
+        } else if (item.getText() != null) {
+            mClipDescription.addMimeTypes(MIMETYPES_TEXT_PLAIN);
+        }
+
+        if (item.getIntent() != null) {
+            mClipDescription.addMimeTypes(MIMETYPES_TEXT_INTENT);
+        }
+
+        if (item.getUri() != null) {
+            mClipDescription.addMimeTypes(getMimeTypes(resolver, item.getUri()));
+        }
+!!!6099461.java!!!	getIcon() : Bitmap
+        return mIcon;
+!!!6099589.java!!!	getItemCount() : int
+        return mItems.size();
+!!!6099717.java!!!	getItemAt(in index : int) : ClipData::Item
+        return mItems.get(index);
+!!!6099845.java!!!	setItemAt(in index : int, inout item : ClipData::Item) : void
+        mItems.set(index, item);
+!!!6099973.java!!!	prepareToLeaveProcess(inout leavingPackage : boolean) : void
+        // Assume that callers are going to be granting permissions
+        prepareToLeaveProcess(leavingPackage, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+!!!6100101.java!!!	prepareToLeaveProcess(inout leavingPackage : boolean, in intentFlags : int) : void
+        final int size = mItems.size();
+        for (int i = 0; i < size; i++) {
+            final Item item = mItems.get(i);
+            if (item.mIntent != null) {
+                item.mIntent.prepareToLeaveProcess(leavingPackage);
+            }
+            if (item.mUri != null && leavingPackage) {
+                if (StrictMode.vmFileUriExposureEnabled()) {
+                    item.mUri.checkFileUriExposed("ClipData.Item.getUri()");
+                }
+                if (StrictMode.vmContentUriWithoutPermissionEnabled()) {
+                    item.mUri.checkContentUriWithoutPermission("ClipData.Item.getUri()",
+                            intentFlags);
+                }
+            }
+        }
+!!!6100229.java!!!	prepareToEnterProcess() : void
+        final int size = mItems.size();
+        for (int i = 0; i < size; i++) {
+            final Item item = mItems.get(i);
+            if (item.mIntent != null) {
+                item.mIntent.prepareToEnterProcess();
+            }
+        }
+!!!6100357.java!!!	fixUris(in contentUserHint : int) : void
+        final int size = mItems.size();
+        for (int i = 0; i < size; i++) {
+            final Item item = mItems.get(i);
+            if (item.mIntent != null) {
+                item.mIntent.fixUris(contentUserHint);
+            }
+            if (item.mUri != null) {
+                item.mUri = maybeAddUserId(item.mUri, contentUserHint);
+            }
+        }
+!!!6100485.java!!!	fixUrisLight(in contentUserHint : int) : void
+        final int size = mItems.size();
+        for (int i = 0; i < size; i++) {
+            final Item item = mItems.get(i);
+            if (item.mIntent != null) {
+                Uri data = item.mIntent.getData();
+                if (data != null) {
+                    item.mIntent.setData(maybeAddUserId(data, contentUserHint));
+                }
+            }
+            if (item.mUri != null) {
+                item.mUri = maybeAddUserId(item.mUri, contentUserHint);
+            }
+        }
+!!!6100613.java!!!	toString() : String
+        StringBuilder b = new StringBuilder(128);
+
+        b.append("ClipData { ");
+        toShortString(b);
+        b.append(" }");
+
+        return b.toString();
+!!!6100741.java!!!	toShortString(inout b : StringBuilder) : void
+        boolean first;
+        if (mClipDescription != null) {
+            first = !mClipDescription.toShortString(b);
+        } else {
+            first = true;
+        }
+        if (mIcon != null) {
+            if (!first) {
+                b.append(' ');
+            }
+            first = false;
+            b.append("I:");
+            b.append(mIcon.getWidth());
+            b.append('x');
+            b.append(mIcon.getHeight());
+        }
+        for (int i=0; i<mItems.size(); i++) {
+            if (!first) {
+                b.append(' ');
+            }
+            first = false;
+            b.append('{');
+            mItems.get(i).toShortString(b);
+            b.append('}');
+        }
+!!!6100869.java!!!	toShortStringShortItems(inout b : StringBuilder, inout first : boolean) : void
+        if (mItems.size() > 0) {
+            if (!first) {
+                b.append(' ');
+            }
+            mItems.get(0).toShortString(b);
+            if (mItems.size() > 1) {
+                b.append(" ...");
+            }
+        }
+!!!6100997.java!!!	collectUris(inout out : List<Uri>) : void
+        for (int i = 0; i < mItems.size(); ++i) {
+            ClipData.Item item = getItemAt(i);
+
+            if (item.getUri() != null) {
+                out.add(item.getUri());
+            }
+
+            Intent intent = item.getIntent();
+            if (intent != null) {
+                if (intent.getData() != null) {
+                    out.add(intent.getData());
+                }
+                if (intent.getClipData() != null) {
+                    intent.getClipData().collectUris(out);
+                }
+            }
+        }
+!!!6101125.java!!!	describeContents() : int
+        return 0;
+!!!6101253.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        mClipDescription.writeToParcel(dest, flags);
+        if (mIcon != null) {
+            dest.writeInt(1);
+            mIcon.writeToParcel(dest, flags);
+        } else {
+            dest.writeInt(0);
+        }
+        final int N = mItems.size();
+        dest.writeInt(N);
+        for (int i=0; i<N; i++) {
+            Item item = mItems.get(i);
+            TextUtils.writeToParcel(item.mText, dest, flags);
+            dest.writeString(item.mHtmlText);
+            if (item.mIntent != null) {
+                dest.writeInt(1);
+                item.mIntent.writeToParcel(dest, flags);
+            } else {
+                dest.writeInt(0);
+            }
+            if (item.mUri != null) {
+                dest.writeInt(1);
+                item.mUri.writeToParcel(dest, flags);
+            } else {
+                dest.writeInt(0);
+            }
+        }
+!!!6101381.java!!!	ClipData(inout in : Parcel)
+        mClipDescription = new ClipDescription(in);
+        if (in.readInt() != 0) {
+            mIcon = Bitmap.CREATOR.createFromParcel(in);
+        } else {
+            mIcon = null;
+        }
+        mItems = new ArrayList<Item>();
+        final int N = in.readInt();
+        for (int i=0; i<N; i++) {
+            CharSequence text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(in);
+            String htmlText = in.readString();
+            Intent intent = in.readInt() != 0 ? Intent.CREATOR.createFromParcel(in) : null;
+            Uri uri = in.readInt() != 0 ? Uri.CREATOR.createFromParcel(in) : null;
+            mItems.add(new Item(text, htmlText, intent, uri));
+        }

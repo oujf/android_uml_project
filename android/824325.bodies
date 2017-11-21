@@ -1,0 +1,74 @@
+class TaskStackListenerImpl
+!!!3493125.java!!!	onTaskStackChangedBackground() : void
+            // Check this is for the right user
+            if (!checkCurrentUserId(mContext, false /* debug */)) {
+                return;
+            }
+
+            // Preloads the next task
+            RecentsConfiguration config = Recents.getConfiguration();
+            if (config.svelteLevel == RecentsConfiguration.SVELTE_NONE) {
+
+                // Load the next task only if we aren't svelte
+                SystemServicesProxy ssp = Recents.getSystemServices();
+                ActivityManager.RunningTaskInfo runningTaskInfo = ssp.getRunningTask();
+                RecentsTaskLoader loader = Recents.getTaskLoader();
+                RecentsTaskLoadPlan plan = loader.createLoadPlan(mContext);
+                loader.preloadTasks(plan, -1, false /* includeFrontMostExcludedTask */);
+
+                // This callback is made when a new activity is launched and the old one is paused
+                // so ignore the current activity and try and preload the thumbnail for the
+                // previous one.
+                VisibilityReport visibilityReport;
+                synchronized (mDummyStackView) {
+                    mDummyStackView.getStack().removeAllTasks(false /* notifyStackChanges */);
+                    mDummyStackView.setTasks(plan.getTaskStack(), false /* allowNotify */);
+                    updateDummyStackViewLayout(plan.getTaskStack(),
+                            getWindowRect(null /* windowRectOverride */));
+
+                    // Launched from app is always the worst case (in terms of how many
+                    // thumbnails/tasks visible)
+                    RecentsActivityLaunchState launchState = new RecentsActivityLaunchState();
+                    launchState.launchedFromApp = true;
+                    mDummyStackView.updateLayoutAlgorithm(true /* boundScroll */, launchState);
+                    visibilityReport = mDummyStackView.computeStackVisibilityReport();
+                }
+
+                RecentsTaskLoadPlan.Options launchOpts = new RecentsTaskLoadPlan.Options();
+                launchOpts.runningTaskId = runningTaskInfo != null ? runningTaskInfo.id : -1;
+                launchOpts.numVisibleTasks = visibilityReport.numVisibleTasks;
+                launchOpts.numVisibleTaskThumbnails = visibilityReport.numVisibleThumbnails;
+                launchOpts.onlyLoadForCache = true;
+                launchOpts.onlyLoadPausedActivities = true;
+                launchOpts.loadThumbnails = true;
+                loader.loadTasks(mContext, plan, launchOpts);
+            }
+!!!3493253.java!!!	onActivityPinned(in packageName : String, in taskId : int) : void
+            // Check this is for the right user
+            if (!checkCurrentUserId(mContext, false /* debug */)) {
+                return;
+            }
+
+            // This time needs to be fetched the same way the last active time is fetched in
+            // {@link TaskRecord#touchActiveTime}
+            Recents.getConfiguration().getLaunchState().launchedFromPipApp = true;
+            Recents.getConfiguration().getLaunchState().launchedWithNextPipApp = false;
+            EventBus.getDefault().send(new ActivityPinnedEvent(taskId));
+            consumeInstanceLoadPlan();
+            sLastPipTime = System.currentTimeMillis();
+!!!3493381.java!!!	onActivityUnpinned() : void
+            // Check this is for the right user
+            if (!checkCurrentUserId(mContext, false /* debug */)) {
+                return;
+            }
+
+            EventBus.getDefault().send(new ActivityUnpinnedEvent());
+            sLastPipTime = -1;
+!!!3493509.java!!!	onTaskSnapshotChanged(in taskId : int, inout snapshot : TaskSnapshot) : void
+            // Check this is for the right user
+            if (!checkCurrentUserId(mContext, false /* debug */)) {
+                return;
+            }
+
+            EventBus.getDefault().send(new TaskSnapshotChangedEvent(taskId,
+                    ThumbnailData.createFromTaskSnapshot(snapshot)));

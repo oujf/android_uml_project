@@ -1,0 +1,191 @@
+class NotificationData
+!!!3739397.java!!!	setHeadsUpManager(inout headsUpManager : HeadsUpManager) : void
+        mHeadsUpManager = headsUpManager;
+!!!3739525.java!!!	NotificationData(inout environment : NotificationData::Environment)
+        mEnvironment = environment;
+        mGroupManager = environment.getGroupManager();
+!!!3739653.java!!!	getActiveNotifications() : NotificationData::Entry
+        return mSortedAndFiltered;
+!!!3739781.java!!!	get(in key : String) : NotificationData::Entry
+        return mEntries.get(key);
+!!!3739909.java!!!	add(inout entry : NotificationData::Entry) : void
+        synchronized (mEntries) {
+            mEntries.put(entry.notification.getKey(), entry);
+        }
+        mGroupManager.onEntryAdded(entry);
+
+        updateRankingAndSort(mRankingMap);
+!!!3740037.java!!!	remove(in key : String, inout ranking : RankingMap) : NotificationData::Entry
+        Entry removed = null;
+        synchronized (mEntries) {
+            removed = mEntries.remove(key);
+        }
+        if (removed == null) return null;
+        mGroupManager.onEntryRemoved(removed);
+        updateRankingAndSort(ranking);
+        return removed;
+!!!3740165.java!!!	updateRanking(inout ranking : RankingMap) : void
+        updateRankingAndSort(ranking);
+!!!3740293.java!!!	isAmbient(in key : String) : boolean
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.isAmbient();
+        }
+        return false;
+!!!3740421.java!!!	getVisibilityOverride(in key : String) : int
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.getVisibilityOverride();
+        }
+        return Ranking.VISIBILITY_NO_OVERRIDE;
+!!!3740549.java!!!	shouldSuppressScreenOff(in key : String) : boolean
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return (mTmpRanking.getSuppressedVisualEffects()
+                    & NotificationListenerService.SUPPRESSED_EFFECT_SCREEN_OFF) != 0;
+        }
+        return false;
+!!!3740677.java!!!	shouldSuppressScreenOn(in key : String) : boolean
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return (mTmpRanking.getSuppressedVisualEffects()
+                    & NotificationListenerService.SUPPRESSED_EFFECT_SCREEN_ON) != 0;
+        }
+        return false;
+!!!3740805.java!!!	getImportance(in key : String) : int
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.getImportance();
+        }
+        return NotificationManager.IMPORTANCE_UNSPECIFIED;
+!!!3740933.java!!!	getOverrideGroupKey(in key : String) : String
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.getOverrideGroupKey();
+        }
+         return null;
+!!!3741061.java!!!	getSnoozeCriteria(in key : String) : List<SnoozeCriterion>
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.getSnoozeCriteria();
+        }
+        return null;
+!!!3741189.java!!!	getChannel(in key : String) : NotificationChannel
+        if (mRankingMap != null) {
+            mRankingMap.getRanking(key, mTmpRanking);
+            return mTmpRanking.getChannel();
+        }
+        return null;
+!!!3741317.java!!!	updateRankingAndSort(inout ranking : RankingMap) : void
+        if (ranking != null) {
+            mRankingMap = ranking;
+            synchronized (mEntries) {
+                final int N = mEntries.size();
+                for (int i = 0; i < N; i++) {
+                    Entry entry = mEntries.valueAt(i);
+                    final StatusBarNotification oldSbn = entry.notification.cloneLight();
+                    final String overrideGroupKey = getOverrideGroupKey(entry.key);
+                    if (!Objects.equals(oldSbn.getOverrideGroupKey(), overrideGroupKey)) {
+                        entry.notification.setOverrideGroupKey(overrideGroupKey);
+                        mGroupManager.onEntryUpdated(entry, oldSbn);
+                    }
+                    entry.channel = getChannel(entry.key);
+                    entry.snoozeCriteria = getSnoozeCriteria(entry.key);
+                }
+            }
+        }
+        filterAndSort();
+!!!3741445.java!!!	filterAndSort() : void
+        mSortedAndFiltered.clear();
+
+        synchronized (mEntries) {
+            final int N = mEntries.size();
+            for (int i = 0; i < N; i++) {
+                Entry entry = mEntries.valueAt(i);
+                StatusBarNotification sbn = entry.notification;
+
+                if (shouldFilterOut(sbn)) {
+                    continue;
+                }
+
+                mSortedAndFiltered.add(entry);
+            }
+        }
+
+        Collections.sort(mSortedAndFiltered, mRankingComparator);
+!!!3741573.java!!!	shouldFilterOut(inout sbn : StatusBarNotification) : boolean
+        if (!(mEnvironment.isDeviceProvisioned() ||
+                showNotificationEvenIfUnprovisioned(sbn))) {
+            return true;
+        }
+
+        if (!mEnvironment.isNotificationForCurrentProfiles(sbn)) {
+            return true;
+        }
+
+        if (mEnvironment.isSecurelyLocked(sbn.getUserId()) &&
+                (sbn.getNotification().visibility == Notification.VISIBILITY_SECRET
+                        || mEnvironment.shouldHideNotifications(sbn.getUserId())
+                        || mEnvironment.shouldHideNotifications(sbn.getKey()))) {
+            return true;
+        }
+
+        if (!StatusBar.ENABLE_CHILD_NOTIFICATIONS
+                && mGroupManager.isChildInGroupWithSummary(sbn)) {
+            return true;
+        }
+
+        final ForegroundServiceController fsc = Dependency.get(ForegroundServiceController.class);
+        if (fsc.isDungeonNotification(sbn) && !fsc.isDungeonNeededForUser(sbn.getUserId())) {
+            // this is a foreground-service disclosure for a user that does not need to show one
+            return true;
+        }
+
+        return false;
+!!!3741701.java!!!	showNotificationEvenIfUnprovisioned(inout sbn : StatusBarNotification) : boolean
+        return showNotificationEvenIfUnprovisioned(AppGlobals.getPackageManager(), sbn);
+!!!3741829.java!!!	showNotificationEvenIfUnprovisioned(inout packageManager : IPackageManager, inout sbn : StatusBarNotification) : boolean
+        return checkUidPermission(packageManager, Manifest.permission.NOTIFICATION_DURING_SETUP,
+                sbn.getUid()) == PackageManager.PERMISSION_GRANTED
+                && sbn.getNotification().extras.getBoolean(Notification.EXTRA_ALLOW_DURING_SETUP);
+!!!3741957.java!!!	checkUidPermission(inout packageManager : IPackageManager, in permission : String, in uid : int) : int
+        try {
+            return packageManager.checkUidPermission(permission, uid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!3742085.java!!!	dump(inout pw : PrintWriter, in indent : String) : void
+        int N = mSortedAndFiltered.size();
+        pw.print(indent);
+        pw.println("active notifications: " + N);
+        int active;
+        for (active = 0; active < N; active++) {
+            NotificationData.Entry e = mSortedAndFiltered.get(active);
+            dumpEntry(pw, indent, active, e);
+        }
+        synchronized (mEntries) {
+            int M = mEntries.size();
+            pw.print(indent);
+            pw.println("inactive notifications: " + (M - active));
+            int inactiveCount = 0;
+            for (int i = 0; i < M; i++) {
+                Entry entry = mEntries.valueAt(i);
+                if (!mSortedAndFiltered.contains(entry)) {
+                    dumpEntry(pw, indent, inactiveCount, entry);
+                    inactiveCount++;
+                }
+            }
+        }
+!!!3742213.java!!!	dumpEntry(inout pw : PrintWriter, in indent : String, in i : int, inout e : NotificationData::Entry) : void
+        mRankingMap.getRanking(e.key, mTmpRanking);
+        pw.print(indent);
+        pw.println("  [" + i + "] key=" + e.key + " icon=" + e.icon);
+        StatusBarNotification n = e.notification;
+        pw.print(indent);
+        pw.println("      pkg=" + n.getPackageName() + " id=" + n.getId() + " importance=" +
+                mTmpRanking.getImportance());
+        pw.print(indent);
+        pw.println("      notification=" + n.getNotification());
+!!!3742341.java!!!	isSystemNotification(inout sbn : StatusBarNotification) : boolean
+        String sbnPackage = sbn.getPackageName();
+        return "android".equals(sbnPackage) || "com.android.systemui".equals(sbnPackage);

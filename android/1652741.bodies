@@ -1,0 +1,143 @@
+class PersistentConnection
+!!!11222917.java!!!	PersistentConnection(in tag : String, inout context : Context, inout handler : Handler, in userId : int, inout componentName : ComponentName, in rebindBackoffSeconds : long, in rebindBackoffIncrease : double, in rebindMaxBackoffSeconds : long)
+        mTag = tag;
+        mContext = context;
+        mHandler = handler;
+        mUserId = userId;
+        mComponentName = componentName;
+
+        mRebindBackoffMs = rebindBackoffSeconds * 1000;
+        mRebindBackoffIncrease = rebindBackoffIncrease;
+        mRebindMaxBackoffMs = rebindMaxBackoffSeconds * 1000;
+
+        mNextBackoffMs = mRebindBackoffMs;
+!!!11223045.java!!!	getComponentName() : ComponentName
+        return mComponentName;
+!!!11223173.java!!!	isBound() : boolean
+        synchronized (mLock) {
+            return mBound;
+        }
+!!!11223301.java!!!	isRebindScheduled() : boolean
+        synchronized (mLock) {
+            return mRebindScheduled;
+        }
+!!!11223429.java!!!	isConnected() : boolean
+        synchronized (mLock) {
+            return mIsConnected;
+        }
+!!!11223557.java!!!	getServiceBinder() : T
+        synchronized (mLock) {
+            return mService;
+        }
+!!!11223685.java!!!	bind() : void
+        synchronized (mLock) {
+            mShouldBeBound = true;
+
+            bindInnerLocked(/* resetBackoff= */ true);
+        }
+!!!11223813.java!!!	bindInnerLocked(inout resetBackoff : boolean) : void
+        unscheduleRebindLocked();
+
+        if (mBound) {
+            return;
+        }
+        mBound = true;
+
+        if (resetBackoff) {
+            // Note this is the only place we reset the backoff time.
+            mNextBackoffMs = mRebindBackoffMs;
+        }
+
+        final Intent service = new Intent().setComponent(mComponentName);
+
+        if (DEBUG) {
+            Slog.d(mTag, "Attempting to connect to " + mComponentName);
+        }
+
+        final boolean success = mContext.bindServiceAsUser(service, mServiceConnection,
+                Context.BIND_AUTO_CREATE | Context.BIND_FOREGROUND_SERVICE,
+                mHandler, UserHandle.of(mUserId));
+
+        if (!success) {
+            Slog.e(mTag, "Binding: " + service.getComponent() + " u" + mUserId
+                    + " failed.");
+        }
+!!!11223941.java!!!	bindForBackoff() : void
+        synchronized (mLock) {
+            if (!mShouldBeBound) {
+                // Race condition -- by the time we got here, unbind() has already been called.
+                return;
+            }
+
+            bindInnerLocked(/* resetBackoff= */ false);
+        }
+!!!11224069.java!!!	cleanUpConnectionLocked() : void
+        mIsConnected = false;
+        mService = null;
+!!!11224197.java!!!	unbind() : void
+        synchronized (mLock) {
+            mShouldBeBound = false;
+
+            unbindLocked();
+        }
+!!!11224325.java!!!	unbindLocked() : void
+        unscheduleRebindLocked();
+
+        if (!mBound) {
+            return;
+        }
+        Slog.i(mTag, "Stopping: " + mComponentName.flattenToShortString() + " u" + mUserId);
+        mBound = false;
+        mContext.unbindService(mServiceConnection);
+
+        cleanUpConnectionLocked();
+!!!11224453.java!!!	unscheduleRebindLocked() : void
+        injectRemoveCallbacks(mBindForBackoffRunnable);
+        mRebindScheduled = false;
+!!!11224581.java!!!	scheduleRebindLocked() : void
+        unbindLocked();
+
+        if (!mRebindScheduled) {
+            Slog.i(mTag, "Scheduling to reconnect in " + mNextBackoffMs + " ms (uptime)");
+
+            mReconnectTime = injectUptimeMillis() + mNextBackoffMs;
+
+            injectPostAtTime(mBindForBackoffRunnable, mReconnectTime);
+
+            mNextBackoffMs = Math.min(mRebindMaxBackoffMs,
+                    (long) (mNextBackoffMs * mRebindBackoffIncrease));
+
+            mRebindScheduled = true;
+        }
+!!!11224837.java!!!	dump(in prefix : String, inout pw : PrintWriter) : void
+        synchronized (mLock) {
+            pw.print(prefix);
+            pw.print(mComponentName.flattenToShortString());
+            pw.print(mBound ? "  [bound]" : "  [not bound]");
+            pw.print(mIsConnected ? "  [connected]" : "  [not connected]");
+            if (mRebindScheduled) {
+                pw.print("  reconnect in ");
+                TimeUtils.formatDuration((mReconnectTime - injectUptimeMillis()), pw);
+            }
+            pw.println();
+
+            pw.print(prefix);
+            pw.print("  Next backoff(sec): ");
+            pw.print(mNextBackoffMs / 1000);
+        }
+!!!11224965.java!!!	injectRemoveCallbacks(inout r : Runnable) : void
+        mHandler.removeCallbacks(r);
+!!!11225093.java!!!	injectPostAtTime(inout r : Runnable, in uptimeMillis : long) : void
+        mHandler.postAtTime(r, uptimeMillis);
+!!!11225221.java!!!	injectUptimeMillis() : long
+        return SystemClock.uptimeMillis();
+!!!11225349.java!!!	getNextBackoffMsForTest() : long
+        return mNextBackoffMs;
+!!!11225477.java!!!	getReconnectTimeForTest() : long
+        return mReconnectTime;
+!!!11225605.java!!!	getServiceConnectionForTest() : ServiceConnection
+        return mServiceConnection;
+!!!11225733.java!!!	getBindForBackoffRunnableForTest() : Runnable
+        return mBindForBackoffRunnable;
+!!!11225861.java!!!	shouldBeBoundForTest() : boolean
+        return mShouldBeBound;

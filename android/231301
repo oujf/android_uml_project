@@ -1,0 +1,2298 @@
+format 214
+"http" // source::frameworks::base::core::java::android::net::http
+  revision 1
+  modified_by 5 "Jeff"
+  // class settings
+  
+  classdiagramsettings member_max_width 0 end
+  
+  usecasediagramsettings end
+  
+  sequencediagramsettings end
+  
+  collaborationdiagramsettings end
+  
+  objectdiagramsettings end
+  
+  componentdiagramsettings
+   end
+  
+  deploymentdiagramsettings
+   end
+  
+  statediagramsettings
+   end
+  
+  activitydiagramsettings
+   end
+  
+  java_dir "C:\\Users\\Jeff\\Documents\\aosp\\frameworks\\base\\core\\java/android/net/http/"
+  java_package "android.net.http"
+  classview 217605 "http"
+    
+    classdiagramsettings member_max_width 0 end
+    
+    collaborationdiagramsettings end
+    
+    objectdiagramsettings end
+    
+    sequencediagramsettings end
+    
+    statediagramsettings
+     end
+    
+    
+    activitydiagramsettings
+     end
+    class 1255045 "HttpResponseCache"
+      visibility public 
+      cpp_decl "${comment}${template}class ${name}${inherit} {
+${members}};
+${inlines}
+"
+      final java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl "${comment}${abstract}${custom}valuetype ${name}${inherit} {
+${members}};
+"
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment "Caches HTTP and HTTPS responses to the filesystem so they may be reused,
+saving time and bandwidth. This class supports {@link
+java.net.HttpURLConnection} and {@link javax.net.ssl.HttpsURLConnection};
+there is no platform-provided cache for {@code DefaultHttpClient} or
+{@code AndroidHttpClient}. Installation and instances are thread
+safe.
+
+<h3>Installing an HTTP response cache</h3>
+Enable caching of all of your application's HTTP requests by installing the
+cache at application startup. For example, this code installs a 10 MiB cache
+in the {@link android.content.Context#getCacheDir() application-specific
+cache directory} of the filesystem}: <pre>   {@code
+  protected void onCreate(Bundle savedInstanceState) {
+      ...
+
+      try {
+          File httpCacheDir = new File(context.getCacheDir(), \"http\");
+          long httpCacheSize = 10 * 1024 * 1024; // 10 MiB
+          HttpResponseCache.install(httpCacheDir, httpCacheSize);
+      } catch (IOException e) {
+          Log.i(TAG, \"HTTP response cache installation failed:\" + e);
+      }
+  }
+
+  protected void onStop() {
+      ...
+
+      HttpResponseCache cache = HttpResponseCache.getInstalled();
+      if (cache != null) {
+          cache.flush();
+      }
+  }}</pre>
+This cache will evict entries as necessary to keep its size from exceeding
+10 MiB. The best cache size is application specific and depends on the size
+and frequency of the files being downloaded. Increasing the limit may improve
+the hit rate, but it may also just waste filesystem space!
+
+<p>For some applications it may be preferable to create the cache in the
+external storage directory. <strong>There are no access controls on the
+external storage directory so it should not be used for caches that could
+contain private data.</strong> Although it often has more free space,
+external storage is optional and&#8212;even if available&#8212;can disappear
+during use. Retrieve the external cache directory using {@link
+android.content.Context#getExternalCacheDir()}. If this method returns null,
+your application should fall back to either not caching or caching on
+non-external storage. If the external storage is removed during use, the
+cache hit rate will drop to zero and ongoing cache reads will fail.
+
+<p>Flushing the cache forces its data to the filesystem. This ensures that
+all responses written to the cache will be readable the next time the
+activity starts.
+
+<h3>Cache Optimization</h3>
+To measure cache effectiveness, this class tracks three statistics:
+<ul>
+    <li><strong>{@link #getRequestCount() Request Count:}</strong> the number
+        of HTTP requests issued since this cache was created.
+    <li><strong>{@link #getNetworkCount() Network Count:}</strong> the
+        number of those requests that required network use.
+    <li><strong>{@link #getHitCount() Hit Count:}</strong> the number of
+        those requests whose responses were served by the cache.
+</ul>
+Sometimes a request will result in a conditional cache hit. If the cache
+contains a stale copy of the response, the client will issue a conditional
+{@code GET}. The server will then send either the updated response if it has
+changed, or a short 'not modified' response if the client's copy is still
+valid. Such responses increment both the network count and hit count.
+
+<p>The best way to improve the cache hit rate is by configuring the web
+server to return cacheable responses. Although this client honors all <a
+href=\"http://www.ietf.org/rfc/rfc2616.txt\">HTTP/1.1 (RFC 2068)</a> cache
+headers, it doesn't cache partial responses.
+
+<h3>Force a Network Response</h3>
+In some situations, such as after a user clicks a 'refresh' button, it may be
+necessary to skip the cache, and fetch data directly from the server. To force
+a full refresh, add the {@code no-cache} directive: <pre>   {@code
+        connection.addRequestProperty(\"Cache-Control\", \"no-cache\");
+}</pre>
+If it is only necessary to force a cached response to be validated by the
+server, use the more efficient {@code max-age=0} instead: <pre>   {@code
+        connection.addRequestProperty(\"Cache-Control\", \"max-age=0\");
+}</pre>
+
+<h3>Force a Cache Response</h3>
+Sometimes you'll want to show resources if they are available immediately,
+but not otherwise. This can be used so your application can show
+<i>something</i> while waiting for the latest data to be downloaded. To
+restrict a request to locally-cached resources, add the {@code
+only-if-cached} directive: <pre>   {@code
+    try {
+        connection.addRequestProperty(\"Cache-Control\", \"only-if-cached\");
+        InputStream cached = connection.getInputStream();
+        // the resource was cached! show it
+    } catch (FileNotFoundException e) {
+        // the resource was not cached
+    }
+}</pre>
+This technique works even better in situations where a stale response is
+better than no response. To permit stale cached responses, use the {@code
+max-stale} directive with the maximum staleness in seconds: <pre>   {@code
+        int maxStale = 60 * 60 * 24 * 28; // tolerate 4-weeks stale
+        connection.addRequestProperty(\"Cache-Control\", \"max-stale=\" + maxStale);
+}</pre>
+
+<h3>Working With Earlier Releases</h3>
+This class was added in Android 4.0 (Ice Cream Sandwich). Use reflection to
+enable the response cache without impacting earlier releases: <pre>   {@code
+      try {
+          File httpCacheDir = new File(context.getCacheDir(), \"http\");
+          long httpCacheSize = 10 * 1024 * 1024; // 10 MiB
+          Class.forName(\"android.net.http.HttpResponseCache\")
+                  .getMethod(\"install\", File.class, long.class)
+                  .invoke(null, httpCacheDir, httpCacheSize);
+      } catch (Exception httpResponseCacheNotAvailable) {
+      }}</pre>
+"
+      classrelation 1918341 // <generalisation>
+	relation 1918341 ---|>
+	  a public
+	    cpp default "${type}"
+	    java "${type}"
+	    idl "${type}"
+	    classrelation_ref 1918341 // <generalisation>
+	  b parent class_ref 1255173 // ResponseCache
+      end
+
+      classrelation 1918469 // <realization>
+	relation 1918469 -_-|>
+	  a public
+	    cpp default "${type}"
+	    java "${type}"
+	    idl "${type}"
+	    classrelation_ref 1918469 // <realization>
+	  b parent class_ref 1056261 // Closeable
+      end
+
+      classrelation 1918597 // <realization>
+	relation 1918597 -_-|>
+	  a public
+	    cpp default "${type}"
+	    java "${type}"
+	    idl "${type}"
+	    classrelation_ref 1918597 // <realization>
+	  b parent class_ref 1255301 // OkCacheContainer
+      end
+
+      attribute 4661125 "delegate"
+	const_attribute private explicit_type "AndroidShimResponseCache"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      operation 7281925 "HttpResponseCache"
+	private explicit_return_type ""
+	nparams 1
+	  param inout name "delegate" explicit_type "AndroidShimResponseCache"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+      end
+
+      operation 7282053 "getInstalled"
+	class_operation public return_type class_ref 1255045 // HttpResponseCache
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the currently-installed {@code HttpResponseCache}, or null if
+there is no cache installed or it is not a {@code HttpResponseCache}.
+"
+      end
+
+      operation 7282181 "install"
+	class_operation public return_type class_ref 1255045 // HttpResponseCache
+	nparams 2
+	  param inout name "directory" explicit_type "File"
+	  param in name "maxSize" explicit_type "long"
+	nexceptions 1
+	  explicit_exception "IOException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent synchronized java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new HTTP response cache and sets it as the system default cache.
+
+@param directory the directory to hold cache data.
+@param maxSize the maximum size of the cache in bytes.
+@return the newly-installed cache
+@throws IOException if {@code directory} cannot be used for this cache.
+    Most applications should respond to this exception by logging a
+    warning.
+"
+      end
+
+      operation 7282309 "get"
+	public explicit_return_type "CacheResponse"
+	nparams 3
+	  param inout name "uri" explicit_type "URI"
+	  param in name "requestMethod" explicit_type "String"
+	  param inout name "requestHeaders" explicit_type "Map<String, List<String>>"
+	nexceptions 1
+	  explicit_exception "IOException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Override
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+      end
+
+      operation 7282437 "put"
+	public explicit_return_type "CacheRequest"
+	nparams 2
+	  param inout name "uri" explicit_type "URI"
+	  param inout name "urlConnection" explicit_type "URLConnection"
+	nexceptions 1
+	  explicit_exception "IOException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Override
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+      end
+
+      operation 7282565 "size"
+	public explicit_return_type "long"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the number of bytes currently being used to store the values in
+this cache. This may be greater than the {@link #maxSize} if a background
+deletion is pending. {@code -1} is returned if the size cannot be determined.
+"
+      end
+
+      operation 7282693 "maxSize"
+	public explicit_return_type "long"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the maximum number of bytes that this cache should use to store
+its data.
+"
+      end
+
+      operation 7282821 "flush"
+	public explicit_return_type "void"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Force buffered operations to the filesystem. This ensures that responses
+written to the cache will be available the next time the cache is opened,
+even if this process is killed.
+"
+      end
+
+      operation 7282949 "getNetworkCount"
+	public explicit_return_type "int"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the number of HTTP requests that required the network to either
+supply a response or validate a locally cached response.
+"
+      end
+
+      operation 7283077 "getHitCount"
+	public explicit_return_type "int"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the number of HTTP requests whose response was provided by the
+cache. This may include conditional {@code GET} requests that were
+validated over the network.
+"
+      end
+
+      operation 7283205 "getRequestCount"
+	public explicit_return_type "int"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns the total number of HTTP requests that were made. This includes
+both client requests and requests that were made on the client's behalf
+to handle a redirects and retries.
+"
+      end
+
+      operation 7283333 "close"
+	public explicit_return_type "void"
+	nparams 0
+	nexceptions 1
+	  explicit_exception "IOException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Override
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Uninstalls the cache and releases any active resources. Stored contents
+will remain on the filesystem.
+"
+      end
+
+      operation 7283461 "delete"
+	public explicit_return_type "void"
+	nparams 0
+	nexceptions 1
+	  explicit_exception "IOException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Uninstalls the cache and deletes all of its stored contents.
+"
+      end
+
+      operation 7283589 "getCache"
+	public explicit_return_type "Cache"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Override
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment " @hide Needed for OkHttp integration. "
+      end
+    end
+
+    class 1255429 "SslCertificate"
+      visibility public 
+      cpp_decl "${comment}${template}class ${name}${inherit} {
+${members}};
+${inlines}
+"
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl "${comment}${abstract}${custom}valuetype ${name}${inherit} {
+${members}};
+"
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment "SSL certificate info (certificate details) class
+"
+      attribute 4661253 "ISO_8601_DATE_FORMAT"
+	class_attribute private explicit_type "String"
+	init_value " \"yyyy-MM-dd HH:mm:ssZ\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "SimpleDateFormat pattern for an ISO 8601 date
+
+"
+      end
+
+      class 1255557 "DName"
+	visibility public 
+	cpp_decl "${comment}${template}class ${name}${inherit} {
+${members}};
+${inlines}
+"
+	java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+	php_decl ""
+	python_2_2 python_decl ""
+	idl_decl "${comment}${abstract}${custom}valuetype ${name}${inherit} {
+${members}};
+"
+	explicit_switch_type ""
+	mysql_decl ""
+	
+	attribute 4662405 "mDName"
+	  private explicit_type "String"
+	  cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	  java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	  php_decl ""
+	  python_decl ""
+	  idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	  mysql_decl ""
+	  MysqlColumn
+	  comment "Distinguished name (normally includes CN, O, and OU names)
+
+"
+	end
+
+	attribute 4662533 "mCName"
+	  private explicit_type "String"
+	  cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	  java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	  php_decl ""
+	  python_decl ""
+	  idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	  mysql_decl ""
+	  MysqlColumn
+	  comment "Common-name (CN) component of the name
+
+"
+	end
+
+	attribute 4662661 "mOName"
+	  private explicit_type "String"
+	  cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	  java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	  php_decl ""
+	  python_decl ""
+	  idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	  mysql_decl ""
+	  MysqlColumn
+	  comment "Organization (O) component of the name
+
+"
+	end
+
+	attribute 4662789 "mUName"
+	  private explicit_type "String"
+	  cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	  java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	  php_decl ""
+	  python_decl ""
+	  idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	  mysql_decl ""
+	  MysqlColumn
+	  comment "Organizational Unit (OU) component of the name
+
+"
+	end
+
+	operation 7286149 "DName"
+	  public explicit_return_type ""
+	  nparams 1
+	    param in name "dName" explicit_type "String"
+	  cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	  cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	  preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	  
+	  
+	  idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	  comment "Creates a new {@code DName} from a string. The attributes
+are assumed to come in most significant to least
+significant order which is true of human readable values
+returned by methods such as {@code X500Principal.getName()}.
+Be aware that the underlying sources of distinguished names
+such as instances of {@code X509Certificate} are encoded in
+least significant to most significant order, so make sure
+the value passed here has the expected ordering of
+attributes.
+"
+	end
+
+	operation 7286277 "getDName"
+	  public explicit_return_type "String"
+	  nparams 0
+	  cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	  cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	  preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	  
+	  
+	  idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	  comment "@return The distinguished name (normally includes CN, O, and OU names)
+"
+	end
+
+	operation 7286405 "getCName"
+	  public explicit_return_type "String"
+	  nparams 0
+	  cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	  cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	  preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	  
+	  
+	  idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	  comment "@return The most specific Common-name (CN) component of this name
+"
+	end
+
+	operation 7286533 "getOName"
+	  public explicit_return_type "String"
+	  nparams 0
+	  cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	  cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	  preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	  
+	  
+	  idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	  comment "@return The most specific Organization (O) component of this name
+"
+	end
+
+	operation 7286661 "getUName"
+	  public explicit_return_type "String"
+	  nparams 0
+	  cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	  cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	  preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	  
+	  
+	  idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	  comment "@return The most specific Organizational Unit (OU) component of this name
+"
+	end
+      end
+
+      classrelation 1918725 // mIssuedTo (<unidirectional association>)
+	relation 1918725 --->
+	  a role_name "mIssuedTo" const_relation private
+	    comment "
+Name of the entity this certificate is issued to
+
+"
+	    cpp default "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} * ${name}${value};
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    idl "  ${comment}${visibility}${type} ${name};
+"
+	    classrelation_ref 1918725 // mIssuedTo (<unidirectional association>)
+	  b parent class_ref 1255557 // DName
+      end
+
+      classrelation 1918853 // mIssuedBy (<unidirectional association>)
+	relation 1918853 --->
+	  a role_name "mIssuedBy" const_relation private
+	    comment "
+Name of the entity this certificate is issued by
+
+"
+	    cpp default "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} * ${name}${value};
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    idl "  ${comment}${visibility}${type} ${name};
+"
+	    classrelation_ref 1918853 // mIssuedBy (<unidirectional association>)
+	  b parent class_ref 1255557 // DName
+      end
+
+      attribute 4661381 "mValidNotBefore"
+	const_attribute private explicit_type "Date"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "Not-before date from the validity period
+
+"
+      end
+
+      attribute 4661509 "mValidNotAfter"
+	const_attribute private explicit_type "Date"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "Not-after date from the validity period
+
+"
+      end
+
+      attribute 4661637 "mX509Certificate"
+	const_attribute private explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The original source certificate, if available.
+
+TODO If deprecated constructors are removed, this should always
+be available, and saveState and restoreState can be simplified
+to be unconditional.
+
+"
+      end
+
+      attribute 4661765 "ISSUED_TO"
+	class_attribute const_attribute private explicit_type "String"
+	init_value " \"issued-to\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "Bundle key names
+
+"
+      end
+
+      attribute 4661893 "ISSUED_BY"
+	class_attribute const_attribute private explicit_type "String"
+	init_value " \"issued-by\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      attribute 4662021 "VALID_NOT_BEFORE"
+	class_attribute const_attribute private explicit_type "String"
+	init_value " \"valid-not-before\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      attribute 4662149 "VALID_NOT_AFTER"
+	class_attribute const_attribute private explicit_type "String"
+	init_value " \"valid-not-after\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      attribute 4662277 "X509_CERTIFICATE"
+	class_attribute const_attribute private explicit_type "String"
+	init_value " \"x509-certificate\""
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      operation 7283717 "saveState"
+	class_operation public return_type class_ref 960005 // Bundle
+	nparams 1
+	  param inout name "certificate" type class_ref 1255429 // SslCertificate
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Saves the certificate state to a bundle
+@param certificate The SSL certificate to store
+@return A bundle with the certificate stored in it or null if fails
+"
+      end
+
+      operation 7283845 "restoreState"
+	class_operation public return_type class_ref 1255429 // SslCertificate
+	nparams 1
+	  param inout name "bundle" type class_ref 960005 // Bundle
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Restores the certificate stored in the bundle
+@param bundle The bundle with the certificate state stored in it
+@return The SSL certificate stored in the bundle or null if fails
+"
+      end
+
+      operation 7283973 "SslCertificate"
+	public explicit_return_type ""
+	nparams 4
+	  param in name "issuedTo" explicit_type "String"
+	  param in name "issuedBy" explicit_type "String"
+	  param in name "validNotBefore" explicit_type "String"
+	  param in name "validNotAfter" explicit_type "String"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}, ${t3} ${p3}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SSL certificate object
+@param issuedTo The entity this certificate is issued to
+@param issuedBy The entity that issued this certificate
+@param validNotBefore The not-before date from the certificate
+    validity period in ISO 8601 format
+@param validNotAfter The not-after date from the certificate
+    validity period in ISO 8601 format
+@deprecated Use {@link #SslCertificate(X509Certificate)}
+"
+      end
+
+      operation 7284101 "SslCertificate"
+	public explicit_return_type ""
+	nparams 4
+	  param in name "issuedTo" explicit_type "String"
+	  param in name "issuedBy" explicit_type "String"
+	  param inout name "validNotBefore" explicit_type "Date"
+	  param inout name "validNotAfter" explicit_type "Date"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}, ${t3} ${p3}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SSL certificate object
+@param issuedTo The entity this certificate is issued to
+@param issuedBy The entity that issued this certificate
+@param validNotBefore The not-before date from the certificate validity period
+@param validNotAfter The not-after date from the certificate validity period
+@deprecated Use {@link #SslCertificate(X509Certificate)}
+"
+      end
+
+      operation 7284229 "SslCertificate"
+	public explicit_return_type ""
+	nparams 1
+	  param inout name "certificate" explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SSL certificate object from an X509 certificate
+@param certificate X509 certificate
+"
+      end
+
+      operation 7284357 "SslCertificate"
+	private explicit_return_type ""
+	nparams 5
+	  param in name "issuedTo" explicit_type "String"
+	  param in name "issuedBy" explicit_type "String"
+	  param inout name "validNotBefore" explicit_type "Date"
+	  param inout name "validNotAfter" explicit_type "Date"
+	  param inout name "x509Certificate" explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}, ${t3} ${p3}, ${t4} ${p4}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+      end
+
+      operation 7284485 "getValidNotBeforeDate"
+	public explicit_return_type "Date"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Not-before date from the certificate validity period or
+\"\" if none has been set
+"
+      end
+
+      operation 7284613 "getValidNotBefore"
+	public explicit_return_type "String"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Not-before date from the certificate validity period in
+ISO 8601 format or \"\" if none has been set
+
+@deprecated Use {@link #getValidNotBeforeDate()}
+"
+      end
+
+      operation 7284741 "getValidNotAfterDate"
+	public explicit_return_type "Date"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Not-after date from the certificate validity period or
+\"\" if none has been set
+"
+      end
+
+      operation 7284869 "getValidNotAfter"
+	public explicit_return_type "String"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Not-after date from the certificate validity period in
+ISO 8601 format or \"\" if none has been set
+
+@deprecated Use {@link #getValidNotAfterDate()}
+"
+      end
+
+      operation 7284997 "getIssuedTo"
+	public return_type class_ref 1255557 // DName
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Issued-to distinguished name or null if none has been set
+"
+      end
+
+      operation 7285125 "getIssuedBy"
+	public return_type class_ref 1255557 // DName
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return Issued-by distinguished name or null if none has been set
+"
+      end
+
+      operation 7285253 "getSerialNumber"
+	class_operation private explicit_return_type "String"
+	nparams 1
+	  param inout name "x509Certificate" explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Convenience for UI presentation, not intended as public API.
+"
+      end
+
+      operation 7285381 "getDigest"
+	class_operation private explicit_return_type "String"
+	nparams 2
+	  param inout name "x509Certificate" explicit_type "X509Certificate"
+	  param in name "algorithm" explicit_type "String"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Convenience for UI presentation, not intended as public API.
+"
+      end
+
+      operation 7285509 "fingerprint"
+	class_operation private explicit_return_type "String"
+	nparams 1
+	  param inout name "bytes" explicit_type "byte"
+	multiplicity "[]"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent final java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+      end
+
+      operation 7285637 "toString"
+	public explicit_return_type "String"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "@return A string representation of this certificate for debugging
+"
+      end
+
+      operation 7285765 "parseDate"
+	class_operation private explicit_return_type "Date"
+	nparams 1
+	  param in name "string" explicit_type "String"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Parse an ISO 8601 date converting ParseExceptions to a null result;
+"
+      end
+
+      operation 7285893 "formatDate"
+	class_operation private explicit_return_type "String"
+	nparams 1
+	  param inout name "date" explicit_type "Date"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Format a date as an ISO 8601 string, return \"\" for a null date
+"
+      end
+
+      operation 7286021 "cloneDate"
+	class_operation private explicit_return_type "Date"
+	nparams 1
+	  param inout name "date" explicit_type "Date"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Clone a possibly null Date
+"
+      end
+
+      operation 7286789 "inflateCertificateView"
+	public return_type class_ref 970757 // View
+	nparams 1
+	  param inout name "context" type class_ref 956933 // Context
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Inflates the SSL certificate view (helper method).
+@return The resultant certificate view with issued-to, issued-by,
+issued-on, expires-on, and possibly other fields set.
+
+@hide Used by Browser and Settings
+"
+      end
+
+      operation 7286917 "formatCertificateDate"
+	private explicit_return_type "String"
+	nparams 2
+	  param inout name "context" type class_ref 956933 // Context
+	  param inout name "certificateDate" explicit_type "Date"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Formats the certificate date to a properly localized date string.
+@return Properly localized version of the certificate date string and
+the \"\" if it fails to localize.
+"
+      end
+    end
+
+    class 1255685 "SslError"
+      visibility public 
+      cpp_decl "${comment}${template}class ${name}${inherit} {
+${members}};
+${inlines}
+"
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl "${comment}${abstract}${custom}valuetype ${name}${inherit} {
+${members}};
+"
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment "This class represents a set of one or more SSL errors and the associated SSL
+certificate.
+"
+      attribute 4662917 "SSL_NOTYETVALID"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 0"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "Individual SSL errors (in the order from the least to the most severe):
+
+
+The certificate is not yet valid
+
+"
+      end
+
+      attribute 4663045 "SSL_EXPIRED"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 1"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The certificate has expired
+
+"
+      end
+
+      attribute 4663173 "SSL_IDMISMATCH"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 2"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "Hostname mismatch
+
+"
+      end
+
+      attribute 4663301 "SSL_UNTRUSTED"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 3"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The certificate authority is not trusted
+
+"
+      end
+
+      attribute 4663429 "SSL_DATE_INVALID"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 4"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The date of the certificate is invalid
+
+"
+      end
+
+      attribute 4663557 "SSL_INVALID"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 5"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "A generic error occurred
+
+"
+      end
+
+      attribute 4663685 "SSL_MAX_ERROR"
+	class_attribute const_attribute public explicit_type "int"
+	init_value " 6"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	java_annotation "@Deprecated
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The number of different SSL errors.
+@deprecated This constant is not necessary for using the SslError API and
+            can change from release to release.
+
+ Update if you add a new SSL error!!!
+"
+      end
+
+      attribute 4663813 "mErrors"
+	package explicit_type "int"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The SSL error set bitfield (each individual error is a bit index;
+multiple individual errors can be OR-ed)
+
+"
+      end
+
+      classrelation 1918981 // mCertificate (<unidirectional association>)
+	relation 1918981 --->
+	  a role_name "mCertificate" const_relation package
+	    comment "
+The SSL certificate associated with the error set
+
+"
+	    cpp default "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} * ${name}${value};
+"
+	    java "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	    idl "  ${comment}${visibility}${type} ${name};
+"
+	    classrelation_ref 1918981 // mCertificate (<unidirectional association>)
+	  b parent class_ref 1255429 // SslCertificate
+      end
+
+      attribute 4663941 "mUrl"
+	const_attribute package explicit_type "String"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment "The URL associated with the error set.
+
+"
+      end
+
+      operation 7287045 "SslError"
+	public explicit_return_type ""
+	nparams 2
+	  param in name "error" explicit_type "int"
+	  param inout name "certificate" type class_ref 1255429 // SslCertificate
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SslError object using the supplied error and certificate.
+The URL will be set to the empty string.
+@param error The SSL error
+@param certificate The associated SSL certificate
+@deprecated Use {@link #SslError(int, SslCertificate, String)}
+"
+      end
+
+      operation 7287173 "SslError"
+	public explicit_return_type ""
+	nparams 2
+	  param in name "error" explicit_type "int"
+	  param inout name "certificate" explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@Deprecated
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SslError object using the supplied error and certificate.
+The URL will be set to the empty string.
+@param error The SSL error
+@param certificate The associated SSL certificate
+@deprecated Use {@link #SslError(int, X509Certificate, String)}
+"
+      end
+
+      operation 7287301 "SslError"
+	public explicit_return_type ""
+	nparams 3
+	  param in name "error" explicit_type "int"
+	  param inout name "certificate" type class_ref 1255429 // SslCertificate
+	  param in name "url" explicit_type "String"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SslError object using the supplied error, certificate and
+URL.
+@param error The SSL error
+@param certificate The associated SSL certificate
+@param url The associated URL
+"
+      end
+
+      operation 7287429 "SslError"
+	public explicit_return_type ""
+	nparams 3
+	  param in name "error" explicit_type "int"
+	  param inout name "certificate" explicit_type "X509Certificate"
+	  param in name "url" explicit_type "String"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates a new SslError object using the supplied error, certificate and
+URL.
+@param error The SSL error
+@param certificate The associated SSL certificate
+@param url The associated URL
+"
+      end
+
+      operation 7287557 "SslErrorFromChromiumErrorCode"
+	class_operation public return_type class_ref 1255685 // SslError
+	nparams 3
+	  param in name "error" explicit_type "int"
+	  param inout name "cert" type class_ref 1255429 // SslCertificate
+	  param in name "url" explicit_type "String"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}, ${t2} ${p2}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Creates an SslError object from a chromium error code.
+@param error The chromium error code
+@param certificate The associated SSL certificate
+@param url The associated URL.
+@hide  chromium error codes only available inside the framework
+"
+      end
+
+      operation 7287685 "getCertificate"
+	public return_type class_ref 1255429 // SslCertificate
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Gets the SSL certificate associated with this object.
+@return The SSL certificate, non-null.
+"
+      end
+
+      operation 7287813 "getUrl"
+	public explicit_return_type "String"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Gets the URL associated with this object.
+@return The URL, non-null.
+"
+      end
+
+      operation 7287941 "addError"
+	public explicit_return_type "boolean"
+	nparams 1
+	  param in name "error" explicit_type "int"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Adds the supplied SSL error to the set.
+@param error The SSL error to add
+@return True if the error being added is a known SSL error, otherwise
+        false.
+"
+      end
+
+      operation 7288069 "hasError"
+	public explicit_return_type "boolean"
+	nparams 1
+	  param in name "error" explicit_type "int"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Determines whether this object includes the supplied error.
+@param error The SSL error to check for
+@return True if this object includes the error, otherwise false.
+"
+      end
+
+      operation 7288197 "getPrimaryError"
+	public explicit_return_type "int"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Gets the most severe SSL error in this object's set of errors.
+Returns -1 if the set is empty.
+@return The most severe SSL error, or -1 if the set is empty.
+"
+      end
+
+      operation 7288325 "toString"
+	public explicit_return_type "String"
+	nparams 0
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns a string representation of this object.
+@return A String representation of this object.
+"
+      end
+    end
+
+    class 1255813 "X509TrustManagerExtensions"
+      visibility public 
+      cpp_decl "${comment}${template}class ${name}${inherit} {
+${members}};
+${inlines}
+"
+      java_decl "${comment}${@}${visibility}${static}${final}${abstract}class ${name}${extends}${implements} {
+${members}}
+"
+      php_decl ""
+      python_2_2 python_decl ""
+      idl_decl "${comment}${abstract}${custom}valuetype ${name}${inherit} {
+${members}};
+"
+      explicit_switch_type ""
+      mysql_decl ""
+      
+      comment "X509TrustManager wrapper exposing Android-added features.
+<p>
+The checkServerTrusted method allows callers to perform additional
+verification of certificate chains after they have been successfully verified
+by the platform.
+</p>
+"
+      attribute 4664069 "mDelegate"
+	const_attribute private explicit_type "TrustManagerImpl"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      attribute 4664197 "mTrustManager"
+	const_attribute private explicit_type "X509TrustManager"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+	comment " Methods to use when mDelegate is not a TrustManagerImpl and duck typing is being used.
+"
+      end
+
+      attribute 4664325 "mCheckServerTrusted"
+	const_attribute private explicit_type "Method"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      attribute 4664453 "mIsSameTrustConfiguration"
+	const_attribute private explicit_type "Method"
+	cpp_decl "    ${comment}${static}${thread_local}${mutable}${volatile}${const}${type} ${name}${value};
+"
+	java_decl "  ${comment}${@}${visibility}${static}${final}${transient}${volatile}${type} ${name}${value};
+"
+	php_decl ""
+	python_decl ""
+	idl_decl "  ${comment}${visibility}${type} ${name};
+"
+	mysql_decl ""
+	MysqlColumn
+      end
+
+      operation 7288453 "X509TrustManagerExtensions"
+	public explicit_return_type ""
+	nparams 1
+	  param inout name "tm" explicit_type "X509TrustManager"
+	nexceptions 1
+	  explicit_exception "IllegalArgumentException"
+	cpp_decl "    ${comment}${inline}${name}${(}${)}${volatile}${throw};
+"
+	cpp_def "${comment}${inline}${class}::${name}${(}${)}${volatile}${throw} {
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${synchronized}${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}factory init_${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Constructs a new X509TrustManagerExtensions wrapper.
+
+@param tm A {@link X509TrustManager} as returned by TrustManagerFactory.getInstance();
+@throws IllegalArgumentException If tm is an unsupported TrustManager type.
+"
+      end
+
+      operation 7288581 "checkServerTrusted"
+	public explicit_return_type "List<X509Certificate>"
+	nparams 3
+	  param inout name "chain" explicit_type "X509Certificate"
+	multiplicity "[]"
+	  param in name "authType" explicit_type "String"
+	  param in name "host" explicit_type "String"
+	nexceptions 1
+	  explicit_exception "CertificateException"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0}[] ${p0}, ${t1} ${p1}, ${t2} ${p2}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Verifies the given certificate chain.
+
+<p>See {@link X509TrustManager#checkServerTrusted(X509Certificate[], String)} for a
+description of the chain and authType parameters. The final parameter, host, should be the
+hostname of the server.</p>
+
+@throws CertificateException if the chain does not verify correctly.
+@return the properly ordered chain used for verification as a list of X509Certificates.
+"
+      end
+
+      operation 7288709 "isUserAddedCertificate"
+	public explicit_return_type "boolean"
+	nparams 1
+	  param inout name "cert" explicit_type "X509Certificate"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}${)}${throws}${staticnl}{
+  ${body}}
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Checks whether a CA certificate is added by an user.
+
+<p>Since {@link X509TrustManager#checkServerTrusted} may allow its parameter {@code chain} to
+chain up to user-added CA certificates, this method can be used to perform additional
+policies for user-added CA certificates.
+
+@return {@code true} to indicate that the certificate authority exists in the user added
+certificate store, {@code false} otherwise.
+"
+      end
+
+      operation 7288837 "isSameTrustConfiguration"
+	public explicit_return_type "boolean"
+	nparams 2
+	  param in name "hostname1" explicit_type "String"
+	  param in name "hostname2" explicit_type "String"
+	cpp_decl "    ${comment}${friend}${static}${inline}${virtual}${type} ${name}${(}${)}${const}${volatile}${throw}${abstract};
+"
+	cpp_def "${comment}${inline}${type} ${class}::${name}${(}${)}${const}${volatile}${throw}${staticnl}{
+  ${body}}
+"
+	preserve_java_body_indent java_def "  ${comment}${@}${visibility}${final}${static}${abstract}${synchronized}${type} ${name}${(}${t0} ${p0}, ${t1} ${p1}${)}${throws}${staticnl}{
+  ${body}}
+"
+	java_annotation "@SystemApi
+"
+	
+	
+	idl_decl "  ${comment}${oneway}${type} ${name}${(}${)}${raisesnl}${raises};
+"
+	comment "Returns {@code true} if the TrustManager uses the same trust configuration for the provided
+hostnames.
+
+@hide
+"
+      end
+    end
+  end
+
+  deploymentview 198661 "http"
+    //deployment diagram settings
+    deploymentdiagramsettings
+     end
+    artifact 635397 "HttpResponseCache"
+      stereotype "source"
+      cpp_h "#ifndef ${NAMESPACE}_${NAME}_H
+#define ${NAMESPACE}_${NAME}_H
+
+${comment}
+${includes}
+${declarations}
+${namespace_start}
+${definition}
+${namespace_end}
+#endif
+"
+      cpp_src "${comment}
+${includes}
+${namespace_start}
+${members}
+${namespace_end}"
+      java_src "${comment}
+${package}
+${imports}
+import com.android.okhttp.Cache;
+import com.android.okhttp.AndroidShimResponseCache;
+import com.android.okhttp.OkCacheContainer;
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.net.CacheRequest;
+import java.net.CacheResponse;
+import java.net.ResponseCache;
+import java.net.URI;
+import java.net.URLConnection;
+import java.util.List;
+import java.util.Map;
+${definition}"
+      idl_src "#ifndef ${MODULE}_${NAME}_H
+#define ${MODULE}_${NAME}_H
+
+${comment}
+${includes}
+${module_start}
+${definition}
+${module_end}
+#endif
+"
+      associated_elems
+	class_ref 1255045 // HttpResponseCache
+      end
+      comment "Copyright (C) 2011 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the \"License\");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an \"AS IS\" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"
+    end
+
+    artifact 635525 "SslCertificate"
+      stereotype "source"
+      cpp_h "#ifndef ${NAMESPACE}_${NAME}_H
+#define ${NAMESPACE}_${NAME}_H
+
+${comment}
+${includes}
+${declarations}
+${namespace_start}
+${definition}
+${namespace_end}
+#endif
+"
+      cpp_src "${comment}
+${includes}
+${namespace_start}
+${members}
+${namespace_end}"
+      java_src "${comment}
+${package}
+${imports}
+import com.android.internal.util.HexDump;
+import android.content.Context;
+import android.os.Bundle;
+import android.text.format.DateFormat;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.TextView;
+import java.io.ByteArrayInputStream;
+import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Vector;
+import com.android.org.bouncycastle.asn1.x509.X509Name;
+${definition}"
+      idl_src "#ifndef ${MODULE}_${NAME}_H
+#define ${MODULE}_${NAME}_H
+
+${comment}
+${includes}
+${module_start}
+${definition}
+${module_end}
+#endif
+"
+      associated_elems
+	class_ref 1255429 // SslCertificate
+      end
+      comment "Copyright (C) 2006 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the \"License\");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an \"AS IS\" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"
+    end
+
+    artifact 635653 "SslError"
+      stereotype "source"
+      cpp_h "#ifndef ${NAMESPACE}_${NAME}_H
+#define ${NAMESPACE}_${NAME}_H
+
+${comment}
+${includes}
+${declarations}
+${namespace_start}
+${definition}
+${namespace_end}
+#endif
+"
+      cpp_src "${comment}
+${includes}
+${namespace_start}
+${members}
+${namespace_end}"
+      java_src "${comment}
+${package}
+${imports}
+import java.security.cert.X509Certificate;
+${definition}"
+      idl_src "#ifndef ${MODULE}_${NAME}_H
+#define ${MODULE}_${NAME}_H
+
+${comment}
+${includes}
+${module_start}
+${definition}
+${module_end}
+#endif
+"
+      associated_elems
+	class_ref 1255685 // SslError
+      end
+      comment "Copyright (C) 2006 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the \"License\");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an \"AS IS\" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"
+    end
+
+    artifact 635781 "X509TrustManagerExtensions"
+      stereotype "source"
+      cpp_h "#ifndef ${NAMESPACE}_${NAME}_H
+#define ${NAMESPACE}_${NAME}_H
+
+${comment}
+${includes}
+${declarations}
+${namespace_start}
+${definition}
+${namespace_end}
+#endif
+"
+      cpp_src "${comment}
+${includes}
+${namespace_start}
+${members}
+${namespace_end}"
+      java_src "${comment}
+${package}
+${imports}
+import android.annotation.SystemApi;
+import android.security.net.config.UserCertificateSource;
+import com.android.org.conscrypt.TrustManagerImpl;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.List;
+import javax.net.ssl.X509TrustManager;
+${definition}"
+      idl_src "#ifndef ${MODULE}_${NAME}_H
+#define ${MODULE}_${NAME}_H
+
+${comment}
+${includes}
+${module_start}
+${definition}
+${module_end}
+#endif
+"
+      associated_elems
+	class_ref 1255813 // X509TrustManagerExtensions
+      end
+      comment "Copyright (C) 2012 The Android Open Source Project
+
+Licensed under the Apache License, Version 2.0 (the \"License\");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an \"AS IS\" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"
+    end
+  end
+end

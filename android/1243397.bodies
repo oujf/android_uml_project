@@ -1,0 +1,53 @@
+class SecurityParameterIndex
+!!!7122309.java!!!	getSpi() : int
+            return mSpi;
+!!!7122437.java!!!	close() : void
+            mSpi = INVALID_SECURITY_PARAMETER_INDEX;
+            mCloseGuard.close();
+!!!7122565.java!!!	finalize() : void
+            if (mCloseGuard != null) {
+                mCloseGuard.warnIfOpen();
+            }
+
+            close();
+!!!7122693.java!!!	SecurityParameterIndex(inout service : IIpSecService, in direction : int, inout remoteAddress : InetAddress, in spi : int)
+            mService = service;
+            mRemoteAddress = remoteAddress;
+            try {
+                Bundle result =
+                        mService.reserveSecurityParameterIndex(
+                                direction, remoteAddress.getHostAddress(), spi, new Binder());
+
+                if (result == null) {
+                    throw new NullPointerException("Received null response from IpSecService");
+                }
+
+                int status = result.getInt(KEY_STATUS);
+                switch (status) {
+                    case Status.OK:
+                        break;
+                    case Status.RESOURCE_UNAVAILABLE:
+                        throw new ResourceUnavailableException(
+                                "No more SPIs may be allocated by this requester.");
+                    case Status.SPI_UNAVAILABLE:
+                        throw new SpiUnavailableException("Requested SPI is unavailable", spi);
+                    default:
+                        throw new RuntimeException(
+                                "Unknown status returned by IpSecService: " + status);
+                }
+                mSpi = result.getInt(KEY_SPI);
+                mResourceId = result.getInt(KEY_RESOURCE_ID);
+
+                if (mSpi == INVALID_SECURITY_PARAMETER_INDEX) {
+                    throw new RuntimeException("Invalid SPI returned by IpSecService: " + status);
+                }
+
+                if (mResourceId == INVALID_RESOURCE_ID) {
+                    throw new RuntimeException(
+                            "Invalid Resource ID returned by IpSecService: " + status);
+                }
+
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+            mCloseGuard.open("open");

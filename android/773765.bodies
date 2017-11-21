@@ -1,0 +1,47 @@
+class ProximityCheck
+!!!3202693.java!!!	check() : void
+            Preconditions.checkState(!mFinished && !mRegistered);
+            final Sensor sensor = mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+            if (sensor == null) {
+                if (DozeMachine.DEBUG) Log.d(TAG, "ProxCheck: No sensor found");
+                finishWithResult(RESULT_UNKNOWN);
+                return;
+            }
+            mDozeSensors.setDisableSensorsInterferingWithProximity(true);
+
+            mMaxRange = sensor.getMaximumRange();
+            mSensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL, 0,
+                    mHandler);
+            mHandler.postDelayed(this, TIMEOUT_DELAY_MS);
+            mWakeLock.acquire();
+            mRegistered = true;
+!!!3202821.java!!!	onSensorChanged(inout event : SensorEvent) : void
+            if (event.values.length == 0) {
+                if (DozeMachine.DEBUG) Log.d(TAG, "ProxCheck: Event has no values!");
+                finishWithResult(RESULT_UNKNOWN);
+            } else {
+                if (DozeMachine.DEBUG) {
+                    Log.d(TAG, "ProxCheck: Event: value=" + event.values[0] + " max=" + mMaxRange);
+                }
+                final boolean isNear = event.values[0] < mMaxRange;
+                finishWithResult(isNear ? RESULT_NEAR : RESULT_FAR);
+            }
+!!!3202949.java!!!	run() : void
+            if (DozeMachine.DEBUG) Log.d(TAG, "ProxCheck: No event received before timeout");
+            finishWithResult(RESULT_UNKNOWN);
+!!!3203077.java!!!	finishWithResult(in result : int) : void
+            if (mFinished) return;
+            boolean wasRegistered = mRegistered;
+            if (mRegistered) {
+                mHandler.removeCallbacks(this);
+                mSensorManager.unregisterListener(this);
+                mDozeSensors.setDisableSensorsInterferingWithProximity(false);
+                mRegistered = false;
+            }
+            onProximityResult(result);
+            if (wasRegistered) {
+                mWakeLock.release();
+            }
+            mFinished = true;
+!!!3203205.java!!!	onAccuracyChanged(inout sensor : Sensor, in accuracy : int) : void
+            // noop

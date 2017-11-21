@@ -1,0 +1,46 @@
+class SimChangeBroadcastReceiver
+!!!11400453.java!!!	SimChangeBroadcastReceiver(in generationNumber : int)
+                    mGenerationNumber = generationNumber;
+!!!11400581.java!!!	onReceive(inout context : Context, inout intent : Intent) : void
+                    final int currentGenerationNumber = mSimBcastGenerationNumber.get();
+
+                    if (DBG) {
+                        Log.d(TAG, "simchange mGenerationNumber=" + mGenerationNumber +
+                                ", current generationNumber=" + currentGenerationNumber);
+                    }
+                    if (mGenerationNumber != currentGenerationNumber) return;
+
+                    final String state = intent.getStringExtra(
+                            IccCardConstants.INTENT_KEY_ICC_STATE);
+                    Log.d(TAG, "got Sim changed to state " + state + ", mSimNotLoadedSeen=" +
+                            mSimNotLoadedSeen);
+
+                    if (!isSimCardLoaded(state)) {
+                        if (!mSimNotLoadedSeen) mSimNotLoadedSeen = true;
+                        return;
+                    }
+
+                    if (isSimCardLoaded(state) && mSimNotLoadedSeen) {
+                        mSimNotLoadedSeen = false;
+
+                        if (!hasMobileHotspotProvisionApp()) return;
+
+                        ArrayList<Integer> tethered = new ArrayList<Integer>();
+                        synchronized (mPublicSync) {
+                            for (int i = 0; i < mTetherStates.size(); i++) {
+                                TetherState tetherState = mTetherStates.valueAt(i);
+                                if (tetherState.lastState != IControlsTethering.STATE_TETHERED) {
+                                    continue;  // Skip interfaces that aren't tethered.
+                                }
+                                String iface = mTetherStates.keyAt(i);
+                                int interfaceType = ifaceNameToType(iface);
+                                if (interfaceType != ConnectivityManager.TETHERING_INVALID) {
+                                    tethered.add(new Integer(interfaceType));
+                                }
+                            }
+                        }
+
+                        for (int tetherType : tethered) {
+                            startProvisionIntent(tetherType);
+                        }
+                    }

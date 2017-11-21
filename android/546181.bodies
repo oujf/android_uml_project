@@ -1,0 +1,770 @@
+class ATSParser::Stream
+!!!1606917.cpp!!!	setCasInfo(in systemId : int32_t, in descrambler : sp<IDescrambler>, in sessionId : std::vector<uint8_t>) : void
+    if (mSource != NULL && mDescrambler == NULL && descrambler != NULL) {
+        signalDiscontinuity(DISCONTINUITY_FORMAT_ONLY, NULL);
+        mDescrambler = descrambler;
+        if (mQueue->isScrambled()) {
+            mQueue->setCasInfo(systemId, sessionId);
+        }
+    }
+!!!1607045.cpp!!!	parse(in continuity_counter : uint, in payload_unit_start_indicator : uint, in transport_scrambling_control : uint, in random_access_indicator : uint, inout br : ABitReader, inout event : SyncEvent) : status_t
+    if (mQueue == NULL) {
+        return OK;
+    }
+
+    if (mExpectedContinuityCounter >= 0
+            && (unsigned)mExpectedContinuityCounter != continuity_counter) {
+        ALOGI("discontinuity on stream pid 0x%04x", mElementaryPID);
+
+        mPayloadStarted = false;
+        mPesStartOffsets.clear();
+        mBuffer->setRange(0, 0);
+        mSubSamples.clear();
+        mExpectedContinuityCounter = -1;
+
+#if 0
+        // Uncomment this if you'd rather see no corruption whatsoever on
+        // screen and suspend updates until we come across another IDR frame.
+
+        if (mStreamType == STREAMTYPE_H264) {
+            ALOGI("clearing video queue");
+            mQueue->clear(true /* clearFormat */);
+        }
+#endif
+
+        if (!payload_unit_start_indicator) {
+            return OK;
+        }
+    }
+
+    mExpectedContinuityCounter = (continuity_counter + 1) & 0x0f;
+
+    if (payload_unit_start_indicator) {
+        off64_t offset = (event != NULL) ? event->getOffset() : 0;
+        if (mPayloadStarted) {
+            // Otherwise we run the danger of receiving the trailing bytes
+            // of a PES packet that we never saw the start of and assuming
+            // we have a a complete PES packet.
+
+            status_t err = flush(event);
+
+            if (err != OK) {
+                ALOGW("Error (%08x) happened while flushing; we simply discard "
+                      "the PES packet and continue.", err);
+            }
+        }
+
+        mPayloadStarted = true;
+        // There should be at most 2 elements in |mPesStartOffsets|.
+        while (mPesStartOffsets.size() >= 2) {
+            mPesStartOffsets.erase(mPesStartOffsets.begin());
+        }
+        mPesStartOffsets.push_back(offset);
+    }
+
+    if (!mPayloadStarted) {
+        return OK;
+    }
+
+    size_t payloadSizeBits = br->numBitsLeft();
+    if (payloadSizeBits % 8 != 0u) {
+        ALOGE("Wrong value");
+        return BAD_VALUE;
+    }
+
+    size_t neededSize = mBuffer->size() + payloadSizeBits / 8;
+    ensureBufferCapacity(neededSize);
+
+    memcpy(mBuffer->data() + mBuffer->size(), br->data(), payloadSizeBits / 8);
+    mBuffer->setRange(0, mBuffer->size() + payloadSizeBits / 8);
+
+    if (mScrambled) {
+        mSubSamples.push_back({payloadSizeBits / 8,
+                 transport_scrambling_control, random_access_indicator});
+    }
+
+    return OK;
+!!!1607173.cpp!!!	signalDiscontinuity(in type : DiscontinuityType, in extra : sp<AMessage>) : void
+    mExpectedContinuityCounter = -1;
+
+    if (mQueue == NULL) {
+        return;
+    }
+
+    mPayloadStarted = false;
+    mPesStartOffsets.clear();
+    mEOSReached = false;
+    mBuffer->setRange(0, 0);
+    mSubSamples.clear();
+
+    bool clearFormat = false;
+    if (isAudio()) {
+        if (type & DISCONTINUITY_AUDIO_FORMAT) {
+            clearFormat = true;
+        }
+    } else {
+        if (type & DISCONTINUITY_VIDEO_FORMAT) {
+            clearFormat = true;
+        }
+    }
+
+    mQueue->clear(clearFormat);
+
+    if (type & DISCONTINUITY_TIME) {
+        uint64_t resumeAtPTS;
+        if (extra != NULL
+                && extra->findInt64(
+                    IStreamListener::kKeyResumeAtPTS,
+                    (int64_t *)&resumeAtPTS)) {
+            int64_t resumeAtMediaTimeUs =
+                mProgram->convertPTSToTimestamp(resumeAtPTS);
+
+            extra->setInt64("resume-at-mediaTimeUs", resumeAtMediaTimeUs);
+        }
+    }
+
+    if (mSource != NULL) {
+        sp<MetaData> meta = mSource->getFormat();
+        const char* mime;
+        if (clearFormat && meta != NULL && meta->findCString(kKeyMIMEType, &mime)
+                && (!strncasecmp(mime, MEDIA_MIMETYPE_AUDIO_SCRAMBLED, 15)
+                 || !strncasecmp(mime, MEDIA_MIMETYPE_VIDEO_SCRAMBLED, 15))){
+            mSource->clear();
+        } else {
+            mSource->queueDiscontinuity(type, extra, true);
+        }
+    }
+!!!1607301.cpp!!!	signalEOS(in finalResult : status_t) : void
+    if (mSource != NULL) {
+        mSource->signalEOS(finalResult);
+    }
+    mEOSReached = true;
+    flush(NULL);
+!!!1607429.cpp!!!	getSourceType() : SourceType
+    if (isVideo()) {
+        return VIDEO;
+    } else if (isAudio()) {
+        return AUDIO;
+    } else if (isMeta()) {
+        return META;
+    }
+    return NUM_SOURCE_TYPES;
+!!!1607557.cpp!!!	getSource(in type : SourceType) : sp<MediaSource>
+    switch (type) {
+        case VIDEO:
+        {
+            if (isVideo()) {
+                return mSource;
+            }
+            break;
+        }
+
+        case AUDIO:
+        {
+            if (isAudio()) {
+                return mSource;
+            }
+            break;
+        }
+
+        case META:
+        {
+            if (isMeta()) {
+                return mSource;
+            }
+            break;
+        }
+
+        default:
+            break;
+    }
+
+    return NULL;
+!!!1607685.cpp!!!	isAudio() : bool
+    switch (mStreamType) {
+        case STREAMTYPE_MPEG1_AUDIO:
+        case STREAMTYPE_MPEG2_AUDIO:
+        case STREAMTYPE_MPEG2_AUDIO_ADTS:
+        case STREAMTYPE_LPCM_AC3:
+        case STREAMTYPE_AC3:
+        case STREAMTYPE_AAC_ENCRYPTED:
+        case STREAMTYPE_AC3_ENCRYPTED:
+            return true;
+
+        default:
+            return false;
+    }
+!!!1607813.cpp!!!	isVideo() : bool
+    switch (mStreamType) {
+        case STREAMTYPE_H264:
+        case STREAMTYPE_H264_ENCRYPTED:
+        case STREAMTYPE_MPEG1_VIDEO:
+        case STREAMTYPE_MPEG2_VIDEO:
+        case STREAMTYPE_MPEG4_VIDEO:
+            return true;
+
+        default:
+            return false;
+    }
+!!!1607941.cpp!!!	isMeta() : bool
+    if (mStreamType == STREAMTYPE_METADATA) {
+        return true;
+    }
+    return false;
+!!!1608069.cpp!!!	signalNewSampleAesKey(in keyItem : sp<AMessage>) : void
+    ALOGD("Stream::signalNewSampleAesKey: 0x%04x size = %zu keyItem: %p",
+          mElementaryPID, mBuffer->size(), keyItem.get());
+
+    // a NULL key item will propagate to existing ElementaryStreamQueues
+    mSampleAesKeyItem = keyItem;
+
+    flush(NULL);
+    mQueue->signalNewSampleAesKey(keyItem);
+!!!1608197.cpp!!!	flush(inout event : SyncEvent) : status_t
+    if (mBuffer == NULL || mBuffer->size() == 0) {
+        return OK;
+    }
+
+    ALOGV("flushing stream 0x%04x size = %zu", mElementaryPID, mBuffer->size());
+
+    status_t err = OK;
+    if (mScrambled) {
+        err = flushScrambled(event);
+        mSubSamples.clear();
+    } else {
+        ABitReader br(mBuffer->data(), mBuffer->size());
+        err = parsePES(&br, event);
+    }
+
+    mBuffer->setRange(0, 0);
+
+    return err;
+!!!1608325.cpp!!!	flushScrambled(inout event : SyncEvent) : status_t
+    if (mDescrambler == NULL) {
+        ALOGE("received scrambled packets without descrambler!");
+        return UNKNOWN_ERROR;
+    }
+
+    if (mDescrambledBuffer == NULL || mMem == NULL) {
+        ALOGE("received scrambled packets without shared memory!");
+
+        return UNKNOWN_ERROR;
+    }
+
+    int32_t pesOffset = 0;
+    int32_t descrambleSubSamples = 0, descrambleBytes = 0;
+    uint32_t tsScramblingControl = 0, pesScramblingControl = 0;
+
+    // First, go over subsamples to find TS-level scrambling key id, and
+    // calculate how many subsample we need to descramble (assuming we don't
+    // have PES-level scrambling).
+    for (auto it = mSubSamples.begin(); it != mSubSamples.end(); it++) {
+        if (it->transport_scrambling_mode != 0) {
+            // TODO: handle keyId change, use the first non-zero keyId for now.
+            if (tsScramblingControl == 0) {
+                tsScramblingControl = it->transport_scrambling_mode;
+            }
+        }
+        if (tsScramblingControl == 0 || descrambleSubSamples == 0
+                || !mQueue->isScrambled()) {
+            descrambleSubSamples++;
+            descrambleBytes += it->subSampleSize;
+        }
+    }
+    // If not scrambled at TS-level, check PES-level scrambling
+    if (tsScramblingControl == 0) {
+        ABitReader br(mBuffer->data(), mBuffer->size());
+        pesScramblingControl = getPesScramblingControl(&br, &pesOffset);
+        // If not scrambled at PES-level either, or scrambled at PES-level but
+        // requires output to remain scrambled, we don't need to descramble
+        // anything.
+        if (pesScramblingControl == 0 || mQueue->isScrambled()) {
+            descrambleSubSamples = 0;
+            descrambleBytes = 0;
+        }
+    }
+
+    uint32_t sctrl = tsScramblingControl != 0 ?
+            tsScramblingControl : pesScramblingControl;
+
+    // Perform the 1st pass descrambling if needed
+    if (descrambleBytes > 0) {
+        memcpy(mDescrambledBuffer->data(), mBuffer->data(), descrambleBytes);
+        mDescrambledBuffer->setRange(0, descrambleBytes);
+
+        sp<ABuffer> subSamples = new ABuffer(
+                sizeof(DescramblerPlugin::SubSample) * descrambleSubSamples);
+
+        DescrambleInfo info;
+        info.dstType = DescrambleInfo::kDestinationTypeVmPointer;
+        info.scramblingControl = (DescramblerPlugin::ScramblingControl)sctrl;
+        info.numSubSamples = descrambleSubSamples;
+        info.subSamples = (DescramblerPlugin::SubSample *)subSamples->data();
+        info.srcMem = mMem;
+        info.srcOffset = 0;
+        info.dstPtr = NULL; // in-place descrambling into srcMem
+        info.dstOffset = 0;
+
+        int32_t i = 0;
+        for (auto it = mSubSamples.begin();
+                it != mSubSamples.end() && i < descrambleSubSamples; it++, i++) {
+            if (it->transport_scrambling_mode != 0 || pesScramblingControl != 0) {
+                info.subSamples[i].mNumBytesOfClearData = 0;
+                info.subSamples[i].mNumBytesOfEncryptedData = it->subSampleSize;
+            } else {
+                info.subSamples[i].mNumBytesOfClearData = it->subSampleSize;
+                info.subSamples[i].mNumBytesOfEncryptedData = 0;
+            }
+        }
+        // If scrambled at PES-level, PES header should be skipped
+        if (pesScramblingControl != 0) {
+            info.srcOffset = info.dstOffset = pesOffset;
+            info.subSamples[0].mNumBytesOfEncryptedData -= pesOffset;
+        }
+
+        int32_t result;
+        Status status = mDescrambler->descramble(info, &result);
+
+        if (!status.isOk()) {
+            ALOGE("[stream %d] descramble failed, exceptionCode=%d",
+                    mElementaryPID, status.exceptionCode());
+            return UNKNOWN_ERROR;
+        }
+
+        ALOGV("[stream %d] descramble succeeded, %d bytes",
+                mElementaryPID, result);
+        memcpy(mBuffer->data(), mDescrambledBuffer->data(), descrambleBytes);
+    }
+
+    if (mQueue->isScrambled()) {
+        // Queue subSample info for scrambled queue
+        sp<ABuffer> clearSizesBuffer = new ABuffer(mSubSamples.size() * 4);
+        sp<ABuffer> encSizesBuffer = new ABuffer(mSubSamples.size() * 4);
+        int32_t *clearSizePtr = (int32_t*)clearSizesBuffer->data();
+        int32_t *encSizePtr = (int32_t*)encSizesBuffer->data();
+        int32_t isSync = 0;
+        int32_t i = 0;
+        for (auto it = mSubSamples.begin();
+                it != mSubSamples.end(); it++, i++) {
+            if ((it->transport_scrambling_mode == 0
+                    && pesScramblingControl == 0)
+                    || i < descrambleSubSamples) {
+                clearSizePtr[i] = it->subSampleSize;
+                encSizePtr[i] = 0;
+            } else {
+                clearSizePtr[i] = 0;
+                encSizePtr[i] = it->subSampleSize;
+            }
+            isSync |= it->random_access_indicator;
+        }
+        // Pass the original TS subsample size now. The PES header adjust
+        // will be applied when the scrambled AU is dequeued.
+        mQueue->appendScrambledData(
+                mBuffer->data(), mBuffer->size(), sctrl,
+                isSync, clearSizesBuffer, encSizesBuffer);
+    }
+
+    ABitReader br(mBuffer->data(), mBuffer->size());
+    status_t err = parsePES(&br, event);
+
+    if (err != OK) {
+        ALOGE("[stream %d] failed to parse descrambled PES, err=%d",
+                mElementaryPID, err);
+    }
+
+    return err;
+!!!1608453.cpp!!!	getPesScramblingControl(inout br : ABitReader, inout pesOffset : int32_t) : uint32_t
+    unsigned packet_startcode_prefix = br->getBits(24);
+
+    ALOGV("packet_startcode_prefix = 0x%08x", packet_startcode_prefix);
+
+    if (packet_startcode_prefix != 1) {
+        ALOGV("unit does not start with startcode.");
+        return 0;
+    }
+
+    if (br->numBitsLeft() < 48) {
+        return 0;
+    }
+
+    unsigned stream_id = br->getBits(8);
+    ALOGV("stream_id = 0x%02x", stream_id);
+
+    br->skipBits(16); // PES_packet_length
+
+    if (stream_id != 0xbc  // program_stream_map
+            && stream_id != 0xbe  // padding_stream
+            && stream_id != 0xbf  // private_stream_2
+            && stream_id != 0xf0  // ECM
+            && stream_id != 0xf1  // EMM
+            && stream_id != 0xff  // program_stream_directory
+            && stream_id != 0xf2  // DSMCC
+            && stream_id != 0xf8) {  // H.222.1 type E
+        if (br->getBits(2) != 2u) {
+            return 0;
+        }
+
+        unsigned PES_scrambling_control = br->getBits(2);
+        ALOGV("PES_scrambling_control = %u", PES_scrambling_control);
+
+        if (PES_scrambling_control == 0) {
+            return 0;
+        }
+
+        br->skipBits(12); // don't care
+
+        unsigned PES_header_data_length = br->getBits(8);
+        ALOGV("PES_header_data_length = %u", PES_header_data_length);
+
+        if (PES_header_data_length * 8 > br->numBitsLeft()) {
+            return 0;
+        }
+
+        *pesOffset = 9 + PES_header_data_length;
+        ALOGD("found PES_scrambling_control=%d, PES offset=%d",
+                PES_scrambling_control, *pesOffset);
+        return PES_scrambling_control;
+    }
+
+    return 0;
+!!!1608581.cpp!!!	parsePES(inout br : ABitReader, inout event : SyncEvent) : status_t
+    const uint8_t *basePtr = br->data();
+
+    unsigned packet_startcode_prefix = br->getBits(24);
+
+    ALOGV("packet_startcode_prefix = 0x%08x", packet_startcode_prefix);
+
+    if (packet_startcode_prefix != 1) {
+        ALOGV("Supposedly payload_unit_start=1 unit does not start "
+             "with startcode.");
+
+        return ERROR_MALFORMED;
+    }
+
+    unsigned stream_id = br->getBits(8);
+    ALOGV("stream_id = 0x%02x", stream_id);
+
+    unsigned PES_packet_length = br->getBits(16);
+    ALOGV("PES_packet_length = %u", PES_packet_length);
+
+    if (stream_id != 0xbc  // program_stream_map
+            && stream_id != 0xbe  // padding_stream
+            && stream_id != 0xbf  // private_stream_2
+            && stream_id != 0xf0  // ECM
+            && stream_id != 0xf1  // EMM
+            && stream_id != 0xff  // program_stream_directory
+            && stream_id != 0xf2  // DSMCC
+            && stream_id != 0xf8) {  // H.222.1 type E
+        if (br->getBits(2) != 2u) {
+            return ERROR_MALFORMED;
+        }
+
+        unsigned PES_scrambling_control = br->getBits(2);
+        ALOGV("PES_scrambling_control = %u", PES_scrambling_control);
+
+        MY_LOGV("PES_priority = %u", br->getBits(1));
+        MY_LOGV("data_alignment_indicator = %u", br->getBits(1));
+        MY_LOGV("copyright = %u", br->getBits(1));
+        MY_LOGV("original_or_copy = %u", br->getBits(1));
+
+        unsigned PTS_DTS_flags = br->getBits(2);
+        ALOGV("PTS_DTS_flags = %u", PTS_DTS_flags);
+
+        unsigned ESCR_flag = br->getBits(1);
+        ALOGV("ESCR_flag = %u", ESCR_flag);
+
+        unsigned ES_rate_flag = br->getBits(1);
+        ALOGV("ES_rate_flag = %u", ES_rate_flag);
+
+        unsigned DSM_trick_mode_flag = br->getBits(1);
+        ALOGV("DSM_trick_mode_flag = %u", DSM_trick_mode_flag);
+
+        unsigned additional_copy_info_flag = br->getBits(1);
+        ALOGV("additional_copy_info_flag = %u", additional_copy_info_flag);
+
+        MY_LOGV("PES_CRC_flag = %u", br->getBits(1));
+        MY_LOGV("PES_extension_flag = %u", br->getBits(1));
+
+        unsigned PES_header_data_length = br->getBits(8);
+        ALOGV("PES_header_data_length = %u", PES_header_data_length);
+
+        unsigned optional_bytes_remaining = PES_header_data_length;
+
+        uint64_t PTS = 0, DTS = 0;
+
+        if (PTS_DTS_flags == 2 || PTS_DTS_flags == 3) {
+            if (optional_bytes_remaining < 5u) {
+                return ERROR_MALFORMED;
+            }
+
+            if (br->getBits(4) != PTS_DTS_flags) {
+                return ERROR_MALFORMED;
+            }
+            PTS = ((uint64_t)br->getBits(3)) << 30;
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+            PTS |= ((uint64_t)br->getBits(15)) << 15;
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+            PTS |= br->getBits(15);
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+
+            ALOGV("PTS = 0x%016" PRIx64 " (%.2f)", PTS, PTS / 90000.0);
+
+            optional_bytes_remaining -= 5;
+
+            if (PTS_DTS_flags == 3) {
+                if (optional_bytes_remaining < 5u) {
+                    return ERROR_MALFORMED;
+                }
+
+                if (br->getBits(4) != 1u) {
+                    return ERROR_MALFORMED;
+                }
+
+                DTS = ((uint64_t)br->getBits(3)) << 30;
+                if (br->getBits(1) != 1u) {
+                    return ERROR_MALFORMED;
+                }
+                DTS |= ((uint64_t)br->getBits(15)) << 15;
+                if (br->getBits(1) != 1u) {
+                    return ERROR_MALFORMED;
+                }
+                DTS |= br->getBits(15);
+                if (br->getBits(1) != 1u) {
+                    return ERROR_MALFORMED;
+                }
+
+                ALOGV("DTS = %" PRIu64, DTS);
+
+                optional_bytes_remaining -= 5;
+            }
+        }
+
+        if (ESCR_flag) {
+            if (optional_bytes_remaining < 6u) {
+                return ERROR_MALFORMED;
+            }
+
+            br->getBits(2);
+
+            uint64_t ESCR = ((uint64_t)br->getBits(3)) << 30;
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+            ESCR |= ((uint64_t)br->getBits(15)) << 15;
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+            ESCR |= br->getBits(15);
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+
+            ALOGV("ESCR = %" PRIu64, ESCR);
+            MY_LOGV("ESCR_extension = %u", br->getBits(9));
+
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+
+            optional_bytes_remaining -= 6;
+        }
+
+        if (ES_rate_flag) {
+            if (optional_bytes_remaining < 3u) {
+                return ERROR_MALFORMED;
+            }
+
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+            MY_LOGV("ES_rate = %u", br->getBits(22));
+            if (br->getBits(1) != 1u) {
+                return ERROR_MALFORMED;
+            }
+
+            optional_bytes_remaining -= 3;
+        }
+
+        br->skipBits(optional_bytes_remaining * 8);
+
+        // ES data follows.
+        int32_t pesOffset = br->data() - basePtr;
+
+        if (PES_packet_length != 0) {
+            if (PES_packet_length < PES_header_data_length + 3) {
+                return ERROR_MALFORMED;
+            }
+
+            unsigned dataLength =
+                PES_packet_length - 3 - PES_header_data_length;
+
+            if (br->numBitsLeft() < dataLength * 8) {
+                ALOGE("PES packet does not carry enough data to contain "
+                     "payload. (numBitsLeft = %zu, required = %u)",
+                     br->numBitsLeft(), dataLength * 8);
+
+                return ERROR_MALFORMED;
+            }
+
+            ALOGV("There's %u bytes of payload, PES_packet_length=%u, offset=%d",
+                    dataLength, PES_packet_length, pesOffset);
+
+            onPayloadData(
+                    PTS_DTS_flags, PTS, DTS, PES_scrambling_control,
+                    br->data(), dataLength, pesOffset, event);
+
+            br->skipBits(dataLength * 8);
+        } else {
+            onPayloadData(
+                    PTS_DTS_flags, PTS, DTS, PES_scrambling_control,
+                    br->data(), br->numBitsLeft() / 8, pesOffset, event);
+
+            size_t payloadSizeBits = br->numBitsLeft();
+            if (payloadSizeBits % 8 != 0u) {
+                return ERROR_MALFORMED;
+            }
+
+            ALOGV("There's %zu bytes of payload, offset=%d",
+                    payloadSizeBits / 8, pesOffset);
+        }
+    } else if (stream_id == 0xbe) {  // padding_stream
+        if (PES_packet_length == 0u) {
+            return ERROR_MALFORMED;
+        }
+        br->skipBits(PES_packet_length * 8);
+    } else {
+        if (PES_packet_length == 0u) {
+            return ERROR_MALFORMED;
+        }
+        br->skipBits(PES_packet_length * 8);
+    }
+
+    return OK;
+!!!1608709.cpp!!!	onPayloadData(in PTS_DTS_flags : uint, in PTS : uint64_t, in DTS : uint64_t, in PES_scrambling_control : uint, in data : uint8_t, in size : size_t, in payloadOffset : int32_t, inout event : SyncEvent) : void
+#if 0
+    ALOGI("payload streamType 0x%02x, PTS = 0x%016llx, dPTS = %lld",
+          mStreamType,
+          PTS,
+          (int64_t)PTS - mPrevPTS);
+    mPrevPTS = PTS;
+#endif
+
+    ALOGV("onPayloadData mStreamType=0x%02x size: %zu", mStreamType, size);
+
+    int64_t timeUs = 0ll;  // no presentation timestamp available.
+    if (PTS_DTS_flags == 2 || PTS_DTS_flags == 3) {
+        timeUs = mProgram->convertPTSToTimestamp(PTS);
+    }
+
+    status_t err = mQueue->appendData(
+            data, size, timeUs, payloadOffset, PES_scrambling_control);
+
+    if (mEOSReached) {
+        mQueue->signalEOS();
+    }
+
+    if (err != OK) {
+        return;
+    }
+
+    sp<ABuffer> accessUnit;
+    bool found = false;
+    while ((accessUnit = mQueue->dequeueAccessUnit()) != NULL) {
+        if (mSource == NULL) {
+            sp<MetaData> meta = mQueue->getFormat();
+
+            if (meta != NULL) {
+                ALOGV("Stream PID 0x%08x of type 0x%02x now has data.",
+                     mElementaryPID, mStreamType);
+
+                const char *mime;
+                if (meta->findCString(kKeyMIMEType, &mime)
+                        && !strcasecmp(mime, MEDIA_MIMETYPE_VIDEO_AVC)) {
+                    int32_t sync = 0;
+                    if (!accessUnit->meta()->findInt32("isSync", &sync) || !sync) {
+                        continue;
+                    }
+                }
+                mSource = new AnotherPacketSource(meta);
+                mSource->queueAccessUnit(accessUnit);
+                ALOGV("onPayloadData: created AnotherPacketSource PID 0x%08x of type 0x%02x",
+                        mElementaryPID, mStreamType);
+            }
+        } else if (mQueue->getFormat() != NULL) {
+            // After a discontinuity we invalidate the queue's format
+            // and won't enqueue any access units to the source until
+            // the queue has reestablished the new format.
+
+            if (mSource->getFormat() == NULL) {
+                mSource->setFormat(mQueue->getFormat());
+            }
+            mSource->queueAccessUnit(accessUnit);
+        }
+
+        // Every access unit has a pesStartOffset queued in |mPesStartOffsets|.
+        off64_t pesStartOffset = -1;
+        if (!mPesStartOffsets.empty()) {
+            pesStartOffset = *mPesStartOffsets.begin();
+            mPesStartOffsets.erase(mPesStartOffsets.begin());
+        }
+
+        if (pesStartOffset >= 0 && (event != NULL) && !found && mQueue->getFormat() != NULL) {
+            int32_t sync = 0;
+            if (accessUnit->meta()->findInt32("isSync", &sync) && sync) {
+                int64_t timeUs;
+                if (accessUnit->meta()->findInt64("timeUs", &timeUs)) {
+                    found = true;
+                    event->init(pesStartOffset, mSource, timeUs, getSourceType());
+                }
+            }
+        }
+    }
+!!!1608837.cpp!!!	ensureBufferCapacity(in neededSize : size_t) : void
+    if (mBuffer != NULL && mBuffer->capacity() >= neededSize) {
+        return;
+    }
+
+    ALOGV("ensureBufferCapacity: current size %zu, new size %zu, scrambled %d",
+            mBuffer == NULL ? 0 : mBuffer->capacity(), neededSize, mScrambled);
+
+    sp<ABuffer> newBuffer, newScrambledBuffer;
+    sp<IMemory> newMem;
+    sp<MemoryDealer> newDealer;
+    if (mScrambled) {
+        size_t alignment = MemoryDealer::getAllocationAlignment();
+        neededSize = (neededSize + (alignment - 1)) & ~(alignment - 1);
+        // Align to multiples of 64K.
+        neededSize = (neededSize + 65535) & ~65535;
+        newDealer = new MemoryDealer(neededSize, "ATSParser");
+        newMem = newDealer->allocate(neededSize);
+        newScrambledBuffer = new ABuffer(newMem->pointer(), newMem->size());
+
+        if (mDescrambledBuffer != NULL) {
+            memcpy(newScrambledBuffer->data(),
+                    mDescrambledBuffer->data(), mDescrambledBuffer->size());
+            newScrambledBuffer->setRange(0, mDescrambledBuffer->size());
+        } else {
+            newScrambledBuffer->setRange(0, 0);
+        }
+        mMem = newMem;
+        mDealer = newDealer;
+        mDescrambledBuffer = newScrambledBuffer;
+    } else {
+        // Align to multiples of 64K.
+        neededSize = (neededSize + 65535) & ~65535;
+    }
+
+    newBuffer = new ABuffer(neededSize);
+    if (mBuffer != NULL) {
+        memcpy(newBuffer->data(), mBuffer->data(), mBuffer->size());
+        newBuffer->setRange(0, mBuffer->size());
+    } else {
+        newBuffer->setRange(0, 0);
+    }
+    mBuffer = newBuffer;

@@ -1,0 +1,783 @@
+class AccountManager
+!!!4842501.java!!!	AccountManager(inout context : Context, inout service : IAccountManager)
+        mContext = context;
+        mService = service;
+        mMainHandler = new Handler(mContext.getMainLooper());
+!!!4842629.java!!!	AccountManager(inout context : Context, inout service : IAccountManager, inout handler : Handler)
+        mContext = context;
+        mService = service;
+        mMainHandler = handler;
+!!!4842757.java!!!	sanitizeResult(inout result : Bundle) : Bundle
+        if (result != null) {
+            if (result.containsKey(KEY_AUTHTOKEN)
+                    && !TextUtils.isEmpty(result.getString(KEY_AUTHTOKEN))) {
+                final Bundle newResult = new Bundle(result);
+                newResult.putString(KEY_AUTHTOKEN, "<omitted for logging purposes>");
+                return newResult;
+            }
+        }
+        return result;
+!!!4842885.java!!!	get(inout context : Context) : AccountManager
+        if (context == null) throw new IllegalArgumentException("context is null");
+        return (AccountManager) context.getSystemService(Context.ACCOUNT_SERVICE);
+!!!4843013.java!!!	getPassword(in account : Account) : String
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            return mService.getPassword(account);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843141.java!!!	getUserData(in account : Account, in key : String) : String
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (key == null) throw new IllegalArgumentException("key is null");
+        try {
+            return mService.getUserData(account, key);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843269.java!!!	getAuthenticatorTypes() : AuthenticatorDescription
+        try {
+            return mService.getAuthenticatorTypes(UserHandle.getCallingUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843397.java!!!	getAuthenticatorTypesAsUser(in userId : int) : AuthenticatorDescription
+        try {
+            return mService.getAuthenticatorTypes(userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843525.java!!!	getAccounts() : Account
+        try {
+            return mService.getAccounts(null, mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843653.java!!!	getAccountsAsUser(in userId : int) : Account
+        try {
+            return mService.getAccountsAsUser(null, userId, mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4843781.java!!!	getAccountsForPackage(in packageName : String, in uid : int) : Account
+        try {
+            return mService.getAccountsForPackage(packageName, uid, mContext.getOpPackageName());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4843909.java!!!	getAccountsByTypeForPackage(in type : String, in packageName : String) : Account
+        try {
+            return mService.getAccountsByTypeForPackage(type, packageName,
+                    mContext.getOpPackageName());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4844037.java!!!	getAccountsByType(in type : String) : Account
+        return getAccountsByTypeAsUser(type, Process.myUserHandle());
+!!!4844165.java!!!	getAccountsByTypeAsUser(in type : String, inout userHandle : UserHandle) : Account
+        try {
+            return mService.getAccountsAsUser(type, userHandle.getIdentifier(),
+                    mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4844293.java!!!	updateAppPermission(inout account : Account, in authTokenType : String, in uid : int, inout value : boolean) : void
+        try {
+            mService.updateAppPermission(account, authTokenType, uid, value);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4844421.java!!!	getAuthTokenLabel(in accountType : String, in authTokenType : String, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        return new Future2Task<String>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.getAuthTokenLabel(mResponse, accountType, authTokenType);
+            }
+
+            @Override
+            public String bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_AUTH_TOKEN_LABEL)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getString(KEY_AUTH_TOKEN_LABEL);
+            }
+        }.start();
+!!!4844549.java!!!	hasFeatures(in account : Account, in features : String [[]], inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (features == null) throw new IllegalArgumentException("features is null");
+        return new Future2Task<Boolean>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.hasFeatures(mResponse, account, features, mContext.getOpPackageName());
+            }
+            @Override
+            public Boolean bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getBoolean(KEY_BOOLEAN_RESULT);
+            }
+        }.start();
+!!!4844677.java!!!	getAccountsByTypeAndFeatures(in type : String, in features : String [[]], inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (type == null) throw new IllegalArgumentException("type is null");
+        return new Future2Task<Account[]>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.getAccountsByFeatures(mResponse, type, features,
+                        mContext.getOpPackageName());
+            }
+            @Override
+            public Account[] bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_ACCOUNTS)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                final Parcelable[] parcelables = bundle.getParcelableArray(KEY_ACCOUNTS);
+                Account[] descs = new Account[parcelables.length];
+                for (int i = 0; i < parcelables.length; i++) {
+                    descs[i] = (Account) parcelables[i];
+                }
+                return descs;
+            }
+        }.start();
+!!!4844805.java!!!	addAccountExplicitly(inout account : Account, in password : String, inout userdata : Bundle) : boolean
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            return mService.addAccountExplicitly(account, password, userdata);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4844933.java!!!	addAccountExplicitly(inout account : Account, in password : String, inout extras : Bundle, inout visibility : Map<String, Integer>) : boolean
+        if (account == null)
+            throw new IllegalArgumentException("account is null");
+        try {
+            return mService.addAccountExplicitlyWithVisibility(account, password, extras,
+                    visibility);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4845061.java!!!	getPackagesAndVisibilityForAccount(inout account : Account) : Map<String, Integer>
+        try {
+            if (account == null)
+                throw new IllegalArgumentException("account is null");
+            @SuppressWarnings("unchecked")
+            Map<String, Integer> result = (Map<String, Integer>) mService
+                    .getPackagesAndVisibilityForAccount(account);
+            return result;
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4845189.java!!!	getAccountsAndVisibilityForPackage(in packageName : String, in accountType : String) : Account
+        try {
+            @SuppressWarnings("unchecked")
+            Map<Account, Integer> result = (Map<Account, Integer>) mService
+                    .getAccountsAndVisibilityForPackage(packageName, accountType);
+            return result;
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4845317.java!!!	setAccountVisibility(inout account : Account, in packageName : String, in visibility : int) : boolean
+        if (account == null)
+            throw new IllegalArgumentException("account is null");
+        try {
+            return mService.setAccountVisibility(account, packageName, visibility);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4845445.java!!!	getAccountVisibility(inout account : Account, in packageName : String) : int
+        if (account == null)
+            throw new IllegalArgumentException("account is null");
+        try {
+            return mService.getAccountVisibility(account, packageName);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4845573.java!!!	notifyAccountAuthenticated(inout account : Account) : boolean
+        if (account == null)
+            throw new IllegalArgumentException("account is null");
+        try {
+            return mService.accountAuthenticated(account);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4845701.java!!!	renameAccount(in account : Account, in newName : String, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null.");
+        if (TextUtils.isEmpty(newName)) {
+              throw new IllegalArgumentException("newName is empty or null.");
+        }
+        return new Future2Task<Account>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.renameAccount(mResponse, account, newName);
+            }
+            @Override
+            public Account bundleToResult(Bundle bundle) throws AuthenticatorException {
+                String name = bundle.getString(KEY_ACCOUNT_NAME);
+                String type = bundle.getString(KEY_ACCOUNT_TYPE);
+                String accessId = bundle.getString(KEY_ACCOUNT_ACCESS_ID);
+                return new Account(name, type, accessId);
+            }
+        }.start();
+!!!4845829.java!!!	getPreviousName(in account : Account) : String
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            return mService.getPreviousName(account);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4845957.java!!!	removeAccount(in account : Account, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        return new Future2Task<Boolean>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.removeAccount(mResponse, account, false);
+            }
+            @Override
+            public Boolean bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getBoolean(KEY_BOOLEAN_RESULT);
+            }
+        }.start();
+!!!4846085.java!!!	removeAccount(in account : Account, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.removeAccount(mResponse, account, activity != null);
+            }
+        }.start();
+!!!4846213.java!!!	removeAccountAsUser(in account : Account, inout callback : AccountManagerCallback, inout handler : Handler, in userHandle : UserHandle) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (userHandle == null) throw new IllegalArgumentException("userHandle is null");
+        return new Future2Task<Boolean>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.removeAccountAsUser(mResponse, account, false, userHandle.getIdentifier());
+            }
+            @Override
+            public Boolean bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getBoolean(KEY_BOOLEAN_RESULT);
+            }
+        }.start();
+!!!4846341.java!!!	removeAccountAsUser(in account : Account, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler, in userHandle : UserHandle) : AccountManagerFuture
+        if (account == null)
+            throw new IllegalArgumentException("account is null");
+        if (userHandle == null)
+            throw new IllegalArgumentException("userHandle is null");
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.removeAccountAsUser(mResponse, account, activity != null,
+                        userHandle.getIdentifier());
+            }
+        }.start();
+!!!4846469.java!!!	removeAccountExplicitly(inout account : Account) : boolean
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            return mService.removeAccountExplicitly(account);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4846597.java!!!	invalidateAuthToken(in accountType : String, in authToken : String) : void
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        try {
+            if (authToken != null) {
+                mService.invalidateAuthToken(accountType, authToken);
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4846725.java!!!	peekAuthToken(in account : Account, in authTokenType : String) : String
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        try {
+            return mService.peekAuthToken(account, authTokenType);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4846853.java!!!	setPassword(in account : Account, in password : String) : void
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            mService.setPassword(account, password);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4846981.java!!!	clearPassword(in account : Account) : void
+        if (account == null) throw new IllegalArgumentException("account is null");
+        try {
+            mService.clearPassword(account);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4847109.java!!!	setUserData(in account : Account, in key : String, in value : String) : void
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (key == null) throw new IllegalArgumentException("key is null");
+        try {
+            mService.setUserData(account, key, value);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4847237.java!!!	setAuthToken(inout account : Account, in authTokenType : String, in authToken : String) : void
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        try {
+            mService.setAuthToken(account, authTokenType, authToken);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4847365.java!!!	blockingGetAuthToken(inout account : Account, in authTokenType : String, inout notifyAuthFailure : boolean) : String
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        Bundle bundle = getAuthToken(account, authTokenType, notifyAuthFailure, null /* callback */,
+                null /* handler */).getResult();
+        if (bundle == null) {
+            // This should never happen, but it does, occasionally. If it does return null to
+            // signify that we were not able to get the authtoken.
+            // TODO: remove this when the bug is found that sometimes causes a null bundle to be
+            // returned
+            Log.e(TAG, "blockingGetAuthToken: null was returned from getResult() for "
+                    + account + ", authTokenType " + authTokenType);
+            return null;
+        }
+        return bundle.getString(KEY_AUTHTOKEN);
+!!!4847493.java!!!	getAuthToken(in account : Account, in authTokenType : String, in options : Bundle, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.getAuthToken(mResponse, account, authTokenType,
+                        false /* notifyOnAuthFailure */, true /* expectActivityLaunch */,
+                        optionsIn);
+            }
+        }.start();
+!!!4847621.java!!!	getAuthToken(in account : Account, in authTokenType : String, in notifyAuthFailure : boolean, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        return getAuthToken(account, authTokenType, null, notifyAuthFailure, callback,
+                handler);
+!!!4847749.java!!!	getAuthToken(in account : Account, in authTokenType : String, in options : Bundle, in notifyAuthFailure : boolean, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+        return new AmsTask(null, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.getAuthToken(mResponse, account, authTokenType,
+                        notifyAuthFailure, false /* expectActivityLaunch */, optionsIn);
+            }
+        }.start();
+!!!4847877.java!!!	addAccount(in accountType : String, in authTokenType : String, in requiredFeatures : String [[]], in addAccountOptions : Bundle, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        final Bundle optionsIn = new Bundle();
+        if (addAccountOptions != null) {
+            optionsIn.putAll(addAccountOptions);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.addAccount(mResponse, accountType, authTokenType,
+                        requiredFeatures, activity != null, optionsIn);
+            }
+        }.start();
+!!!4848005.java!!!	addAccountAsUser(in accountType : String, in authTokenType : String, in requiredFeatures : String [[]], in addAccountOptions : Bundle, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler, in userHandle : UserHandle) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        if (userHandle == null) throw new IllegalArgumentException("userHandle is null");
+        final Bundle optionsIn = new Bundle();
+        if (addAccountOptions != null) {
+            optionsIn.putAll(addAccountOptions);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.addAccountAsUser(mResponse, accountType, authTokenType,
+                        requiredFeatures, activity != null, optionsIn, userHandle.getIdentifier());
+            }
+        }.start();
+!!!4848133.java!!!	addSharedAccountsFromParentUser(inout parentUser : UserHandle, inout user : UserHandle) : void
+        try {
+            mService.addSharedAccountsFromParentUser(parentUser.getIdentifier(),
+                    user.getIdentifier(), mContext.getOpPackageName());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4848261.java!!!	copyAccountToUser(in account : Account, in fromUser : UserHandle, in toUser : UserHandle, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (toUser == null || fromUser == null) {
+            throw new IllegalArgumentException("fromUser and toUser cannot be null");
+        }
+
+        return new Future2Task<Boolean>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.copyAccountToUser(
+                        mResponse, account, fromUser.getIdentifier(), toUser.getIdentifier());
+            }
+            @Override
+            public Boolean bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getBoolean(KEY_BOOLEAN_RESULT);
+            }
+        }.start();
+!!!4848389.java!!!	removeSharedAccount(in account : Account, inout user : UserHandle) : boolean
+        try {
+            boolean val = mService.removeSharedAccountAsUser(account, user.getIdentifier());
+            return val;
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4848517.java!!!	getSharedAccounts(inout user : UserHandle) : Account
+        try {
+            return mService.getSharedAccountsAsUser(user.getIdentifier());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4848645.java!!!	confirmCredentials(in account : Account, in options : Bundle, in activity : Activity, in callback : AccountManagerCallback, in handler : Handler) : AccountManagerFuture
+        return confirmCredentialsAsUser(account, options, activity, callback, handler,
+                Process.myUserHandle());
+!!!4848773.java!!!	confirmCredentialsAsUser(in account : Account, in options : Bundle, in activity : Activity, in callback : AccountManagerCallback, in handler : Handler, inout userHandle : UserHandle) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        final int userId = userHandle.getIdentifier();
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.confirmCredentialsAsUser(mResponse, account, options, activity != null,
+                        userId);
+            }
+        }.start();
+!!!4848901.java!!!	updateCredentials(in account : Account, in authTokenType : String, in options : Bundle, in activity : Activity, in callback : AccountManagerCallback, in handler : Handler) : AccountManagerFuture
+        if (account == null) throw new IllegalArgumentException("account is null");
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.updateCredentials(mResponse, account, authTokenType, activity != null,
+                        options);
+            }
+        }.start();
+!!!4849029.java!!!	editProperties(in accountType : String, in activity : Activity, in callback : AccountManagerCallback, in handler : Handler) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.editProperties(mResponse, accountType, activity != null);
+            }
+        }.start();
+!!!4849157.java!!!	someUserHasAccount(in account : Account) : boolean
+        try {
+            return mService.someUserHasAccount(account);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!4849285.java!!!	ensureNotOnMainThread() : void
+        final Looper looper = Looper.myLooper();
+        if (looper != null && looper == mContext.getMainLooper()) {
+            final IllegalStateException exception = new IllegalStateException(
+                    "calling this from your main thread can lead to deadlock");
+            Log.e(TAG, "calling this from your main thread can lead to deadlock and/or ANRs",
+                    exception);
+            if (mContext.getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.FROYO) {
+                throw exception;
+            }
+        }
+!!!4849413.java!!!	postToHandler(inout handler : Handler, in callback : AccountManagerCallback, in future : AccountManagerFuture) : void
+        handler = handler == null ? mMainHandler : handler;
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                callback.run(future);
+            }
+        });
+!!!4849541.java!!!	postToHandler(inout handler : Handler, in listener : OnAccountsUpdateListener, in accounts : Account [[]]) : void
+        final Account[] accountsCopy = new Account[accounts.length];
+        // send a copy to make sure that one doesn't
+        // change what another sees
+        System.arraycopy(accounts, 0, accountsCopy, 0, accountsCopy.length);
+        handler = (handler == null) ? mMainHandler : handler;
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                synchronized (mAccountsUpdatedListeners) {
+                    try {
+                        if (mAccountsUpdatedListeners.containsKey(listener)) {
+                            Set<String> types = mAccountsUpdatedListenersTypes.get(listener);
+                            if (types != null) {
+                                // filter by account type;
+                                ArrayList<Account> filtered = new ArrayList<>();
+                                for (Account account : accountsCopy) {
+                                    if (types.contains(account.type)) {
+                                        filtered.add(account);
+                                    }
+                                }
+                                listener.onAccountsUpdated(
+                                        filtered.toArray(new Account[filtered.size()]));
+                            } else {
+                                listener.onAccountsUpdated(accountsCopy);
+                            }
+                        }
+                    } catch (SQLException e) {
+                        // Better luck next time. If the problem was disk-full,
+                        // the STORAGE_OK intent will re-trigger the update.
+                        Log.e(TAG, "Can't update accounts", e);
+                    }
+                }
+            }
+        });
+!!!4853253.java!!!	convertErrorToException(in code : int, in message : String) : Exception
+        if (code == ERROR_CODE_NETWORK_ERROR) {
+            return new IOException(message);
+        }
+
+        if (code == ERROR_CODE_UNSUPPORTED_OPERATION) {
+            return new UnsupportedOperationException(message);
+        }
+
+        if (code == ERROR_CODE_INVALID_RESPONSE) {
+            return new AuthenticatorException(message);
+        }
+
+        if (code == ERROR_CODE_BAD_ARGUMENTS) {
+            return new IllegalArgumentException(message);
+        }
+
+        return new AuthenticatorException(message);
+!!!4853381.java!!!	getAccountByTypeAndFeatures(in accountType : String, inout features : String [[]], inout callback : AccountManagerCallback, inout handler : Handler) : void
+        (new AmsTask(null, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.getAccountByTypeAndFeatures(mResponse, accountType, features,
+                    mContext.getOpPackageName());
+            }
+
+        }).start();
+!!!4854021.java!!!	getAuthTokenByFeatures(in accountType : String, in authTokenType : String, in features : String [[]], in activity : Activity, in addAccountOptions : Bundle, in getAuthTokenOptions : Bundle, in callback : AccountManagerCallback, in handler : Handler) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("account type is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        final GetAuthTokenByTypeAndFeaturesTask task =
+                new GetAuthTokenByTypeAndFeaturesTask(accountType, authTokenType, features,
+                activity, addAccountOptions, getAuthTokenOptions, callback, handler);
+        task.start();
+        return task;
+!!!4854149.java!!!	newChooseAccountIntent(inout selectedAccount : Account, inout allowableAccounts : ArrayList<Account>, inout allowableAccountTypes : String [[]], inout alwaysPromptForAccount : boolean, in descriptionOverrideText : String, in addAccountAuthTokenType : String, inout addAccountRequiredFeatures : String [[]], inout addAccountOptions : Bundle) : Intent
+        return newChooseAccountIntent(
+                selectedAccount,
+                allowableAccounts,
+                allowableAccountTypes,
+                descriptionOverrideText,
+                addAccountAuthTokenType,
+                addAccountRequiredFeatures,
+                addAccountOptions);
+!!!4854277.java!!!	newChooseAccountIntent(inout selectedAccount : Account, inout allowableAccounts : List<Account>, inout allowableAccountTypes : String [[]], in descriptionOverrideText : String, in addAccountAuthTokenType : String, inout addAccountRequiredFeatures : String [[]], inout addAccountOptions : Bundle) : Intent
+        Intent intent = new Intent();
+        ComponentName componentName = ComponentName.unflattenFromString(
+                Resources.getSystem().getString(R.string.config_chooseTypeAndAccountActivity));
+        intent.setClassName(componentName.getPackageName(),
+                componentName.getClassName());
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ALLOWABLE_ACCOUNTS_ARRAYLIST,
+                allowableAccounts == null ? null : new ArrayList<Account>(allowableAccounts));
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ALLOWABLE_ACCOUNT_TYPES_STRING_ARRAY,
+                allowableAccountTypes);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_OPTIONS_BUNDLE,
+                addAccountOptions);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_SELECTED_ACCOUNT, selectedAccount);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_DESCRIPTION_TEXT_OVERRIDE,
+                descriptionOverrideText);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_AUTH_TOKEN_TYPE_STRING,
+                addAccountAuthTokenType);
+        intent.putExtra(
+                ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_REQUIRED_FEATURES_STRING_ARRAY,
+                addAccountRequiredFeatures);
+        return intent;
+!!!4854405.java!!!	addOnAccountsUpdatedListener(in listener : OnAccountsUpdateListener, inout handler : Handler, inout updateImmediately : boolean) : void
+        addOnAccountsUpdatedListener(listener, handler,updateImmediately, null);
+!!!4854533.java!!!	addOnAccountsUpdatedListener(in listener : OnAccountsUpdateListener, inout handler : Handler, inout updateImmediately : boolean, inout accountTypes : String [[]]) : void
+        if (listener == null) {
+            throw new IllegalArgumentException("the listener is null");
+        }
+        synchronized (mAccountsUpdatedListeners) {
+            if (mAccountsUpdatedListeners.containsKey(listener)) {
+                throw new IllegalStateException("this listener is already added");
+            }
+            final boolean wasEmpty = mAccountsUpdatedListeners.isEmpty();
+
+            mAccountsUpdatedListeners.put(listener, handler);
+            if (accountTypes != null) {
+                mAccountsUpdatedListenersTypes.put(listener,
+                    new HashSet<String>(Arrays.asList(accountTypes)));
+            } else {
+                mAccountsUpdatedListenersTypes.put(listener, null);
+            }
+
+            if (wasEmpty) {
+                // Register a broadcast receiver to monitor account changes
+                IntentFilter intentFilter = new IntentFilter();
+                intentFilter.addAction(ACTION_VISIBLE_ACCOUNTS_CHANGED);
+                // To recover from disk-full.
+                intentFilter.addAction(Intent.ACTION_DEVICE_STORAGE_OK);
+                mContext.registerReceiver(mAccountsChangedBroadcastReceiver, intentFilter);
+            }
+
+            try {
+                // Notify AccountManagedService about new receiver.
+                // The receiver must be unregistered later exactly one time
+                mService.registerAccountListener(accountTypes, mContext.getOpPackageName());
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+        if (updateImmediately) {
+            postToHandler(handler, listener, getAccounts());
+        }
+!!!4854661.java!!!	removeOnAccountsUpdatedListener(inout listener : OnAccountsUpdateListener) : void
+        if (listener == null) throw new IllegalArgumentException("listener is null");
+        synchronized (mAccountsUpdatedListeners) {
+            if (!mAccountsUpdatedListeners.containsKey(listener)) {
+                Log.e(TAG, "Listener was not previously added");
+                return;
+            }
+            Set<String> accountTypes = mAccountsUpdatedListenersTypes.get(listener);
+            String[] accountsArray;
+            if (accountTypes != null) {
+                accountsArray = accountTypes.toArray(new String[accountTypes.size()]);
+            } else {
+                accountsArray = null;
+            }
+            mAccountsUpdatedListeners.remove(listener);
+            mAccountsUpdatedListenersTypes.remove(listener);
+            if (mAccountsUpdatedListeners.isEmpty()) {
+                mContext.unregisterReceiver(mAccountsChangedBroadcastReceiver);
+            }
+            try {
+                mService.unregisterAccountListener(accountsArray, mContext.getOpPackageName());
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+!!!4854789.java!!!	startAddAccountSession(in accountType : String, in authTokenType : String, in requiredFeatures : String [[]], in options : Bundle, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.startAddAccountSession(
+                        mResponse,
+                        accountType,
+                        authTokenType,
+                        requiredFeatures,
+                        activity != null,
+                        optionsIn);
+            }
+        }.start();
+!!!4854917.java!!!	startUpdateCredentialsSession(in account : Account, in authTokenType : String, in options : Bundle, in activity : Activity, in callback : AccountManagerCallback, in handler : Handler) : AccountManagerFuture
+        if (account == null) {
+            throw new IllegalArgumentException("account is null");
+        }
+
+        // Always include the calling package name. This just makes life easier
+        // down stream.
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.startUpdateCredentialsSession(
+                        mResponse,
+                        account,
+                        authTokenType,
+                        activity != null,
+                        optionsIn);
+            }
+        }.start();
+!!!4855045.java!!!	finishSession(in sessionBundle : Bundle, in activity : Activity, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        return finishSessionAsUser(
+                sessionBundle,
+                activity,
+                Process.myUserHandle(),
+                callback,
+                handler);
+!!!4855173.java!!!	finishSessionAsUser(in sessionBundle : Bundle, in activity : Activity, in userHandle : UserHandle, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (sessionBundle == null) {
+            throw new IllegalArgumentException("sessionBundle is null");
+        }
+
+        /* Add information required by add account flow */
+        final Bundle appInfo = new Bundle();
+        appInfo.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
+        return new AmsTask(activity, handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.finishSessionAsUser(
+                        mResponse,
+                        sessionBundle,
+                        activity != null,
+                        appInfo,
+                        userHandle.getIdentifier());
+            }
+        }.start();
+!!!4855301.java!!!	isCredentialsUpdateSuggested(in account : Account, in statusToken : String, inout callback : AccountManagerCallback, inout handler : Handler) : AccountManagerFuture
+        if (account == null) {
+            throw new IllegalArgumentException("account is null");
+        }
+
+        if (TextUtils.isEmpty(statusToken)) {
+            throw new IllegalArgumentException("status token is empty");
+        }
+
+        return new Future2Task<Boolean>(handler, callback) {
+            @Override
+            public void doWork() throws RemoteException {
+                mService.isCredentialsUpdateSuggested(
+                        mResponse,
+                        account,
+                        statusToken);
+            }
+            @Override
+            public Boolean bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getBoolean(KEY_BOOLEAN_RESULT);
+            }
+        }.start();
+!!!4855429.java!!!	hasAccountAccess(inout account : Account, in packageName : String, inout userHandle : UserHandle) : boolean
+        try {
+            return mService.hasAccountAccess(account, packageName, userHandle);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!4855557.java!!!	createRequestAccountAccessIntentSenderAsUser(inout account : Account, in packageName : String, inout userHandle : UserHandle) : IntentSender
+        try {
+            return mService.createRequestAccountAccessIntentSenderAsUser(account, packageName,
+                    userHandle);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }

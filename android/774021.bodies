@@ -1,0 +1,102 @@
+class DozeUi
+!!!3203717.java!!!	DozeUi(inout context : Context, inout alarmManager : AlarmManager, inout machine : DozeMachine, inout wakeLock : WakeLock, inout host : DozeHost, inout handler : Handler)
+        mContext = context;
+        mAlarmManager = alarmManager;
+        mMachine = machine;
+        mWakeLock = wakeLock;
+        mHost = host;
+        mHandler = handler;
+
+        mTimeTick = this::onTimeTick;
+!!!3203845.java!!!	pulseWhileDozing(in reason : int) : void
+        mHost.pulseWhileDozing(
+                new DozeHost.PulseCallback() {
+                    @Override
+                    public void onPulseStarted() {
+                        mMachine.requestState(DozeMachine.State.DOZE_PULSING);
+                    }
+
+                    @Override
+                    public void onPulseFinished() {
+                        mMachine.requestState(DozeMachine.State.DOZE_PULSE_DONE);
+                    }
+                }, reason);
+!!!3203973.java!!!	transitionTo(inout oldState : DozeMachine::State, inout newState : DozeMachine::State) : void
+        switch (newState) {
+            case DOZE_AOD:
+                scheduleTimeTick();
+                break;
+            case DOZE:
+            case DOZE_AOD_PAUSED:
+                unscheduleTimeTick();
+                break;
+            case DOZE_REQUEST_PULSE:
+                pulseWhileDozing(mMachine.getPulseReason());
+                break;
+            case DOZE_PULSE_DONE:
+                mHost.abortPulsing();
+            case INITIALIZED:
+                mHost.startDozing();
+                break;
+            case FINISH:
+                mHost.stopDozing();
+                unscheduleTimeTick();
+                break;
+        }
+        mHost.setAnimateWakeup(shouldAnimateWakeup(newState));
+!!!3204101.java!!!	shouldAnimateWakeup(inout state : DozeMachine::State) : boolean
+        switch (state) {
+            case DOZE_AOD:
+            case DOZE_REQUEST_PULSE:
+            case DOZE_PULSING:
+            case DOZE_PULSE_DONE:
+                return true;
+            default:
+                return false;
+        }
+!!!3204229.java!!!	scheduleTimeTick() : void
+        if (mTimeTickScheduled) {
+            return;
+        }
+
+        long delta = roundToNextMinute(System.currentTimeMillis()) - System.currentTimeMillis();
+        mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + delta, "doze_time_tick", mTimeTick, mHandler);
+
+        mTimeTickScheduled = true;
+        mLastTimeTickElapsed = SystemClock.elapsedRealtime();
+!!!3204357.java!!!	unscheduleTimeTick() : void
+        if (!mTimeTickScheduled) {
+            return;
+        }
+        verifyLastTimeTick();
+        mAlarmManager.cancel(mTimeTick);
+!!!3204485.java!!!	verifyLastTimeTick() : void
+        long millisSinceLastTick = SystemClock.elapsedRealtime() - mLastTimeTickElapsed;
+        if (millisSinceLastTick > TIME_TICK_DEADLINE_MILLIS) {
+            String delay = Formatter.formatShortElapsedTime(mContext, millisSinceLastTick);
+            DozeLog.traceMissedTick(delay);
+            Log.e(DozeMachine.TAG, "Missed AOD time tick by " + delay);
+        }
+!!!3204613.java!!!	roundToNextMinute(in timeInMillis : long) : long
+        Calendar calendar = GregorianCalendar.getInstance();
+        calendar.setTimeInMillis(timeInMillis);
+        calendar.set(Calendar.MILLISECOND, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.add(Calendar.MINUTE, 1);
+
+        return calendar.getTimeInMillis();
+!!!3204741.java!!!	onTimeTick() : void
+        if (!mTimeTickScheduled) {
+            // Alarm was canceled, but we still got the callback. Ignore.
+            return;
+        }
+        verifyLastTimeTick();
+
+        mHost.dozeTimeTick();
+
+        // Keep wakelock until a frame has been pushed.
+        mHandler.post(mWakeLock.wrap(() -> {}));
+
+        mTimeTickScheduled = false;
+        scheduleTimeTick();

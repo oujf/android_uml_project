@@ -1,0 +1,86 @@
+class ABitReader
+!!!1405445.cpp!!!	getBitsWithFallback(in n : size_t, in fallback : uint32_t) : uint32_t
+    uint32_t ret = fallback;
+    (void)getBitsGraceful(n, &ret);
+    return ret;
+!!!1405573.cpp!!!	getBitsGraceful(in n : size_t, inout out : uint32_t) : bool
+    if (n > 32) {
+        return false;
+    }
+
+    uint32_t result = 0;
+    while (n > 0) {
+        if (mNumBitsLeft == 0) {
+            if (!fillReservoir()) {
+                return false;
+            }
+        }
+
+        size_t m = n;
+        if (m > mNumBitsLeft) {
+            m = mNumBitsLeft;
+        }
+
+        result = (result << m) | (mReservoir >> (32 - m));
+        mReservoir <<= m;
+        mNumBitsLeft -= m;
+
+        n -= m;
+    }
+
+    *out = result;
+    return true;
+!!!1405701.cpp!!!	getBits(in n : size_t) : uint32_t
+    uint32_t ret;
+    CHECK(getBitsGraceful(n, &ret));
+    return ret;
+!!!1405829.cpp!!!	skipBits(in n : size_t) : bool
+    uint32_t dummy;
+    while (n > 32) {
+        if (!getBitsGraceful(32, &dummy)) {
+            return false;
+        }
+        n -= 32;
+    }
+
+    if (n > 0) {
+        return getBitsGraceful(n, &dummy);
+    }
+    return true;
+!!!1405957.cpp!!!	putBits(in x : uint32_t, in n : size_t) : void
+    if (mOverRead) {
+        return;
+    }
+
+    CHECK_LE(n, 32u);
+
+    while (mNumBitsLeft + n > 32) {
+        mNumBitsLeft -= 8;
+        --mData;
+        ++mSize;
+    }
+
+    mReservoir = (mReservoir >> n) | (x << (32 - n));
+    mNumBitsLeft += n;
+!!!1406085.cpp!!!	numBitsLeft() : size_t
+    return mSize * 8 + mNumBitsLeft;
+!!!1406213.cpp!!!	data() : uint8_t
+    return mData - (mNumBitsLeft + 7) / 8;
+!!!1406469.cpp!!!	fillReservoir() : bool
+    if (mSize == 0) {
+        mOverRead = true;
+        return false;
+    }
+
+    mReservoir = 0;
+    size_t i;
+    for (i = 0; mSize > 0 && i < 4; ++i) {
+        mReservoir = (mReservoir << 8) | *mData;
+
+        ++mData;
+        --mSize;
+    }
+
+    mNumBitsLeft = 8 * i;
+    mReservoir <<= 32 - mNumBitsLeft;
+    return true;

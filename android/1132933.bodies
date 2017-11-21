@@ -1,0 +1,136 @@
+class BleScanCallbackWrapper
+!!!6053125.java!!!	BleScanCallbackWrapper(inout bluetoothGatt : IBluetoothGatt, inout filters : List<ScanFilter>, inout settings : ScanSettings, inout workSource : WorkSource, inout scanCallback : ScanCallback, inout resultStorages : List<List<ResultStorageDescriptor>>)
+            mBluetoothGatt = bluetoothGatt;
+            mFilters = filters;
+            mSettings = settings;
+            mWorkSource = workSource;
+            mScanCallback = scanCallback;
+            mScannerId = 0;
+            mResultStorages = resultStorages;
+!!!6053253.java!!!	startRegistration() : void
+            synchronized (this) {
+                // Scan stopped.
+                if (mScannerId == -1) return;
+                try {
+                    mBluetoothGatt.registerScanner(this, mWorkSource);
+                    wait(REGISTRATION_CALLBACK_TIMEOUT_MILLIS);
+                } catch (InterruptedException | RemoteException e) {
+                    Log.e(TAG, "application registeration exception", e);
+                    postCallbackError(mScanCallback, ScanCallback.SCAN_FAILED_INTERNAL_ERROR);
+                }
+                if (mScannerId > 0) {
+                    mLeScanClients.put(mScanCallback, this);
+                } else {
+                    // Registration timed out or got exception, reset scannerId to -1 so no
+                    // subsequent operations can proceed.
+                    if (mScannerId == 0) mScannerId = -1;
+                    postCallbackError(mScanCallback,
+                            ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED);
+                }
+            }
+!!!6053381.java!!!	stopLeScan() : void
+            synchronized (this) {
+                if (mScannerId <= 0) {
+                    Log.e(TAG, "Error state, mLeHandle: " + mScannerId);
+                    return;
+                }
+                try {
+                    mBluetoothGatt.stopScan(mScannerId);
+                    mBluetoothGatt.unregisterScanner(mScannerId);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Failed to stop scan and unregister", e);
+                }
+                mScannerId = -1;
+            }
+!!!6053509.java!!!	flushPendingBatchResults() : void
+            synchronized (this) {
+                if (mScannerId <= 0) {
+                    Log.e(TAG, "Error state, mLeHandle: " + mScannerId);
+                    return;
+                }
+                try {
+                    mBluetoothGatt.flushPendingBatchResults(mScannerId);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Failed to get pending scan results", e);
+                }
+            }
+!!!6053637.java!!!	onScannerRegistered(in status : int, in scannerId : int) : void
+            Log.d(TAG, "onScannerRegistered() - status=" + status +
+                    " scannerId=" + scannerId + " mScannerId=" + mScannerId);
+            synchronized (this) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    try {
+                        if (mScannerId == -1) {
+                            // Registration succeeds after timeout, unregister client.
+                            mBluetoothGatt.unregisterClient(scannerId);
+                        } else {
+                            mScannerId = scannerId;
+                            mBluetoothGatt.startScan(mScannerId, mSettings, mFilters,
+                                    mResultStorages,
+                                    ActivityThread.currentOpPackageName());
+                        }
+                    } catch (RemoteException e) {
+                        Log.e(TAG, "fail to start le scan: " + e);
+                        mScannerId = -1;
+                    }
+                } else {
+                    // registration failed
+                    mScannerId = -1;
+                }
+                notifyAll();
+            }
+!!!6053765.java!!!	onScanResult(in scanResult : ScanResult) : void
+            if (VDBG) Log.d(TAG, "onScanResult() - " + scanResult.toString());
+
+            // Check null in case the scan has been stopped
+            synchronized (this) {
+                if (mScannerId <= 0) return;
+            }
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, scanResult);
+                }
+            });
+!!!6053893.java!!!	onBatchScanResults(in results : List<ScanResult>) : void
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mScanCallback.onBatchScanResults(results);
+                }
+            });
+!!!6054021.java!!!	onFoundOrLost(in onFound : boolean, in scanResult : ScanResult) : void
+            if (VDBG) {
+                Log.d(TAG, "onFoundOrLost() - onFound = " + onFound +
+                        " " + scanResult.toString());
+            }
+
+            // Check null in case the scan has been stopped
+            synchronized (this) {
+                if (mScannerId <= 0)
+                    return;
+            }
+            Handler handler = new Handler(Looper.getMainLooper());
+            handler.post(new Runnable() {
+                    @Override
+                public void run() {
+                    if (onFound) {
+                        mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_FIRST_MATCH,
+                                scanResult);
+                    } else {
+                        mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_MATCH_LOST,
+                                scanResult);
+                    }
+                }
+            });
+!!!6054149.java!!!	onScanManagerErrorCallback(in errorCode : int) : void
+            if (VDBG) {
+                Log.d(TAG, "onScanManagerErrorCallback() - errorCode = " + errorCode);
+            }
+            synchronized (this) {
+                if (mScannerId <= 0)
+                    return;
+            }
+            postCallbackError(mScanCallback, errorCode);

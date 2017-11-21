@@ -1,0 +1,112 @@
+class RefBase
+!!!14493957.cpp!!!	incStrong(in id : void) : void
+    weakref_impl* const refs = mRefs;
+    refs->incWeak(id);
+    
+    refs->addStrongRef(id);
+    const int32_t c = refs->mStrong.fetch_add(1, std::memory_order_relaxed);
+    ALOG_ASSERT(c > 0, "incStrong() called on %p after last strong ref", refs);
+#if PRINT_REFS
+    ALOGD("incStrong of %p from %p: cnt=%d\n", this, id, c);
+#endif
+    if (c != INITIAL_STRONG_VALUE)  {
+        return;
+    }
+
+    int32_t old = refs->mStrong.fetch_sub(INITIAL_STRONG_VALUE,
+            std::memory_order_relaxed);
+    // A decStrong() must still happen after us.
+    ALOG_ASSERT(old > INITIAL_STRONG_VALUE, "0x%x too small", old);
+    refs->mBase->onFirstRef();
+!!!14494085.cpp!!!	decStrong(in id : void) : void
+    weakref_impl* const refs = mRefs;
+    refs->removeStrongRef(id);
+    const int32_t c = refs->mStrong.fetch_sub(1, std::memory_order_release);
+#if PRINT_REFS
+    ALOGD("decStrong of %p from %p: cnt=%d\n", this, id, c);
+#endif
+    LOG_ALWAYS_FATAL_IF(BAD_STRONG(c), "decStrong() called on %p too many times",
+            refs);
+    if (c == 1) {
+        std::atomic_thread_fence(std::memory_order_acquire);
+        refs->mBase->onLastStrongRef(id);
+        int32_t flags = refs->mFlags.load(std::memory_order_relaxed);
+        if ((flags&OBJECT_LIFETIME_MASK) == OBJECT_LIFETIME_STRONG) {
+            delete this;
+            // The destructor does not delete refs in this case.
+        }
+    }
+    // Note that even with only strong reference operations, the thread
+    // deallocating this may not be the same as the thread deallocating refs.
+    // That's OK: all accesses to this happen before its deletion here,
+    // and all accesses to refs happen before its deletion in the final decWeak.
+    // The destructor can safely access mRefs because either it's deleting
+    // mRefs itself, or it's running entirely before the final mWeak decrement.
+    refs->decWeak(id);
+!!!14494213.cpp!!!	forceIncStrong(in id : void) : void
+    // Allows initial mStrong of 0 in addition to INITIAL_STRONG_VALUE.
+    // TODO: Better document assumptions.
+    weakref_impl* const refs = mRefs;
+    refs->incWeak(id);
+    
+    refs->addStrongRef(id);
+    const int32_t c = refs->mStrong.fetch_add(1, std::memory_order_relaxed);
+    ALOG_ASSERT(c >= 0, "forceIncStrong called on %p after ref count underflow",
+               refs);
+#if PRINT_REFS
+    ALOGD("forceIncStrong of %p from %p: cnt=%d\n", this, id, c);
+#endif
+
+    switch (c) {
+    case INITIAL_STRONG_VALUE:
+        refs->mStrong.fetch_sub(INITIAL_STRONG_VALUE,
+                std::memory_order_relaxed);
+        // fall through...
+    case 0:
+        refs->mBase->onFirstRef();
+    }
+!!!14494341.cpp!!!	getStrongCount() : int32_t
+    // Debugging only; No memory ordering guarantees.
+    return mRefs->mStrong.load(std::memory_order_relaxed);
+!!!14495493.cpp!!!	createWeak(in id : void) : RefBase::weakref_type
+    mRefs->incWeak(id);
+    return mRefs;
+!!!14495621.cpp!!!	getWeakRefs() : RefBase::weakref_type
+    return mRefs;
+!!!14496133.cpp!!!	~RefBase()
+    int32_t flags = mRefs->mFlags.load(std::memory_order_relaxed);
+    // Life-time of this object is extended to WEAK, in
+    // which case weakref_impl doesn't out-live the object and we
+    // can free it now.
+    if ((flags & OBJECT_LIFETIME_MASK) == OBJECT_LIFETIME_WEAK) {
+        // It's possible that the weak count is not 0 if the object
+        // re-acquired a weak reference in its destructor
+        if (mRefs->mWeak.load(std::memory_order_relaxed) == 0) {
+            delete mRefs;
+        }
+    } else if (mRefs->mStrong.load(std::memory_order_relaxed)
+            == INITIAL_STRONG_VALUE) {
+        // We never acquired a strong reference on this object.
+        LOG_ALWAYS_FATAL_IF(mRefs->mWeak.load() != 0,
+                "RefBase: Explicit destruction with non-zero weak "
+                "reference count");
+        // TODO: Always report if we get here. Currently MediaMetadataRetriever
+        // C++ objects are inconsistently managed and sometimes get here.
+        // There may be other cases, but we believe they should all be fixed.
+        delete mRefs;
+    }
+    // For debugging purposes, clear mRefs.  Ineffective against outstanding wp's.
+    const_cast<weakref_impl*&>(mRefs) = NULL;
+!!!14496261.cpp!!!	extendObjectLifetime(in mode : int32_t) : void
+    // Must be happens-before ordered with respect to construction or any
+    // operation that could destroy the object.
+    mRefs->mFlags.fetch_or(mode, std::memory_order_relaxed);
+!!!14496645.cpp!!!	onIncStrongAttempted(in flags : uint32_t, in id : void) : bool
+    return (flags&FIRST_INC_STRONG) ? true : false;
+!!!14497285.cpp!!!	renameRefId(inout ref : RefBase::weakref_type, in old_id : void, in new_id : void) : void
+    weakref_impl* const impl = static_cast<weakref_impl*>(ref);
+    impl->renameStrongRefId(old_id, new_id);
+    impl->renameWeakRefId(old_id, new_id);
+!!!14497413.cpp!!!	renameRefId(inout ref : RefBase, in old_id : void, in new_id : void) : void
+    ref->mRefs->renameStrongRefId(old_id, new_id);
+    ref->mRefs->renameWeakRefId(old_id, new_id);

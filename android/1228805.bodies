@@ -1,0 +1,101 @@
+class InputContentInfo
+!!!9058565.java!!!	InputContentInfo(inout contentUri : Uri, inout description : ClipDescription)
+        this(contentUri, description, null /* link Uri */);
+!!!9058693.java!!!	InputContentInfo(inout contentUri : Uri, inout description : ClipDescription, inout linkUri : Uri)
+        validateInternal(contentUri, description, linkUri, true /* throwException */);
+        mContentUri = contentUri;
+        mContentUriOwnerUserId =
+                ContentProvider.getUserIdFromUri(mContentUri, UserHandle.myUserId());
+        mDescription = description;
+        mLinkUri = linkUri;
+!!!9058821.java!!!	validate() : boolean
+        return validateInternal(mContentUri, mDescription, mLinkUri, false /* throwException */);
+!!!9058949.java!!!	validateInternal(inout contentUri : Uri, inout description : ClipDescription, inout linkUri : Uri, inout throwException : boolean) : boolean
+        if (contentUri == null) {
+            if (throwException) {
+                throw new NullPointerException("contentUri");
+            }
+            return false;
+        }
+        if (description == null) {
+            if (throwException) {
+                throw new NullPointerException("description");
+            }
+            return false;
+        }
+        final String contentUriScheme = contentUri.getScheme();
+        if (!"content".equals(contentUriScheme)) {
+            if (throwException) {
+                throw new InvalidParameterException("contentUri must have content scheme");
+            }
+            return false;
+        }
+        if (linkUri != null) {
+            final String scheme = linkUri.getScheme();
+            if (scheme == null ||
+                    (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                if (throwException) {
+                    throw new InvalidParameterException(
+                            "linkUri must have either http or https scheme");
+                }
+                return false;
+            }
+        }
+        return true;
+!!!9059077.java!!!	getContentUri() : Uri
+        // Fix up the content URI when and only when the caller's user ID does not match the owner's
+        // user ID.
+        if (mContentUriOwnerUserId != UserHandle.myUserId()) {
+            return ContentProvider.maybeAddUserId(mContentUri, mContentUriOwnerUserId);
+        }
+        return mContentUri;
+!!!9059205.java!!!	getDescription() : ClipDescription
+ return mDescription;
+!!!9059333.java!!!	getLinkUri() : Uri
+ return mLinkUri;
+!!!9059461.java!!!	setUriToken(inout token : IInputContentUriToken) : void
+        if (mUriToken != null) {
+            throw new IllegalStateException("URI token is already set");
+        }
+        mUriToken = token;
+!!!9059589.java!!!	requestPermission() : void
+        if (mUriToken == null) {
+            return;
+        }
+        try {
+            mUriToken.take();
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+!!!9059717.java!!!	releasePermission() : void
+        if (mUriToken == null) {
+            return;
+        }
+        try {
+            mUriToken.release();
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+!!!9059845.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        Uri.writeToParcel(dest, mContentUri);
+        dest.writeInt(mContentUriOwnerUserId);
+        mDescription.writeToParcel(dest, flags);
+        Uri.writeToParcel(dest, mLinkUri);
+        if (mUriToken != null) {
+            dest.writeInt(1);
+            dest.writeStrongBinder(mUriToken.asBinder());
+        } else {
+            dest.writeInt(0);
+        }
+!!!9059973.java!!!	InputContentInfo(inout source : Parcel)
+        mContentUri = Uri.CREATOR.createFromParcel(source);
+        mContentUriOwnerUserId = source.readInt();
+        mDescription = ClipDescription.CREATOR.createFromParcel(source);
+        mLinkUri = Uri.CREATOR.createFromParcel(source);
+        if (source.readInt() == 1) {
+            mUriToken = IInputContentUriToken.Stub.asInterface(source.readStrongBinder());
+        } else {
+            mUriToken = null;
+        }
+!!!9060101.java!!!	describeContents() : int
+        return 0;

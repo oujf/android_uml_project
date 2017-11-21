@@ -1,0 +1,129 @@
+class PasswordMetrics
+!!!5803013.java!!!	PasswordMetrics(in quality : int, in length : int)
+        this.quality = quality;
+        this.length = length;
+!!!5803141.java!!!	PasswordMetrics(in quality : int, in length : int, in letters : int, in upperCase : int, in lowerCase : int, in numeric : int, in symbols : int, in nonLetter : int)
+        this(quality, length);
+        this.letters = letters;
+        this.upperCase = upperCase;
+        this.lowerCase = lowerCase;
+        this.numeric = numeric;
+        this.symbols = symbols;
+        this.nonLetter = nonLetter;
+!!!5803269.java!!!	PasswordMetrics(inout in : Parcel)
+        quality = in.readInt();
+        length = in.readInt();
+        letters = in.readInt();
+        upperCase = in.readInt();
+        lowerCase = in.readInt();
+        numeric = in.readInt();
+        symbols = in.readInt();
+        nonLetter = in.readInt();
+!!!5803397.java!!!	isDefault() : boolean
+        return quality == DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED
+                && length == 0 && letters == 0 && upperCase == 0 && lowerCase == 0
+                && numeric == 0 && symbols == 0 && nonLetter == 0;
+!!!5803525.java!!!	describeContents() : int
+        return 0;
+!!!5803653.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        dest.writeInt(quality);
+        dest.writeInt(length);
+        dest.writeInt(letters);
+        dest.writeInt(upperCase);
+        dest.writeInt(lowerCase);
+        dest.writeInt(numeric);
+        dest.writeInt(symbols);
+        dest.writeInt(nonLetter);
+!!!5803781.java!!!	computeForPassword(in password : String) : PasswordMetrics
+        // Analyse the characters used
+        int letters = 0;
+        int upperCase = 0;
+        int lowerCase = 0;
+        int numeric = 0;
+        int symbols = 0;
+        int nonLetter = 0;
+        final int length = password.length();
+        for (int i = 0; i < length; i++) {
+            switch (categoryChar(password.charAt(i))) {
+                case CHAR_LOWER_CASE:
+                    letters++;
+                    lowerCase++;
+                    break;
+                case CHAR_UPPER_CASE:
+                    letters++;
+                    upperCase++;
+                    break;
+                case CHAR_DIGIT:
+                    numeric++;
+                    nonLetter++;
+                    break;
+                case CHAR_SYMBOL:
+                    symbols++;
+                    nonLetter++;
+                    break;
+            }
+        }
+
+        // Determine the quality of the password
+        final boolean hasNumeric = numeric > 0;
+        final boolean hasNonNumeric = (letters + symbols) > 0;
+        final int quality;
+        if (hasNonNumeric && hasNumeric) {
+            quality = DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC;
+        } else if (hasNonNumeric) {
+            quality = DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC;
+        } else if (hasNumeric) {
+            quality = maxLengthSequence(password) > MAX_ALLOWED_SEQUENCE
+                    ? DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
+                    : DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX;
+        } else {
+            quality = DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED;
+        }
+
+        return new PasswordMetrics(
+                quality, length, letters, upperCase, lowerCase, numeric, symbols, nonLetter);
+!!!5803909.java!!!	maxLengthSequence(in string : String) : int
+        if (string.length() == 0) return 0;
+        char previousChar = string.charAt(0);
+        @CharacterCatagory int category = categoryChar(previousChar); //current sequence category
+        int diff = 0; //difference between two consecutive characters
+        boolean hasDiff = false; //if we are currently targeting a sequence
+        int maxLength = 0; //maximum length of a sequence already found
+        int startSequence = 0; //where the current sequence started
+        for (int current = 1; current < string.length(); current++) {
+            char currentChar = string.charAt(current);
+            @CharacterCatagory int categoryCurrent = categoryChar(currentChar);
+            int currentDiff = (int) currentChar - (int) previousChar;
+            if (categoryCurrent != category || Math.abs(currentDiff) > maxDiffCategory(category)) {
+                maxLength = Math.max(maxLength, current - startSequence);
+                startSequence = current;
+                hasDiff = false;
+                category = categoryCurrent;
+            }
+            else {
+                if(hasDiff && currentDiff != diff) {
+                    maxLength = Math.max(maxLength, current - startSequence);
+                    startSequence = current - 1;
+                }
+                diff = currentDiff;
+                hasDiff = true;
+            }
+            previousChar = currentChar;
+        }
+        maxLength = Math.max(maxLength, string.length() - startSequence);
+        return maxLength;
+!!!5804037.java!!!	categoryChar(in c : char) : int
+        if ('a' <= c && c <= 'z') return CHAR_LOWER_CASE;
+        if ('A' <= c && c <= 'Z') return CHAR_UPPER_CASE;
+        if ('0' <= c && c <= '9') return CHAR_DIGIT;
+        return CHAR_SYMBOL;
+!!!5804165.java!!!	maxDiffCategory(in category : int) : int
+        switch (category) {
+            case CHAR_LOWER_CASE:
+            case CHAR_UPPER_CASE:
+                return 1;
+            case CHAR_DIGIT:
+                return 10;
+            default:
+                return 0;
+        }

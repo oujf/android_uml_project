@@ -1,0 +1,236 @@
+class WatchListDecorLayout
+!!!10508933.java!!!	WatchListDecorLayout(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!10509061.java!!!	WatchListDecorLayout(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        super(context, attrs, defStyleAttr);
+!!!10509189.java!!!	WatchListDecorLayout(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+!!!10509317.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+
+        mPendingScroll = 0;
+
+        for (int i = 0; i < getChildCount(); ++i) {
+            View child = getChildAt(i);
+            if (child instanceof ListView) {
+                if (mListView != null) {
+                    throw new IllegalArgumentException("only one ListView child allowed");
+                }
+                mListView = (ListView) child;
+
+                mListView.setNestedScrollingEnabled(true);
+                mObserver = mListView.getViewTreeObserver();
+                mObserver.addOnScrollChangedListener(this);
+            } else {
+                int gravity = (((LayoutParams) child.getLayoutParams()).gravity
+                        & Gravity.VERTICAL_GRAVITY_MASK);
+                if (gravity == Gravity.TOP && mTopPanel == null) {
+                    mTopPanel = child;
+                } else if (gravity == Gravity.BOTTOM && mBottomPanel == null) {
+                    mBottomPanel = child;
+                }
+            }
+        }
+!!!10509445.java!!!	onDetachedFromWindow() : void
+        mListView = null;
+        mBottomPanel = null;
+        mTopPanel = null;
+        if (mObserver != null) {
+            if (mObserver.isAlive()) {
+                mObserver.removeOnScrollChangedListener(this);
+            }
+            mObserver = null;
+        }
+!!!10509573.java!!!	applyMeasureToChild(inout child : View, in widthMeasureSpec : int, in heightMeasureSpec : int) : void
+        final MarginLayoutParams lp = (MarginLayoutParams) child.getLayoutParams();
+
+        final int childWidthMeasureSpec;
+        if (lp.width == LayoutParams.MATCH_PARENT) {
+            final int width = Math.max(0, getMeasuredWidth()
+                    - getPaddingLeftWithForeground() - getPaddingRightWithForeground()
+                    - lp.leftMargin - lp.rightMargin);
+            childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(
+                    width, MeasureSpec.EXACTLY);
+        } else {
+            childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec,
+                    getPaddingLeftWithForeground() + getPaddingRightWithForeground() +
+                    lp.leftMargin + lp.rightMargin,
+                    lp.width);
+        }
+
+        final int childHeightMeasureSpec;
+        if (lp.height == LayoutParams.MATCH_PARENT) {
+            final int height = Math.max(0, getMeasuredHeight()
+                    - getPaddingTopWithForeground() - getPaddingBottomWithForeground()
+                    - lp.topMargin - lp.bottomMargin);
+            childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(
+                    height, MeasureSpec.EXACTLY);
+        } else {
+            childHeightMeasureSpec = getChildMeasureSpec(heightMeasureSpec,
+                    getPaddingTopWithForeground() + getPaddingBottomWithForeground() +
+                    lp.topMargin + lp.bottomMargin,
+                    lp.height);
+        }
+
+        child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
+!!!10509701.java!!!	measureAndGetHeight(inout child : View, in widthMeasureSpec : int, in heightMeasureSpec : int) : int
+        if (child != null) {
+            if (child.getVisibility() != GONE) {
+                applyMeasureToChild(mBottomPanel, widthMeasureSpec, heightMeasureSpec);
+                return child.getMeasuredHeight();
+            } else if (getMeasureAllChildren()) {
+                applyMeasureToChild(mBottomPanel, widthMeasureSpec, heightMeasureSpec);
+            }
+        }
+        return 0;
+!!!10509829.java!!!	onMeasure(in widthMeasureSpec : int, in heightMeasureSpec : int) : void
+        int count = getChildCount();
+
+        final boolean measureMatchParentChildren =
+                MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.EXACTLY ||
+                MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.EXACTLY;
+        mMatchParentChildren.clear();
+
+        int maxHeight = 0;
+        int maxWidth = 0;
+        int childState = 0;
+
+        for (int i = 0; i < count; i++) {
+            final View child = getChildAt(i);
+            if (getMeasureAllChildren() || child.getVisibility() != GONE) {
+                measureChildWithMargins(child, widthMeasureSpec, 0, heightMeasureSpec, 0);
+                final LayoutParams lp = (LayoutParams) child.getLayoutParams();
+                maxWidth = Math.max(maxWidth,
+                        child.getMeasuredWidth() + lp.leftMargin + lp.rightMargin);
+                maxHeight = Math.max(maxHeight,
+                        child.getMeasuredHeight() + lp.topMargin + lp.bottomMargin);
+                childState = combineMeasuredStates(childState, child.getMeasuredState());
+                if (measureMatchParentChildren) {
+                    if (lp.width == LayoutParams.MATCH_PARENT ||
+                            lp.height == LayoutParams.MATCH_PARENT) {
+                        mMatchParentChildren.add(child);
+                    }
+                }
+            }
+        }
+
+        // Account for padding too
+        maxWidth += getPaddingLeftWithForeground() + getPaddingRightWithForeground();
+        maxHeight += getPaddingTopWithForeground() + getPaddingBottomWithForeground();
+
+        // Check against our minimum height and width
+        maxHeight = Math.max(maxHeight, getSuggestedMinimumHeight());
+        maxWidth = Math.max(maxWidth, getSuggestedMinimumWidth());
+
+        // Check against our foreground's minimum height and width
+        final Drawable drawable = getForeground();
+        if (drawable != null) {
+            maxHeight = Math.max(maxHeight, drawable.getMinimumHeight());
+            maxWidth = Math.max(maxWidth, drawable.getMinimumWidth());
+        }
+
+        setMeasuredDimension(resolveSizeAndState(maxWidth, widthMeasureSpec, childState),
+                resolveSizeAndState(maxHeight, heightMeasureSpec,
+                        childState << MEASURED_HEIGHT_STATE_SHIFT));
+
+        if (mListView != null) {
+            if (mPendingScroll != 0) {
+                mListView.scrollListBy(mPendingScroll);
+                mPendingScroll = 0;
+            }
+
+            int paddingTop = Math.max(mListView.getPaddingTop(),
+                    measureAndGetHeight(mTopPanel, widthMeasureSpec, heightMeasureSpec));
+            int paddingBottom = Math.max(mListView.getPaddingBottom(),
+                    measureAndGetHeight(mBottomPanel, widthMeasureSpec, heightMeasureSpec));
+
+            if (paddingTop != mListView.getPaddingTop()
+                    || paddingBottom != mListView.getPaddingBottom()) {
+                mPendingScroll += mListView.getPaddingTop() - paddingTop;
+                mListView.setPadding(
+                        mListView.getPaddingLeft(), paddingTop,
+                        mListView.getPaddingRight(), paddingBottom);
+            }
+        }
+
+        count = mMatchParentChildren.size();
+        if (count > 1) {
+            for (int i = 0; i < count; i++) {
+                final View child = mMatchParentChildren.get(i);
+                if (mListView == null || (child != mTopPanel && child != mBottomPanel)) {
+                    applyMeasureToChild(child, widthMeasureSpec, heightMeasureSpec);
+                }
+            }
+        }
+!!!10509957.java!!!	setForegroundGravity(in foregroundGravity : int) : void
+        if (getForegroundGravity() != foregroundGravity) {
+            super.setForegroundGravity(foregroundGravity);
+
+            // calling get* again here because the set above may apply default constraints
+            final Drawable foreground = getForeground();
+            if (getForegroundGravity() == Gravity.FILL && foreground != null) {
+                Rect padding = new Rect();
+                if (foreground.getPadding(padding)) {
+                    mForegroundPaddingLeft = padding.left;
+                    mForegroundPaddingTop = padding.top;
+                    mForegroundPaddingRight = padding.right;
+                    mForegroundPaddingBottom = padding.bottom;
+                }
+            } else {
+                mForegroundPaddingLeft = 0;
+                mForegroundPaddingTop = 0;
+                mForegroundPaddingRight = 0;
+                mForegroundPaddingBottom = 0;
+            }
+        }
+!!!10510085.java!!!	getPaddingLeftWithForeground() : int
+        return isForegroundInsidePadding() ? Math.max(mPaddingLeft, mForegroundPaddingLeft) :
+            mPaddingLeft + mForegroundPaddingLeft;
+!!!10510213.java!!!	getPaddingRightWithForeground() : int
+        return isForegroundInsidePadding() ? Math.max(mPaddingRight, mForegroundPaddingRight) :
+            mPaddingRight + mForegroundPaddingRight;
+!!!10510341.java!!!	getPaddingTopWithForeground() : int
+        return isForegroundInsidePadding() ? Math.max(mPaddingTop, mForegroundPaddingTop) :
+            mPaddingTop + mForegroundPaddingTop;
+!!!10510469.java!!!	getPaddingBottomWithForeground() : int
+        return isForegroundInsidePadding() ? Math.max(mPaddingBottom, mForegroundPaddingBottom) :
+            mPaddingBottom + mForegroundPaddingBottom;
+!!!10510597.java!!!	onScrollChanged() : void
+        if (mListView == null) {
+            return;
+        }
+
+        if (mTopPanel != null) {
+            if (mListView.getChildCount() > 0) {
+                if (mListView.getFirstVisiblePosition() == 0) {
+                    View firstChild = mListView.getChildAt(0);
+                    setScrolling(mTopPanel,
+                            firstChild.getY() - mTopPanel.getHeight() - mTopPanel.getTop());
+                } else {
+                    // shift to hide the frame, last child is not the last position
+                    setScrolling(mTopPanel, -mTopPanel.getHeight());
+                }
+            } else {
+                setScrolling(mTopPanel, 0); // no visible child, fallback to default behaviour
+            }
+        }
+
+        if (mBottomPanel != null) {
+            if (mListView.getChildCount() > 0) {
+                if (mListView.getLastVisiblePosition() >= mListView.getCount() - 1) {
+                    View lastChild = mListView.getChildAt(mListView.getChildCount() - 1);
+                    setScrolling(mBottomPanel, Math.max(
+                            0,
+                            lastChild.getY() + lastChild.getHeight() - mBottomPanel.getTop()));
+                } else {
+                    // shift to hide the frame, last child is not the last position
+                    setScrolling(mBottomPanel, mBottomPanel.getHeight());
+                }
+            } else {
+                setScrolling(mBottomPanel, 0); // no visible child, fallback to default behaviour
+            }
+        }
+!!!10510725.java!!!	setScrolling(inout panel : View, in translationY : float) : void
+        if (panel.getTranslationY() != translationY) {
+            panel.setTranslationY(translationY);
+        }

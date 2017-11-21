@@ -1,0 +1,34 @@
+class TaskSnapshotLoader
+!!!12756357.java!!!	TaskSnapshotLoader(inout persister : TaskSnapshotPersister)
+        mPersister = persister;
+!!!12756485.java!!!	loadTask(in taskId : int, in userId : int, inout reducedResolution : boolean) : ActivityManager::TaskSnapshot
+        final File protoFile = mPersister.getProtoFile(taskId, userId);
+        final File bitmapFile = reducedResolution
+                ? mPersister.getReducedResolutionBitmapFile(taskId, userId)
+                : mPersister.getBitmapFile(taskId, userId);
+        if (!protoFile.exists() || !bitmapFile.exists()) {
+            return null;
+        }
+        try {
+            final byte[] bytes = Files.readAllBytes(protoFile.toPath());
+            final TaskSnapshotProto proto = TaskSnapshotProto.parseFrom(bytes);
+            final Options options = new Options();
+            options.inPreferredConfig = Config.HARDWARE;
+            final Bitmap bitmap = BitmapFactory.decodeFile(bitmapFile.getPath(), options);
+            if (bitmap == null) {
+                Slog.w(TAG, "Failed to load bitmap: " + bitmapFile.getPath());
+                return null;
+            }
+            final GraphicBuffer buffer = bitmap.createGraphicBufferHandle();
+            if (buffer == null) {
+                Slog.w(TAG, "Failed to retrieve gralloc buffer for bitmap: "
+                        + bitmapFile.getPath());
+                return null;
+            }
+            return new TaskSnapshot(buffer, proto.orientation,
+                    new Rect(proto.insetLeft, proto.insetTop, proto.insetRight, proto.insetBottom),
+                    reducedResolution, reducedResolution ? REDUCED_SCALE : 1f);
+        } catch (IOException e) {
+            Slog.w(TAG, "Unable to load task snapshot data for taskId=" + taskId);
+            return null;
+        }

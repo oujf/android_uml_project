@@ -1,0 +1,165 @@
+class PagedTileLayout
+!!!3334149.java!!!	PagedTileLayout(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        setAdapter(mAdapter);
+        setOnPageChangeListener(new OnPageChangeListener() {
+            @Override
+            public void onPageSelected(int position) {
+                if (mPageIndicator == null) return;
+                if (mPageListener != null) {
+                    mPageListener.onPageChanged(isLayoutRtl() ? position == mPages.size() - 1
+                            : position == 0);
+                }
+            }
+
+            @Override
+            public void onPageScrolled(int position, float positionOffset,
+                    int positionOffsetPixels) {
+                if (mPageIndicator == null) return;
+                setCurrentPage(position, positionOffset != 0);
+                mPageIndicator.setLocation(position + positionOffset);
+                if (mPageListener != null) {
+                    mPageListener.onPageChanged(positionOffsetPixels == 0 &&
+                            (isLayoutRtl() ? position == mPages.size() - 1 : position == 0));
+                }
+            }
+
+            @Override
+            public void onPageScrollStateChanged(int state) {
+            }
+        });
+        setCurrentItem(0);
+!!!3334277.java!!!	onRtlPropertiesChanged(in layoutDirection : int) : void
+        super.onRtlPropertiesChanged(layoutDirection);
+        setAdapter(mAdapter);
+        setCurrentItem(0, false);
+!!!3334405.java!!!	setCurrentItem(in item : int, inout smoothScroll : boolean) : void
+        if (isLayoutRtl()) {
+            item = mPages.size() - 1 - item;
+        }
+        super.setCurrentItem(item, smoothScroll);
+!!!3334533.java!!!	setListening(inout listening : boolean) : void
+        if (mListening == listening) return;
+        mListening = listening;
+        if (mListening) {
+            setPageListening(mPosition, true);
+            if (mOffPage) {
+                setPageListening(mPosition + 1, true);
+            }
+        } else {
+            // Make sure no pages are listening.
+            for (int i = 0; i < mPages.size(); i++) {
+                mPages.get(i).setListening(false);
+            }
+        }
+!!!3334661.java!!!	setCurrentPage(in position : int, inout offPage : boolean) : void
+        if (mPosition == position && mOffPage == offPage) return;
+        if (mListening) {
+            if (mPosition != position) {
+                // Clear out the last pages from listening.
+                setPageListening(mPosition, false);
+                if (mOffPage) {
+                    setPageListening(mPosition + 1, false);
+                }
+                // Set the new pages to listening
+                setPageListening(position, true);
+                if (offPage) {
+                    setPageListening(position + 1, true);
+                }
+            } else if (mOffPage != offPage) {
+                // Whether we are showing position + 1 has changed.
+                setPageListening(mPosition + 1, offPage);
+            }
+        }
+        // Save the current state.
+        mPosition = position;
+        mOffPage = offPage;
+!!!3334789.java!!!	setPageListening(in position : int, inout listening : boolean) : void
+        if (position >= mPages.size()) return;
+        if (isLayoutRtl()) {
+            position = mPages.size() - 1 - position;
+        }
+        mPages.get(position).setListening(listening);
+!!!3334917.java!!!	hasOverlappingRendering() : boolean
+        return false;
+!!!3335045.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        mPages.add((TilePage) LayoutInflater.from(getContext())
+                .inflate(R.layout.qs_paged_page, this, false));
+!!!3335173.java!!!	setPageIndicator(inout indicator : PageIndicator) : void
+        mPageIndicator = indicator;
+!!!3335301.java!!!	getOffsetTop(inout tile : QSPanel::TileRecord) : int
+        final ViewGroup parent = (ViewGroup) tile.tileView.getParent();
+        if (parent == null) return 0;
+        return parent.getTop() + getTop();
+!!!3335429.java!!!	addTile(inout tile : QSPanel::TileRecord) : void
+        mTiles.add(tile);
+        postDistributeTiles();
+!!!3335557.java!!!	removeTile(inout tile : QSPanel::TileRecord) : void
+        if (mTiles.remove(tile)) {
+            postDistributeTiles();
+        }
+!!!3335685.java!!!	setPageListener(inout listener : PagedTileLayout::PageListener) : void
+        mPageListener = listener;
+!!!3335813.java!!!	postDistributeTiles() : void
+        removeCallbacks(mDistribute);
+        post(mDistribute);
+!!!3335941.java!!!	distributeTiles() : void
+        if (DEBUG) Log.d(TAG, "Distributing tiles");
+        final int NP = mPages.size();
+        for (int i = 0; i < NP; i++) {
+            mPages.get(i).removeAllViews();
+        }
+        int index = 0;
+        final int NT = mTiles.size();
+        for (int i = 0; i < NT; i++) {
+            TileRecord tile = mTiles.get(i);
+            if (mPages.get(index).isFull()) {
+                if (++index == mPages.size()) {
+                    if (DEBUG) Log.d(TAG, "Adding page for "
+                            + tile.tile.getClass().getSimpleName());
+                    mPages.add((TilePage) LayoutInflater.from(getContext())
+                            .inflate(R.layout.qs_paged_page, this, false));
+                }
+            }
+            if (DEBUG) Log.d(TAG, "Adding " + tile.tile.getClass().getSimpleName() + " to "
+                    + index);
+            mPages.get(index).addTile(tile);
+        }
+        if (mNumPages != index + 1) {
+            mNumPages = index + 1;
+            while (mPages.size() > mNumPages) {
+                mPages.remove(mPages.size() - 1);
+            }
+            if (DEBUG) Log.d(TAG, "Size: " + mNumPages);
+            mPageIndicator.setNumPages(mNumPages);
+            mPageIndicator.setVisibility(mNumPages > 1 ? View.VISIBLE : View.GONE);
+            setAdapter(mAdapter);
+            mAdapter.notifyDataSetChanged();
+            setCurrentItem(0, false);
+        }
+!!!3336069.java!!!	updateResources() : boolean
+        boolean changed = false;
+        for (int i = 0; i < mPages.size(); i++) {
+            changed |= mPages.get(i).updateResources();
+        }
+        if (changed) {
+            distributeTiles();
+        }
+        return changed;
+!!!3336197.java!!!	onMeasure(in widthMeasureSpec : int, in heightMeasureSpec : int) : void
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        // The ViewPager likes to eat all of the space, instead force it to wrap to the max height
+        // of the pages.
+        int maxHeight = 0;
+        final int N = getChildCount();
+        for (int i = 0; i < N; i++) {
+            int height = getChildAt(i).getMeasuredHeight();
+            if (height > maxHeight) {
+                maxHeight = height;
+            }
+        }
+        setMeasuredDimension(getMeasuredWidth(), maxHeight + getPaddingBottom());
+!!!3336325.java!!!	getColumnCount() : int
+        if (mPages.size() == 0) return 0;
+        return mPages.get(0).mColumns;

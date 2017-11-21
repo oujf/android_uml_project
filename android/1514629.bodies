@@ -1,0 +1,134 @@
+class Palette
+!!!9916933.java!!!	from(inout bitmap : Bitmap) : Palette::Builder
+        return new Palette.Builder(bitmap);
+!!!9917061.java!!!	from(inout swatches : List<Palette.Swatch>) : Palette
+        return new Palette.Builder(swatches).generate();
+!!!9917189.java!!!	generate(inout bitmap : Bitmap) : Palette
+        return from(bitmap).generate();
+!!!9917317.java!!!	generate(inout bitmap : Bitmap, in numColors : int) : Palette
+        return from(bitmap).maximumColorCount(numColors).generate();
+!!!9917445.java!!!	generateAsync(inout bitmap : Bitmap, inout listener : Palette::PaletteAsyncListener) : AsyncTask
+        return from(bitmap).generate(listener);
+!!!9917573.java!!!	generateAsync(in bitmap : Bitmap, in numColors : int, in listener : Palette::PaletteAsyncListener) : AsyncTask
+        return from(bitmap).maximumColorCount(numColors).generate(listener);
+!!!9917701.java!!!	Palette(inout swatches : List<Palette.Swatch>, inout targets : List<Target>)
+        mSwatches = swatches;
+        mTargets = targets;
+
+        mUsedColors = new SparseBooleanArray();
+        mSelectedSwatches = new ArrayMap<>();
+
+        mDominantSwatch = findDominantSwatch();
+!!!9917829.java!!!	getSwatches() : Palette::Swatch
+        return Collections.unmodifiableList(mSwatches);
+!!!9917957.java!!!	getTargets() : Target
+        return Collections.unmodifiableList(mTargets);
+!!!9918085.java!!!	getVibrantSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.VIBRANT);
+!!!9918213.java!!!	getLightVibrantSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.LIGHT_VIBRANT);
+!!!9918341.java!!!	getDarkVibrantSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.DARK_VIBRANT);
+!!!9918469.java!!!	getMutedSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.MUTED);
+!!!9918597.java!!!	getLightMutedSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.LIGHT_MUTED);
+!!!9918725.java!!!	getDarkMutedSwatch() : Palette::Swatch
+        return getSwatchForTarget(Target.DARK_MUTED);
+!!!9918853.java!!!	getVibrantColor(in defaultColor : int) : int
+        return getColorForTarget(Target.VIBRANT, defaultColor);
+!!!9918981.java!!!	getLightVibrantColor(in defaultColor : int) : int
+        return getColorForTarget(Target.LIGHT_VIBRANT, defaultColor);
+!!!9919109.java!!!	getDarkVibrantColor(in defaultColor : int) : int
+        return getColorForTarget(Target.DARK_VIBRANT, defaultColor);
+!!!9919237.java!!!	getMutedColor(in defaultColor : int) : int
+        return getColorForTarget(Target.MUTED, defaultColor);
+!!!9919365.java!!!	getLightMutedColor(in defaultColor : int) : int
+        return getColorForTarget(Target.LIGHT_MUTED, defaultColor);
+!!!9919493.java!!!	getDarkMutedColor(in defaultColor : int) : int
+        return getColorForTarget(Target.DARK_MUTED, defaultColor);
+!!!9919621.java!!!	getSwatchForTarget(in target : Target) : Palette::Swatch
+        return mSelectedSwatches.get(target);
+!!!9919749.java!!!	getColorForTarget(in target : Target, in defaultColor : int) : int
+        Palette.Swatch swatch = getSwatchForTarget(target);
+        return swatch != null ? swatch.getRgb() : defaultColor;
+!!!9919877.java!!!	getDominantSwatch() : Palette::Swatch
+        return mDominantSwatch;
+!!!9920005.java!!!	getDominantColor(in defaultColor : int) : int
+        return mDominantSwatch != null ? mDominantSwatch.getRgb() : defaultColor;
+!!!9920133.java!!!	generate() : void
+        // We need to make sure that the scored targets are generated first. This is so that
+        // inherited targets have something to inherit from
+        for (int i = 0, count = mTargets.size(); i < count; i++) {
+            final Target target = mTargets.get(i);
+            target.normalizeWeights();
+            mSelectedSwatches.put(target, generateScoredTarget(target));
+        }
+        // We now clear out the used colors
+        mUsedColors.clear();
+!!!9920261.java!!!	generateScoredTarget(in target : Target) : Palette::Swatch
+        final Palette.Swatch maxScoreSwatch = getMaxScoredSwatchForTarget(target);
+        if (maxScoreSwatch != null && target.isExclusive()) {
+            // If we have a swatch, and the target is exclusive, add the color to the used list
+            mUsedColors.append(maxScoreSwatch.getRgb(), true);
+        }
+        return maxScoreSwatch;
+!!!9920389.java!!!	getMaxScoredSwatchForTarget(in target : Target) : Palette::Swatch
+        float maxScore = 0;
+        Palette.Swatch maxScoreSwatch = null;
+        for (int i = 0, count = mSwatches.size(); i < count; i++) {
+            final Palette.Swatch swatch = mSwatches.get(i);
+            if (shouldBeScoredForTarget(swatch, target)) {
+                final float score = generateScore(swatch, target);
+                if (maxScoreSwatch == null || score > maxScore) {
+                    maxScoreSwatch = swatch;
+                    maxScore = score;
+                }
+            }
+        }
+        return maxScoreSwatch;
+!!!9920517.java!!!	shouldBeScoredForTarget(in swatch : Palette::Swatch, in target : Target) : boolean
+        // Check whether the HSL values are within the correct ranges, and this color hasn't
+        // been used yet.
+        final float hsl[] = swatch.getHsl();
+        return hsl[1] >= target.getMinimumSaturation() && hsl[1] <= target.getMaximumSaturation()
+                && hsl[2] >= target.getMinimumLightness() && hsl[2] <= target.getMaximumLightness()
+                && !mUsedColors.get(swatch.getRgb());
+!!!9920645.java!!!	generateScore(inout swatch : Palette::Swatch, inout target : Target) : float
+        final float[] hsl = swatch.getHsl();
+
+        float saturationScore = 0;
+        float luminanceScore = 0;
+        float populationScore = 0;
+
+        final int maxPopulation = mDominantSwatch != null ? mDominantSwatch.getPopulation() : 1;
+
+        if (target.getSaturationWeight() > 0) {
+            saturationScore = target.getSaturationWeight()
+                    * (1f - Math.abs(hsl[1] - target.getTargetSaturation()));
+        }
+        if (target.getLightnessWeight() > 0) {
+            luminanceScore = target.getLightnessWeight()
+                    * (1f - Math.abs(hsl[2] - target.getTargetLightness()));
+        }
+        if (target.getPopulationWeight() > 0) {
+            populationScore = target.getPopulationWeight()
+                    * (swatch.getPopulation() / (float) maxPopulation);
+        }
+
+        return saturationScore + luminanceScore + populationScore;
+!!!9920773.java!!!	findDominantSwatch() : Palette::Swatch
+        int maxPop = Integer.MIN_VALUE;
+        Palette.Swatch maxSwatch = null;
+        for (int i = 0, count = mSwatches.size(); i < count; i++) {
+            Palette.Swatch swatch = mSwatches.get(i);
+            if (swatch.getPopulation() > maxPop) {
+                maxSwatch = swatch;
+                maxPop = swatch.getPopulation();
+            }
+        }
+        return maxSwatch;
+!!!9920901.java!!!	copyHslValues(inout color : Palette::Swatch) : float
+        final float[] newHsl = new float[3];
+        System.arraycopy(color.getHsl(), 0, newHsl, 0, 3);
+        return newHsl;

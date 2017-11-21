@@ -1,0 +1,108 @@
+class AAudioServiceStreamBase
+!!!536197.cpp!!!	~AAudioServiceStreamBase()
+    close();
+!!!536325.cpp!!!	open(in request : aaudio::AAudioStreamRequest, inout configurationOutput : aaudio::AAudioStreamConfiguration) : aaudio_result_t
+    std::lock_guard<std::mutex> lock(mLockUpMessageQueue);
+    if (mUpMessageQueue != nullptr) {
+        return AAUDIO_ERROR_INVALID_STATE;
+    } else {
+        mUpMessageQueue = new SharedRingBuffer();
+        return mUpMessageQueue->allocate(sizeof(AAudioServiceMessage), QUEUE_UP_CAPACITY_COMMANDS);
+    }
+!!!536453.cpp!!!	close() : aaudio_result_t
+    std::lock_guard<std::mutex> lock(mLockUpMessageQueue);
+    delete mUpMessageQueue;
+    mUpMessageQueue = nullptr;
+
+    return AAUDIO_OK;
+!!!536581.cpp!!!	start() : aaudio_result_t
+    sendServiceEvent(AAUDIO_SERVICE_EVENT_STARTED);
+    mState = AAUDIO_STREAM_STATE_STARTED;
+    mThreadEnabled.store(true);
+    return mAAudioThread.start(this);
+!!!536709.cpp!!!	pause() : aaudio_result_t
+
+    sendCurrentTimestamp();
+    mThreadEnabled.store(false);
+    aaudio_result_t result = mAAudioThread.stop();
+    if (result != AAUDIO_OK) {
+        processError();
+        return result;
+    }
+    sendServiceEvent(AAUDIO_SERVICE_EVENT_PAUSED);
+    mState = AAUDIO_STREAM_STATE_PAUSED;
+    return result;
+!!!536837.cpp!!!	stop() : aaudio_result_t
+    // TODO wait for data to be played out
+    sendCurrentTimestamp();
+    mThreadEnabled.store(false);
+    aaudio_result_t result = mAAudioThread.stop();
+    if (result != AAUDIO_OK) {
+        processError();
+        return result;
+    }
+    sendServiceEvent(AAUDIO_SERVICE_EVENT_STOPPED);
+    mState = AAUDIO_STREAM_STATE_STOPPED;
+    return result;
+!!!536965.cpp!!!	flush() : aaudio_result_t
+    sendServiceEvent(AAUDIO_SERVICE_EVENT_FLUSHED);
+    mState = AAUDIO_STREAM_STATE_FLUSHED;
+    return AAUDIO_OK;
+!!!537093.cpp!!!	sendServiceEvent(in event : aaudio_service_event_t, in dataDouble : double = 0.0, in dataLong : int64_t = 0) : aaudio_result_t
+    AAudioServiceMessage command;
+    command.what = AAudioServiceMessage::code::EVENT;
+    command.event.event = event;
+    command.event.dataDouble = dataDouble;
+    command.event.dataLong = dataLong;
+    return writeUpMessageQueue(&command);
+!!!537221.cpp!!!	getDescription(inout parcelable : AudioEndpointParcelable) : aaudio_result_t
+    // Gather information on the message queue.
+    mUpMessageQueue->fillParcelable(parcelable,
+                                    parcelable.mUpMessageQueueParcelable);
+    return getDownDataDescription(parcelable);
+!!!537861.cpp!!!	run() : void
+    ALOGD("AAudioServiceStreamBase::run() entering ----------------");
+    TimestampScheduler timestampScheduler;
+    timestampScheduler.setBurstPeriod(mFramesPerBurst, mSampleRate);
+    timestampScheduler.start(AudioClock::getNanoseconds());
+    int64_t nextTime = timestampScheduler.nextAbsoluteTime();
+    while(mThreadEnabled.load()) {
+        if (AudioClock::getNanoseconds() >= nextTime) {
+            aaudio_result_t result = sendCurrentTimestamp();
+            if (result != AAUDIO_OK) {
+                break;
+            }
+            nextTime = timestampScheduler.nextAbsoluteTime();
+        } else  {
+            // Sleep until it is time to send the next timestamp.
+            AudioClock::sleepUntilNanoTime(nextTime);
+        }
+    }
+    ALOGD("AAudioServiceStreamBase::run() exiting ----------------");
+!!!537989.cpp!!!	processError() : void
+    sendServiceEvent(AAUDIO_SERVICE_EVENT_DISCONNECTED);
+!!!538117.cpp!!!	writeUpMessageQueue(inout command : AAudioServiceMessage) : aaudio_result_t
+    std::lock_guard<std::mutex> lock(mLockUpMessageQueue);
+    if (mUpMessageQueue == nullptr) {
+        ALOGE("writeUpMessageQueue(): mUpMessageQueue null! - stream not open");
+        return AAUDIO_ERROR_NULL;
+    }
+    int32_t count = mUpMessageQueue->getFifoBuffer()->write(command, 1);
+    if (count != 1) {
+        ALOGE("writeUpMessageQueue(): Queue full. Did client die?");
+        return AAUDIO_ERROR_WOULD_BLOCK;
+    } else {
+        return AAUDIO_OK;
+    }
+!!!538245.cpp!!!	sendCurrentTimestamp() : aaudio_result_t
+    AAudioServiceMessage command;
+    aaudio_result_t result = getFreeRunningPosition(&command.timestamp.position,
+                                                    &command.timestamp.timestamp);
+    if (result == AAUDIO_OK) {
+    //    ALOGD("sendCurrentTimestamp(): position = %lld, nanos = %lld",
+    //          (long long) command.timestamp.position,
+    //          (long long) command.timestamp.timestamp);
+        command.what = AAudioServiceMessage::code::TIMESTAMP;
+        result = writeUpMessageQueue(&command);
+    }
+    return result;

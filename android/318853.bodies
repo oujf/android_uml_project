@@ -1,0 +1,73 @@
+class BnMediaExtractor
+!!!835333.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+        case COUNTTRACKS: {
+            ALOGV("countTracks");
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+            size_t numTracks = countTracks();
+            if (numTracks > INT32_MAX) {
+                numTracks = 0;
+            }
+            reply->writeUint32(uint32_t(numTracks));
+            return NO_ERROR;
+        }
+        case GETTRACK: {
+            ALOGV("getTrack()");
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+            uint32_t idx;
+            if (data.readUint32(&idx) == NO_ERROR) {
+                const sp<IMediaSource> track = getTrack(size_t(idx));
+                registerMediaSource(this, track);
+                return reply->writeStrongBinder(IInterface::asBinder(track));
+            }
+            return UNKNOWN_ERROR;
+        }
+        case GETTRACKMETADATA: {
+            ALOGV("getTrackMetaData");
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+            uint32_t idx;
+            uint32_t flags;
+            if (data.readUint32(&idx) == NO_ERROR &&
+                    data.readUint32(&flags) == NO_ERROR) {
+                sp<MetaData> meta = getTrackMetaData(idx, flags);
+                if (meta == NULL) {
+                    return UNKNOWN_ERROR;
+                }
+                meta->writeToParcel(*reply);
+                return NO_ERROR;
+            }
+            return UNKNOWN_ERROR;
+        }
+        case GETMETADATA: {
+            ALOGV("getMetaData");
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+            sp<MetaData> meta = getMetaData();
+            if (meta != NULL) {
+                meta->writeToParcel(*reply);
+                return NO_ERROR;
+            }
+            return UNKNOWN_ERROR;
+        }
+        case GETMETRICS: {
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+            status_t ret = getMetrics(reply);
+            return ret;
+        }
+        case SETMEDIACAS: {
+            ALOGV("setMediaCas");
+            CHECK_INTERFACE(IMediaExtractor, data, reply);
+
+            sp<IBinder> casBinder;
+            status_t err = data.readNullableStrongBinder(&casBinder);
+            if (err != NO_ERROR) {
+                ALOGE("Error reading cas from parcel");
+                return err;
+            }
+            sp<ICas> cas = interface_cast<ICas>(casBinder);
+
+            reply->writeInt32(setMediaCas(cas));
+            return OK;
+        }
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

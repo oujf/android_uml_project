@@ -1,0 +1,112 @@
+class TileService
+!!!8044293.java!!!	onDestroy() : void
+        if (mListening) {
+            onStopListening();
+            mListening = false;
+        }
+        super.onDestroy();
+!!!8045061.java!!!	setStatusIcon(inout icon : Icon, in contentDescription : String) : void
+        if (mService != null) {
+            try {
+                mService.updateStatusIcon(mTileToken, icon, contentDescription);
+            } catch (RemoteException e) {
+            }
+        }
+!!!8045189.java!!!	showDialog(inout dialog : Dialog) : void
+        dialog.getWindow().getAttributes().token = mToken;
+        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_QS_DIALOG);
+        dialog.getWindow().getDecorView().addOnAttachStateChangeListener(
+                new OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                try {
+                    mService.onDialogHidden(mTileToken);
+                } catch (RemoteException e) {
+                }
+            }
+        });
+        dialog.show();
+        try {
+            mService.onShowDialog(mTileToken);
+        } catch (RemoteException e) {
+        }
+!!!8045317.java!!!	unlockAndRun(inout runnable : Runnable) : void
+        mUnlockRunnable = runnable;
+        try {
+            mService.startUnlockAndRun(mTileToken);
+        } catch (RemoteException e) {
+        }
+!!!8045445.java!!!	isSecure() : boolean
+        try {
+            return mService.isSecure();
+        } catch (RemoteException e) {
+            return true;
+        }
+!!!8045573.java!!!	isLocked() : boolean
+        try {
+            return mService.isLocked();
+        } catch (RemoteException e) {
+            return true;
+        }
+!!!8045701.java!!!	startActivityAndCollapse(inout intent : Intent) : void
+        startActivity(intent);
+        try {
+            mService.onStartActivity(mTileToken);
+        } catch (RemoteException e) {
+        }
+!!!8045829.java!!!	getQsTile() : Tile
+        return mTile;
+!!!8045957.java!!!	onBind(inout intent : Intent) : IBinder
+        mService = IQSService.Stub.asInterface(intent.getIBinderExtra(EXTRA_SERVICE));
+        mTileToken = intent.getIBinderExtra(EXTRA_TOKEN);
+        try {
+            mTile = mService.getTile(mTileToken);
+        } catch (RemoteException e) {
+            throw new RuntimeException("Unable to reach IQSService", e);
+        }
+        if (mTile != null) {
+            mTile.setService(mService, mTileToken);
+            mHandler.sendEmptyMessage(H.MSG_START_SUCCESS);
+        }
+        return new IQSTileService.Stub() {
+            @Override
+            public void onTileRemoved() throws RemoteException {
+                mHandler.sendEmptyMessage(H.MSG_TILE_REMOVED);
+            }
+
+            @Override
+            public void onTileAdded() throws RemoteException {
+                mHandler.sendEmptyMessage(H.MSG_TILE_ADDED);
+            }
+
+            @Override
+            public void onStopListening() throws RemoteException {
+                mHandler.sendEmptyMessage(H.MSG_STOP_LISTENING);
+            }
+
+            @Override
+            public void onStartListening() throws RemoteException {
+                mHandler.sendEmptyMessage(H.MSG_START_LISTENING);
+            }
+
+            @Override
+            public void onClick(IBinder wtoken) throws RemoteException {
+                mHandler.obtainMessage(H.MSG_TILE_CLICKED, wtoken).sendToTarget();
+            }
+
+            @Override
+            public void onUnlockComplete() throws RemoteException{
+                mHandler.sendEmptyMessage(H.MSG_UNLOCK_COMPLETE);
+            }
+        };
+!!!8046341.java!!!	isQuickSettingsSupported() : boolean
+        return Resources.getSystem().getBoolean(R.bool.config_quickSettingsSupported);
+!!!8046469.java!!!	requestListeningState(inout context : Context, inout component : ComponentName) : void
+        Intent intent = new Intent(ACTION_REQUEST_LISTENING);
+        intent.putExtra(Intent.EXTRA_COMPONENT_NAME, component);
+        intent.setPackage("com.android.systemui");
+        context.sendBroadcast(intent, Manifest.permission.BIND_QUICK_SETTINGS_TILE);

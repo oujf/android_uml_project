@@ -1,0 +1,28 @@
+class GarbageMonitor
+!!!4254469.java!!!	GarbageMonitor(inout bgLooper : Looper, inout leakDetector : LeakDetector, inout leakReporter : LeakReporter)
+        mHandler = bgLooper != null ? new Handler(bgLooper): null;
+        mTrackedGarbage = leakDetector.getTrackedGarbage();
+        mLeakReporter = leakReporter;
+!!!4254597.java!!!	start() : void
+        if (mTrackedGarbage == null) {
+            return;
+        }
+
+        scheduleInspectGarbage(this::inspectGarbage);
+!!!4254725.java!!!	scheduleInspectGarbage(inout runnable : Runnable) : void
+        mHandler.postDelayed(runnable, GARBAGE_INSPECTION_INTERVAL);
+!!!4254853.java!!!	inspectGarbage() : void
+        if (mTrackedGarbage.countOldGarbage() > GARBAGE_ALLOWANCE) {
+            Runtime.getRuntime().gc();
+
+            // Allow some time to for ReferenceQueue to catch up.
+            scheduleReinspectGarbage(this::reinspectGarbageAfterGc);
+        }
+        scheduleInspectGarbage(this::inspectGarbage);
+!!!4254981.java!!!	scheduleReinspectGarbage(inout runnable : Runnable) : void
+        mHandler.postDelayed(runnable, (long) 100);
+!!!4255109.java!!!	reinspectGarbageAfterGc() : void
+        int count = mTrackedGarbage.countOldGarbage();
+        if (count > GARBAGE_ALLOWANCE) {
+            mLeakReporter.dumpLeak(count);
+        }

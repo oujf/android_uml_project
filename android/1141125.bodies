@@ -1,0 +1,119 @@
+class CursorLoader
+!!!6141189.java!!!	loadInBackground() : Cursor
+        synchronized (this) {
+            if (isLoadInBackgroundCanceled()) {
+                throw new OperationCanceledException();
+            }
+            mCancellationSignal = new CancellationSignal();
+        }
+        try {
+            Cursor cursor = getContext().getContentResolver().query(mUri, mProjection, mSelection,
+                    mSelectionArgs, mSortOrder, mCancellationSignal);
+            if (cursor != null) {
+                try {
+                    // Ensure the cursor window is filled.
+                    cursor.getCount();
+                    cursor.registerContentObserver(mObserver);
+                } catch (RuntimeException ex) {
+                    cursor.close();
+                    throw ex;
+                }
+            }
+            return cursor;
+        } finally {
+            synchronized (this) {
+                mCancellationSignal = null;
+            }
+        }
+!!!6141317.java!!!	cancelLoadInBackground() : void
+        super.cancelLoadInBackground();
+
+        synchronized (this) {
+            if (mCancellationSignal != null) {
+                mCancellationSignal.cancel();
+            }
+        }
+!!!6141445.java!!!	deliverResult(inout cursor : Cursor) : void
+        if (isReset()) {
+            // An async query came in while the loader is stopped
+            if (cursor != null) {
+                cursor.close();
+            }
+            return;
+        }
+        Cursor oldCursor = mCursor;
+        mCursor = cursor;
+
+        if (isStarted()) {
+            super.deliverResult(cursor);
+        }
+
+        if (oldCursor != null && oldCursor != cursor && !oldCursor.isClosed()) {
+            oldCursor.close();
+        }
+!!!6141573.java!!!	CursorLoader(inout context : Context)
+        super(context);
+        mObserver = new ForceLoadContentObserver();
+!!!6141701.java!!!	CursorLoader(inout context : Context, inout uri : Uri, inout projection : String [[]], in selection : String, inout selectionArgs : String [[]], in sortOrder : String)
+        super(context);
+        mObserver = new ForceLoadContentObserver();
+        mUri = uri;
+        mProjection = projection;
+        mSelection = selection;
+        mSelectionArgs = selectionArgs;
+        mSortOrder = sortOrder;
+!!!6141829.java!!!	onStartLoading() : void
+        if (mCursor != null) {
+            deliverResult(mCursor);
+        }
+        if (takeContentChanged() || mCursor == null) {
+            forceLoad();
+        }
+!!!6141957.java!!!	onStopLoading() : void
+        // Attempt to cancel the current load task if possible.
+        cancelLoad();
+!!!6142085.java!!!	onCanceled(inout cursor : Cursor) : void
+        if (cursor != null && !cursor.isClosed()) {
+            cursor.close();
+        }
+!!!6142213.java!!!	onReset() : void
+        super.onReset();
+        
+        // Ensure the loader is stopped
+        onStopLoading();
+
+        if (mCursor != null && !mCursor.isClosed()) {
+            mCursor.close();
+        }
+        mCursor = null;
+!!!6142341.java!!!	getUri() : Uri
+        return mUri;
+!!!6142469.java!!!	setUri(inout uri : Uri) : void
+        mUri = uri;
+!!!6142597.java!!!	getProjection() : String
+        return mProjection;
+!!!6142725.java!!!	setProjection(inout projection : String [[]]) : void
+        mProjection = projection;
+!!!6142853.java!!!	getSelection() : String
+        return mSelection;
+!!!6142981.java!!!	setSelection(in selection : String) : void
+        mSelection = selection;
+!!!6143109.java!!!	getSelectionArgs() : String
+        return mSelectionArgs;
+!!!6143237.java!!!	setSelectionArgs(inout selectionArgs : String [[]]) : void
+        mSelectionArgs = selectionArgs;
+!!!6143365.java!!!	getSortOrder() : String
+        return mSortOrder;
+!!!6143493.java!!!	setSortOrder(in sortOrder : String) : void
+        mSortOrder = sortOrder;
+!!!6143621.java!!!	dump(in prefix : String, inout fd : FileDescriptor, inout writer : PrintWriter, inout args : String [[]]) : void
+        super.dump(prefix, fd, writer, args);
+        writer.print(prefix); writer.print("mUri="); writer.println(mUri);
+        writer.print(prefix); writer.print("mProjection=");
+                writer.println(Arrays.toString(mProjection));
+        writer.print(prefix); writer.print("mSelection="); writer.println(mSelection);
+        writer.print(prefix); writer.print("mSelectionArgs=");
+                writer.println(Arrays.toString(mSelectionArgs));
+        writer.print(prefix); writer.print("mSortOrder="); writer.println(mSortOrder);
+        writer.print(prefix); writer.print("mCursor="); writer.println(mCursor);
+        writer.print(prefix); writer.print("mContentChanged="); writer.println(mContentChanged);

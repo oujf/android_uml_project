@@ -1,0 +1,157 @@
+class LWOmxNode
+!!!1472901.cpp!!!	freeNode() : status_t
+    return toStatusT(mBase->freeNode());
+!!!1473029.cpp!!!	sendCommand(in cmd : OMX_COMMANDTYPE, in param : OMX_S32) : status_t
+    return toStatusT(mBase->sendCommand(
+            toRawCommandType(cmd), param));
+!!!1473157.cpp!!!	getParameter(in index : OMX_INDEXTYPE, inout params : void, in size : size_t) : status_t
+    hidl_vec<uint8_t> tParams = inHidlBytes(params, size);
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getParameter(
+            toRawIndexType(index),
+            tParams,
+            [&fnStatus, params, size](
+                    Status status, hidl_vec<uint8_t> const& outParams) {
+                fnStatus = toStatusT(status);
+                std::copy(
+                        outParams.data(),
+                        outParams.data() + outParams.size(),
+                        static_cast<uint8_t*>(params));
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1473285.cpp!!!	setParameter(in index : OMX_INDEXTYPE, in params : void, in size : size_t) : status_t
+    hidl_vec<uint8_t> tParams = inHidlBytes(params, size);
+    return toStatusT(mBase->setParameter(
+            toRawIndexType(index), tParams));
+!!!1473413.cpp!!!	getConfig(in index : OMX_INDEXTYPE, inout params : void, in size : size_t) : status_t
+    hidl_vec<uint8_t> tParams = inHidlBytes(params, size);
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getConfig(
+            toRawIndexType(index),
+            tParams,
+            [&fnStatus, params, size](
+                    Status status, hidl_vec<uint8_t> const& outParams) {
+                fnStatus = toStatusT(status);
+                std::copy(
+                        outParams.data(),
+                        outParams.data() + size,
+                        static_cast<uint8_t*>(params));
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1473541.cpp!!!	setConfig(in index : OMX_INDEXTYPE, in params : void, in size : size_t) : status_t
+    hidl_vec<uint8_t> tParams = inHidlBytes(params, size);
+    return toStatusT(mBase->setConfig(toRawIndexType(index), tParams));
+!!!1473669.cpp!!!	setPortMode(in port_index : OMX_U32, in mode : IOMX::PortMode) : status_t
+    return toStatusT(mBase->setPortMode(port_index, toHardwarePortMode(mode)));
+!!!1473797.cpp!!!	prepareForAdaptivePlayback(in portIndex : OMX_U32, in enable : OMX_BOOL, in maxFrameWidth : OMX_U32, in maxFrameHeight : OMX_U32) : status_t
+    return toStatusT(mBase->prepareForAdaptivePlayback(
+            portIndex, toRawBool(enable), maxFrameWidth, maxFrameHeight));
+!!!1473925.cpp!!!	configureVideoTunnelMode(in portIndex : OMX_U32, in tunneled : OMX_BOOL, in audioHwSync : OMX_U32, inout sidebandHandle : native_handle_t) : status_t
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->configureVideoTunnelMode(
+            portIndex,
+            toRawBool(tunneled),
+            audioHwSync,
+            [&fnStatus, sidebandHandle](
+                    Status status, hidl_handle const& outSidebandHandle) {
+                fnStatus = toStatusT(status);
+                *sidebandHandle = outSidebandHandle == nullptr ?
+                        nullptr : native_handle_clone(outSidebandHandle);
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1474053.cpp!!!	getGraphicBufferUsage(in portIndex : OMX_U32, inout usage : OMX_U32) : status_t
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getGraphicBufferUsage(
+            portIndex,
+            [&fnStatus, usage](
+                    Status status, uint32_t outUsage) {
+                fnStatus = toStatusT(status);
+                *usage = outUsage;
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1474181.cpp!!!	setInputSurface(in bufferSource : sp<IOMXBufferSource>) : status_t
+    return toStatusT(mBase->setInputSurface(
+            new TWOmxBufferSource(bufferSource)));
+!!!1474309.cpp!!!	allocateSecureBuffer(in portIndex : OMX_U32, in size : size_t, inout buffer : buffer_id, inout buffer_data : void, inout native_handle : sp<NativeHandle>) : status_t
+    *buffer_data = nullptr;
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->allocateSecureBuffer(
+            portIndex,
+            static_cast<uint64_t>(size),
+            [&fnStatus, buffer, buffer_data, native_handle](
+                    Status status,
+                    uint32_t outBuffer,
+                    hidl_handle const& outNativeHandle) {
+                fnStatus = toStatusT(status);
+                *buffer = outBuffer;
+                *native_handle = NativeHandle::create(
+                        native_handle_clone(outNativeHandle), true);
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1474437.cpp!!!	useBuffer(in portIndex : OMX_U32, in omxBuffer : OMXBuffer, inout buffer : buffer_id) : status_t
+    CodecBuffer codecBuffer;
+    if (!wrapAs(&codecBuffer, omxBuffer)) {
+        return BAD_VALUE;
+    }
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->useBuffer(
+            portIndex,
+            codecBuffer,
+            [&fnStatus, buffer](Status status, uint32_t outBuffer) {
+                fnStatus = toStatusT(status);
+                *buffer = outBuffer;
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1474565.cpp!!!	freeBuffer(in portIndex : OMX_U32, in buffer : buffer_id) : status_t
+    return toStatusT(mBase->freeBuffer(portIndex, buffer));
+!!!1474693.cpp!!!	fillBuffer(in buffer : buffer_id, in omxBuffer : OMXBuffer, in fenceFd : int = -1) : status_t
+    CodecBuffer codecBuffer;
+    if (!wrapAs(&codecBuffer, omxBuffer)) {
+        return BAD_VALUE;
+    }
+    native_handle_t* fenceNh = native_handle_create_from_fd(fenceFd);
+    if (!fenceNh) {
+        return NO_MEMORY;
+    }
+    status_t status = toStatusT(mBase->fillBuffer(
+            buffer, codecBuffer, fenceNh));
+    native_handle_close(fenceNh);
+    native_handle_delete(fenceNh);
+    return status;
+!!!1474821.cpp!!!	emptyBuffer(in buffer : buffer_id, in omxBuffer : OMXBuffer, in flags : OMX_U32, in timestamp : OMX_TICKS, in fenceFd : int = -1) : status_t
+    CodecBuffer codecBuffer;
+    if (!wrapAs(&codecBuffer, omxBuffer)) {
+        return BAD_VALUE;
+    }
+    native_handle_t* fenceNh = native_handle_create_from_fd(fenceFd);
+    if (!fenceNh) {
+        return NO_MEMORY;
+    }
+    status_t status = toStatusT(mBase->emptyBuffer(
+            buffer,
+            codecBuffer,
+            flags,
+            toRawTicks(timestamp),
+            fenceNh));
+    native_handle_close(fenceNh);
+    native_handle_delete(fenceNh);
+    return status;
+!!!1474949.cpp!!!	getExtensionIndex(in parameter_name : char, inout index : OMX_INDEXTYPE) : status_t
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getExtensionIndex(
+            hidl_string(parameter_name),
+            [&fnStatus, index](Status status, uint32_t outIndex) {
+                fnStatus = toStatusT(status);
+                *index = toEnumIndexType(outIndex);
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!1475077.cpp!!!	dispatchMessage(in lMsg : omx_message) : status_t
+    Message tMsg;
+    native_handle_t* nh;
+    if (!wrapAs(&tMsg, &nh, lMsg)) {
+        return NO_MEMORY;
+    }
+    status_t status = toStatusT(mBase->dispatchMessage(tMsg));
+    native_handle_close(nh);
+    native_handle_delete(nh);
+    return status;

@@ -1,0 +1,284 @@
+class FalsingManager
+!!!3173637.java!!!	FalsingManager(inout context : Context)
+        mContext = context;
+        mSensorManager = mContext.getSystemService(SensorManager.class);
+        mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
+        mDataCollector = DataCollector.getInstance(mContext);
+        mHumanInteractionClassifier = HumanInteractionClassifier.getInstance(mContext);
+        mUiOffloadThread = Dependency.get(UiOffloadThread.class);
+        mScreenOn = context.getSystemService(PowerManager.class).isInteractive();
+
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(ENFORCE_BOUNCER), false,
+                mSettingsObserver,
+                UserHandle.USER_ALL);
+
+        updateConfiguration();
+!!!3173765.java!!!	getInstance(inout context : Context) : FalsingManager
+        if (sInstance == null) {
+            sInstance = new FalsingManager(context);
+        }
+        return sInstance;
+!!!3173893.java!!!	updateConfiguration() : void
+        mEnforceBouncer = 0 != Settings.Secure.getInt(mContext.getContentResolver(),
+                ENFORCE_BOUNCER, 0);
+!!!3174021.java!!!	shouldSessionBeActive() : boolean
+        if (FalsingLog.ENABLED && FalsingLog.VERBOSE)
+            FalsingLog.v("shouldBeActive", new StringBuilder()
+                    .append("enabled=").append(isEnabled() ? 1 : 0)
+                    .append(" mScreenOn=").append(mScreenOn ? 1 : 0)
+                    .append(" mState=").append(StatusBarState.toShortString(mState))
+                    .toString()
+            );
+        return isEnabled() && mScreenOn && (mState == StatusBarState.KEYGUARD);
+!!!3174149.java!!!	sessionEntrypoint() : boolean
+        if (!mSessionActive && shouldSessionBeActive()) {
+            onSessionStart();
+            return true;
+        }
+        return false;
+!!!3174277.java!!!	sessionExitpoint(inout force : boolean) : void
+        if (mSessionActive && (force || !shouldSessionBeActive())) {
+            mSessionActive = false;
+
+            // This can be expensive, and doesn't need to happen on the main thread.
+            mUiOffloadThread.submit(() -> {
+                mSensorManager.unregisterListener(this);
+            });
+        }
+!!!3174405.java!!!	onSessionStart() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onSessionStart", "classifierEnabled=" + isClassiferEnabled());
+            clearPendingWtf();
+        }
+        mBouncerOn = false;
+        mSessionActive = true;
+
+        if (mHumanInteractionClassifier.isEnabled()) {
+            registerSensors(CLASSIFIER_SENSORS);
+        }
+        if (mDataCollector.isEnabledFull()) {
+            registerSensors(COLLECTOR_SENSORS);
+        }
+!!!3174533.java!!!	registerSensors(inout sensors : int [[]]) : void
+        for (int sensorType : sensors) {
+            Sensor s = mSensorManager.getDefaultSensor(sensorType);
+            if (s != null) {
+
+                // This can be expensive, and doesn't need to happen on the main thread.
+                mUiOffloadThread.submit(() -> {
+                    mSensorManager.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME);
+                });
+            }
+        }
+!!!3174661.java!!!	isClassiferEnabled() : boolean
+        return mHumanInteractionClassifier.isEnabled();
+!!!3174789.java!!!	isEnabled() : boolean
+        return mHumanInteractionClassifier.isEnabled() || mDataCollector.isEnabled();
+!!!3174917.java!!!	isFalseTouch() : boolean
+        if (FalsingLog.ENABLED) {
+            // We're getting some false wtfs from touches that happen after the device went
+            // to sleep. Only report missing sessions that happen when the device is interactive.
+            if (!mSessionActive && mContext.getSystemService(PowerManager.class).isInteractive()
+                    && mPendingWtf == null) {
+                int enabled = isEnabled() ? 1 : 0;
+                int screenOn = mScreenOn ? 1 : 0;
+                String state = StatusBarState.toShortString(mState);
+                Throwable here = new Throwable("here");
+                FalsingLog.wLogcat("isFalseTouch", new StringBuilder()
+                        .append("Session is not active, yet there's a query for a false touch.")
+                        .append(" enabled=").append(enabled)
+                        .append(" mScreenOn=").append(screenOn)
+                        .append(" mState=").append(state)
+                        .append(". Escalating to WTF if screen does not turn on soon.")
+                        .toString());
+
+                // Unfortunately we're also getting false positives for touches that happen right
+                // after the screen turns on, but before that notification has made it to us.
+                // Unfortunately there's no good way to catch that, except to wait and see if we get
+                // the screen on notification soon.
+                mPendingWtf = () -> FalsingLog.wtf("isFalseTouch", new StringBuilder()
+                        .append("Session did not become active after query for a false touch.")
+                        .append(" enabled=").append(enabled)
+                        .append('/').append(isEnabled() ? 1 : 0)
+                        .append(" mScreenOn=").append(screenOn)
+                        .append('/').append(mScreenOn ? 1 : 0)
+                        .append(" mState=").append(state)
+                        .append('/').append(StatusBarState.toShortString(mState))
+                        .append(". Look for warnings ~1000ms earlier to see root cause.")
+                        .toString(), here);
+                mHandler.postDelayed(mPendingWtf, 1000);
+            }
+        }
+        if (mAccessibilityManager.isTouchExplorationEnabled()) {
+            // Touch exploration triggers false positives in the classifier and
+            // already sufficiently prevents false unlocks.
+            return false;
+        }
+        return mHumanInteractionClassifier.isFalseTouch();
+!!!3175045.java!!!	clearPendingWtf() : void
+        if (mPendingWtf != null) {
+            mHandler.removeCallbacks(mPendingWtf);
+            mPendingWtf = null;
+        }
+!!!3175173.java!!!	onSensorChanged(inout event : SensorEvent) : void
+        mDataCollector.onSensorChanged(event);
+        mHumanInteractionClassifier.onSensorChanged(event);
+!!!3175301.java!!!	onAccuracyChanged(inout sensor : Sensor, in accuracy : int) : void
+        mDataCollector.onAccuracyChanged(sensor, accuracy);
+!!!3175429.java!!!	shouldEnforceBouncer() : boolean
+        return mEnforceBouncer;
+!!!3175557.java!!!	setStatusBarState(in state : int) : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("setStatusBarState", new StringBuilder()
+                    .append("from=").append(StatusBarState.toShortString(mState))
+                    .append(" to=").append(StatusBarState.toShortString(state))
+                    .toString());
+        }
+        mState = state;
+        if (shouldSessionBeActive()) {
+            sessionEntrypoint();
+        } else {
+            sessionExitpoint(false /* force */);
+        }
+!!!3175685.java!!!	onScreenTurningOn() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onScreenTurningOn", new StringBuilder()
+                    .append("from=").append(mScreenOn ? 1 : 0)
+                    .toString());
+            clearPendingWtf();
+        }
+        mScreenOn = true;
+        if (sessionEntrypoint()) {
+            mDataCollector.onScreenTurningOn();
+        }
+!!!3175813.java!!!	onScreenOnFromTouch() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onScreenOnFromTouch", new StringBuilder()
+                    .append("from=").append(mScreenOn ? 1 : 0)
+                    .toString());
+        }
+        mScreenOn = true;
+        if (sessionEntrypoint()) {
+            mDataCollector.onScreenOnFromTouch();
+        }
+!!!3175941.java!!!	onScreenOff() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onScreenOff", new StringBuilder()
+                    .append("from=").append(mScreenOn ? 1 : 0)
+                    .toString());
+        }
+        mDataCollector.onScreenOff();
+        mScreenOn = false;
+        sessionExitpoint(false /* force */);
+!!!3176069.java!!!	onSucccessfulUnlock() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onSucccessfulUnlock", "");
+        }
+        mDataCollector.onSucccessfulUnlock();
+!!!3176197.java!!!	onBouncerShown() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onBouncerShown", new StringBuilder()
+                    .append("from=").append(mBouncerOn ? 1 : 0)
+                    .toString());
+        }
+        if (!mBouncerOn) {
+            mBouncerOn = true;
+            mDataCollector.onBouncerShown();
+        }
+!!!3176325.java!!!	onBouncerHidden() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onBouncerHidden", new StringBuilder()
+                    .append("from=").append(mBouncerOn ? 1 : 0)
+                    .toString());
+        }
+        if (mBouncerOn) {
+            mBouncerOn = false;
+            mDataCollector.onBouncerHidden();
+        }
+!!!3176453.java!!!	onQsDown() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onQsDown", "");
+        }
+        mHumanInteractionClassifier.setType(Classifier.QUICK_SETTINGS);
+        mDataCollector.onQsDown();
+!!!3176581.java!!!	setQsExpanded(inout expanded : boolean) : void
+        mDataCollector.setQsExpanded(expanded);
+!!!3176709.java!!!	onTrackingStarted() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onTrackingStarted", "");
+        }
+        mHumanInteractionClassifier.setType(Classifier.UNLOCK);
+        mDataCollector.onTrackingStarted();
+!!!3176837.java!!!	onTrackingStopped() : void
+        mDataCollector.onTrackingStopped();
+!!!3176965.java!!!	onNotificationActive() : void
+        mDataCollector.onNotificationActive();
+!!!3177093.java!!!	onNotificationDoubleTap(inout accepted : boolean, in dx : float, in dy : float) : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onNotificationDoubleTap", "accepted=" + accepted
+                    + " dx=" + dx + " dy=" + dy + " (px)");
+        }
+        mDataCollector.onNotificationDoubleTap();
+!!!3177221.java!!!	setNotificationExpanded() : void
+        mDataCollector.setNotificationExpanded();
+!!!3177349.java!!!	onNotificatonStartDraggingDown() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onNotificatonStartDraggingDown", "");
+        }
+        mHumanInteractionClassifier.setType(Classifier.NOTIFICATION_DRAG_DOWN);
+        mDataCollector.onNotificatonStartDraggingDown();
+!!!3177477.java!!!	onNotificatonStopDraggingDown() : void
+        mDataCollector.onNotificatonStopDraggingDown();
+!!!3177605.java!!!	onNotificationDismissed() : void
+        mDataCollector.onNotificationDismissed();
+!!!3177733.java!!!	onNotificatonStartDismissing() : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onNotificatonStartDismissing", "");
+        }
+        mHumanInteractionClassifier.setType(Classifier.NOTIFICATION_DISMISS);
+        mDataCollector.onNotificatonStartDismissing();
+!!!3177861.java!!!	onNotificatonStopDismissing() : void
+        mDataCollector.onNotificatonStopDismissing();
+!!!3177989.java!!!	onCameraOn() : void
+        mDataCollector.onCameraOn();
+!!!3178117.java!!!	onLeftAffordanceOn() : void
+        mDataCollector.onLeftAffordanceOn();
+!!!3178245.java!!!	onAffordanceSwipingStarted(inout rightCorner : boolean) : void
+        if (FalsingLog.ENABLED) {
+            FalsingLog.i("onAffordanceSwipingStarted", "");
+        }
+        if (rightCorner) {
+            mHumanInteractionClassifier.setType(Classifier.RIGHT_AFFORDANCE);
+        } else {
+            mHumanInteractionClassifier.setType(Classifier.LEFT_AFFORDANCE);
+        }
+        mDataCollector.onAffordanceSwipingStarted(rightCorner);
+!!!3178373.java!!!	onAffordanceSwipingAborted() : void
+        mDataCollector.onAffordanceSwipingAborted();
+!!!3178501.java!!!	onUnlockHintStarted() : void
+        mDataCollector.onUnlockHintStarted();
+!!!3178629.java!!!	onCameraHintStarted() : void
+        mDataCollector.onCameraHintStarted();
+!!!3178757.java!!!	onLeftAffordanceHintStarted() : void
+        mDataCollector.onLeftAffordanceHintStarted();
+!!!3178885.java!!!	onTouchEvent(inout event : MotionEvent, in width : int, in height : int) : void
+        if (mSessionActive && !mBouncerOn) {
+            mDataCollector.onTouchEvent(event, width, height);
+            mHumanInteractionClassifier.onTouchEvent(event);
+        }
+!!!3179013.java!!!	dump(inout pw : PrintWriter) : void
+        pw.println("FALSING MANAGER");
+        pw.print("classifierEnabled="); pw.println(isClassiferEnabled() ? 1 : 0);
+        pw.print("mSessionActive="); pw.println(mSessionActive ? 1 : 0);
+        pw.print("mBouncerOn="); pw.println(mSessionActive ? 1 : 0);
+        pw.print("mState="); pw.println(StatusBarState.toShortString(mState));
+        pw.print("mScreenOn="); pw.println(mScreenOn ? 1 : 0);
+        pw.println();
+!!!3179141.java!!!	reportRejectedTouch() : Uri
+        if (mDataCollector.isEnabled()) {
+            return mDataCollector.reportRejectedTouch();
+        }
+        return null;
+!!!3179269.java!!!	isReportingEnabled() : boolean
+        return mDataCollector.isReportingEnabled();

@@ -1,0 +1,129 @@
+class ViewInfoStore
+!!!10502917.java!!!	clear() : void
+        mLayoutHolderMap.clear();
+        mOldChangedHolders.clear();
+!!!10503045.java!!!	addToPreLayout(inout holder : ViewHolder, inout info : ItemHolderInfo) : void
+        InfoRecord record = mLayoutHolderMap.get(holder);
+        if (record == null) {
+            record = InfoRecord.obtain();
+            mLayoutHolderMap.put(holder, record);
+        }
+        record.preInfo = info;
+        record.flags |= FLAG_PRE;
+!!!10503173.java!!!	isDisappearing(inout holder : ViewHolder) : boolean
+        final InfoRecord record = mLayoutHolderMap.get(holder);
+        return record != null && ((record.flags & FLAG_DISAPPEARED) != 0);
+!!!10503301.java!!!	popFromPreLayout(inout vh : ViewHolder) : ItemHolderInfo
+        return popFromLayoutStep(vh, FLAG_PRE);
+!!!10503429.java!!!	popFromPostLayout(inout vh : ViewHolder) : ItemHolderInfo
+        return popFromLayoutStep(vh, FLAG_POST);
+!!!10503557.java!!!	popFromLayoutStep(inout vh : ViewHolder, in flag : int) : ItemHolderInfo
+        int index = mLayoutHolderMap.indexOfKey(vh);
+        if (index < 0) {
+            return null;
+        }
+        final InfoRecord record = mLayoutHolderMap.valueAt(index);
+        if (record != null && (record.flags & flag) != 0) {
+            record.flags &= ~flag;
+            final ItemHolderInfo info;
+            if (flag == FLAG_PRE) {
+                info = record.preInfo;
+            } else if (flag == FLAG_POST) {
+                info = record.postInfo;
+            } else {
+                throw new IllegalArgumentException("Must provide flag PRE or POST");
+            }
+            // if not pre-post flag is left, clear.
+            if ((record.flags & (FLAG_PRE | FLAG_POST)) == 0) {
+                mLayoutHolderMap.removeAt(index);
+                InfoRecord.recycle(record);
+            }
+            return info;
+        }
+        return null;
+!!!10503685.java!!!	addToOldChangeHolders(in key : long, inout holder : ViewHolder) : void
+        mOldChangedHolders.put(key, holder);
+!!!10503813.java!!!	addToAppearedInPreLayoutHolders(inout holder : ViewHolder, inout info : ItemHolderInfo) : void
+        InfoRecord record = mLayoutHolderMap.get(holder);
+        if (record == null) {
+            record = InfoRecord.obtain();
+            mLayoutHolderMap.put(holder, record);
+        }
+        record.flags |= FLAG_APPEAR;
+        record.preInfo = info;
+!!!10503941.java!!!	isInPreLayout(inout viewHolder : ViewHolder) : boolean
+        final InfoRecord record = mLayoutHolderMap.get(viewHolder);
+        return record != null && (record.flags & FLAG_PRE) != 0;
+!!!10504069.java!!!	getFromOldChangeHolders(in key : long) : ViewHolder
+        return mOldChangedHolders.get(key);
+!!!10504197.java!!!	addToPostLayout(inout holder : ViewHolder, inout info : ItemHolderInfo) : void
+        InfoRecord record = mLayoutHolderMap.get(holder);
+        if (record == null) {
+            record = InfoRecord.obtain();
+            mLayoutHolderMap.put(holder, record);
+        }
+        record.postInfo = info;
+        record.flags |= FLAG_POST;
+!!!10504325.java!!!	addToDisappearedInLayout(inout holder : ViewHolder) : void
+        InfoRecord record = mLayoutHolderMap.get(holder);
+        if (record == null) {
+            record = InfoRecord.obtain();
+            mLayoutHolderMap.put(holder, record);
+        }
+        record.flags |= FLAG_DISAPPEARED;
+!!!10504453.java!!!	removeFromDisappearedInLayout(inout holder : ViewHolder) : void
+        InfoRecord record = mLayoutHolderMap.get(holder);
+        if (record == null) {
+            return;
+        }
+        record.flags &= ~FLAG_DISAPPEARED;
+!!!10504581.java!!!	process(inout callback : ViewInfoStore::ProcessCallback) : void
+        for (int index = mLayoutHolderMap.size() - 1; index >= 0; index--) {
+            final ViewHolder viewHolder = mLayoutHolderMap.keyAt(index);
+            final InfoRecord record = mLayoutHolderMap.removeAt(index);
+            if ((record.flags & FLAG_APPEAR_AND_DISAPPEAR) == FLAG_APPEAR_AND_DISAPPEAR) {
+                // Appeared then disappeared. Not useful for animations.
+                callback.unused(viewHolder);
+            } else if ((record.flags & FLAG_DISAPPEARED) != 0) {
+                // Set as "disappeared" by the LayoutManager (addDisappearingView)
+                if (record.preInfo == null) {
+                    // similar to appear disappear but happened between different layout passes.
+                    // this can happen when the layout manager is using auto-measure
+                    callback.unused(viewHolder);
+                } else {
+                    callback.processDisappeared(viewHolder, record.preInfo, record.postInfo);
+                }
+            } else if ((record.flags & FLAG_APPEAR_PRE_AND_POST) == FLAG_APPEAR_PRE_AND_POST) {
+                // Appeared in the layout but not in the adapter (e.g. entered the viewport)
+                callback.processAppeared(viewHolder, record.preInfo, record.postInfo);
+            } else if ((record.flags & FLAG_PRE_AND_POST) == FLAG_PRE_AND_POST) {
+                // Persistent in both passes. Animate persistence
+                callback.processPersistent(viewHolder, record.preInfo, record.postInfo);
+            } else if ((record.flags & FLAG_PRE) != 0) {
+                // Was in pre-layout, never been added to post layout
+                callback.processDisappeared(viewHolder, record.preInfo, null);
+            } else if ((record.flags & FLAG_POST) != 0) {
+                // Was not in pre-layout, been added to post layout
+                callback.processAppeared(viewHolder, record.preInfo, record.postInfo);
+            } else if ((record.flags & FLAG_APPEAR) != 0) {
+                // Scrap view. RecyclerView will handle removing/recycling this.
+            } else if (DEBUG) {
+                throw new IllegalStateException("record without any reasonable flag combination:/");
+            }
+            InfoRecord.recycle(record);
+        }
+!!!10504709.java!!!	removeViewHolder(inout holder : ViewHolder) : void
+        for (int i = mOldChangedHolders.size() - 1; i >= 0; i--) {
+            if (holder == mOldChangedHolders.valueAt(i)) {
+                mOldChangedHolders.removeAt(i);
+                break;
+            }
+        }
+        final InfoRecord info = mLayoutHolderMap.remove(holder);
+        if (info != null) {
+            InfoRecord.recycle(info);
+        }
+!!!10504837.java!!!	onDetach() : void
+        InfoRecord.drainCache();
+!!!10504965.java!!!	onViewDetached(inout viewHolder : ViewHolder) : void
+        removeFromDisappearedInLayout(viewHolder);

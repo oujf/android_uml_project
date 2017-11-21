@@ -1,0 +1,63 @@
+class CameraLatencyHistogram
+!!!512773.cpp!!!	add(in start : nsecs_t, in end : nsecs_t) : void
+    nsecs_t duration = end - start;
+    int32_t durationMs = static_cast<int32_t>(duration / 1000000LL);
+    int32_t binIndex = durationMs / mBinSizeMs;
+
+    if (binIndex < 0) {
+        binIndex = 0;
+    } else if (binIndex >= mBinCount) {
+        binIndex = mBinCount-1;
+    }
+
+    mBins[binIndex]++;
+    mTotalCount++;
+!!!512901.cpp!!!	reset() : void
+    mBins.clear();
+    mTotalCount = 0;
+!!!513029.cpp!!!	dump(in fd : int, in name : char) : void
+    if (mTotalCount == 0) {
+        return;
+    }
+
+    String8 lines;
+    lines.appendFormat("%s (%" PRId64 ") samples\n", name, mTotalCount);
+
+    String8 lineBins, lineBinCounts;
+    formatHistogramText(lineBins, lineBinCounts);
+
+    lineBins.append("\n");
+    lineBinCounts.append("\n");
+    lines.append(lineBins);
+    lines.append(lineBinCounts);
+
+    write(fd, lines.string(), lines.size());
+!!!513157.cpp!!!	log(in fmt : char) : void
+    if (mTotalCount == 0) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    String8 histogramName = String8::formatV(fmt, args);
+    ALOGI("%s (%" PRId64 ") samples:", histogramName.string(), mTotalCount);
+    va_end(args);
+
+    String8 lineBins, lineBinCounts;
+    formatHistogramText(lineBins, lineBinCounts);
+
+    ALOGI("%s", lineBins.c_str());
+    ALOGI("%s", lineBinCounts.c_str());
+!!!513285.cpp!!!	formatHistogramText(inout lineBins : String8, inout lineBinCounts : String8) : void
+    lineBins = "  ";
+    lineBinCounts = "  ";
+
+    for (int32_t i = 0; i < mBinCount; i++) {
+        if (i == mBinCount - 1) {
+            lineBins.append("    inf (max ms)");
+        } else {
+            lineBins.appendFormat("%7d", mBinSizeMs*(i+1));
+        }
+        lineBinCounts.appendFormat("   %02.2f", 100.0*mBins[i]/mTotalCount);
+    }
+    lineBinCounts.append(" (%)");

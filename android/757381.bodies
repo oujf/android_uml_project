@@ -1,0 +1,123 @@
+class FlingAnimationUtils
+!!!3705349.java!!!	FlingAnimationUtils(inout ctx : Context, in maxLengthSeconds : float)
+        this(ctx, maxLengthSeconds, 0.0f);
+!!!3705477.java!!!	FlingAnimationUtils(inout ctx : Context, in maxLengthSeconds : float, in speedUpFactor : float)
+        this(ctx, maxLengthSeconds, speedUpFactor, -1.0f, 1.0f);
+!!!3705605.java!!!	FlingAnimationUtils(inout ctx : Context, in maxLengthSeconds : float, in speedUpFactor : float, in x2 : float, in y2 : float)
+        mMaxLengthSeconds = maxLengthSeconds;
+        mSpeedUpFactor = speedUpFactor;
+        if (x2 < 0) {
+            mLinearOutSlowInX2 = NotificationUtils.interpolate(LINEAR_OUT_SLOW_IN_X2,
+                    LINEAR_OUT_SLOW_IN_X2_MAX,
+                    mSpeedUpFactor);
+        } else {
+            mLinearOutSlowInX2 = x2;
+        }
+        mY2 = y2;
+
+        mMinVelocityPxPerSecond
+                = MIN_VELOCITY_DP_PER_SECOND * ctx.getResources().getDisplayMetrics().density;
+        mHighVelocityPxPerSecond
+                = HIGH_VELOCITY_DP_PER_SECOND * ctx.getResources().getDisplayMetrics().density;
+!!!3705733.java!!!	apply(inout animator : Animator, in currValue : float, in endValue : float, in velocity : float) : void
+        apply(animator, currValue, endValue, velocity, Math.abs(endValue - currValue));
+!!!3705861.java!!!	apply(inout animator : ViewPropertyAnimator, in currValue : float, in endValue : float, in velocity : float) : void
+        apply(animator, currValue, endValue, velocity, Math.abs(endValue - currValue));
+!!!3705989.java!!!	apply(inout animator : Animator, in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : void
+        AnimatorProperties properties = getProperties(currValue, endValue, velocity,
+                maxDistance);
+        animator.setDuration(properties.duration);
+        animator.setInterpolator(properties.interpolator);
+!!!3706117.java!!!	apply(inout animator : ViewPropertyAnimator, in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : void
+        AnimatorProperties properties = getProperties(currValue, endValue, velocity,
+                maxDistance);
+        animator.setDuration(properties.duration);
+        animator.setInterpolator(properties.interpolator);
+!!!3706245.java!!!	getProperties(in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : FlingAnimationUtils::AnimatorProperties
+        float maxLengthSeconds = (float) (mMaxLengthSeconds
+                * Math.sqrt(Math.abs(endValue - currValue) / maxDistance));
+        float diff = Math.abs(endValue - currValue);
+        float velAbs = Math.abs(velocity);
+        float velocityFactor = mSpeedUpFactor == 0.0f
+                ? 1.0f : Math.min(velAbs / HIGH_VELOCITY_DP_PER_SECOND, 1.0f);
+        float startGradient = NotificationUtils.interpolate(LINEAR_OUT_SLOW_IN_START_GRADIENT,
+                mY2 / mLinearOutSlowInX2, velocityFactor);
+        float durationSeconds = startGradient * diff / velAbs;
+        Interpolator slowInInterpolator = getInterpolator(startGradient, velocityFactor);
+        if (durationSeconds <= maxLengthSeconds) {
+            mAnimatorProperties.interpolator = slowInInterpolator;
+        } else if (velAbs >= mMinVelocityPxPerSecond) {
+
+            // Cross fade between fast-out-slow-in and linear interpolator with current velocity.
+            durationSeconds = maxLengthSeconds;
+            VelocityInterpolator velocityInterpolator
+                    = new VelocityInterpolator(durationSeconds, velAbs, diff);
+            InterpolatorInterpolator superInterpolator = new InterpolatorInterpolator(
+                    velocityInterpolator, slowInInterpolator, Interpolators.LINEAR_OUT_SLOW_IN);
+            mAnimatorProperties.interpolator = superInterpolator;
+        } else {
+
+            // Just use a normal interpolator which doesn't take the velocity into account.
+            durationSeconds = maxLengthSeconds;
+            mAnimatorProperties.interpolator = Interpolators.FAST_OUT_SLOW_IN;
+        }
+        mAnimatorProperties.duration = (long) (durationSeconds * 1000);
+        return mAnimatorProperties;
+!!!3706373.java!!!	getInterpolator(in startGradient : float, in velocityFactor : float) : Interpolator
+        if (startGradient != mCachedStartGradient
+                || velocityFactor != mCachedVelocityFactor) {
+            float speedup = mSpeedUpFactor * (1.0f - velocityFactor);
+            mInterpolator = new PathInterpolator(speedup,
+                    speedup * startGradient,
+                    mLinearOutSlowInX2, mY2);
+            mCachedStartGradient = startGradient;
+            mCachedVelocityFactor = velocityFactor;
+        }
+        return mInterpolator;
+!!!3706501.java!!!	applyDismissing(inout animator : Animator, in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : void
+        AnimatorProperties properties = getDismissingProperties(currValue, endValue, velocity,
+                maxDistance);
+        animator.setDuration(properties.duration);
+        animator.setInterpolator(properties.interpolator);
+!!!3706629.java!!!	applyDismissing(inout animator : ViewPropertyAnimator, in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : void
+        AnimatorProperties properties = getDismissingProperties(currValue, endValue, velocity,
+                maxDistance);
+        animator.setDuration(properties.duration);
+        animator.setInterpolator(properties.interpolator);
+!!!3706757.java!!!	getDismissingProperties(in currValue : float, in endValue : float, in velocity : float, in maxDistance : float) : FlingAnimationUtils::AnimatorProperties
+        float maxLengthSeconds = (float) (mMaxLengthSeconds
+                * Math.pow(Math.abs(endValue - currValue) / maxDistance, 0.5f));
+        float diff = Math.abs(endValue - currValue);
+        float velAbs = Math.abs(velocity);
+        float y2 = calculateLinearOutFasterInY2(velAbs);
+
+        float startGradient = y2 / LINEAR_OUT_FASTER_IN_X2;
+        Interpolator mLinearOutFasterIn = new PathInterpolator(0, 0, LINEAR_OUT_FASTER_IN_X2, y2);
+        float durationSeconds = startGradient * diff / velAbs;
+        if (durationSeconds <= maxLengthSeconds) {
+            mAnimatorProperties.interpolator = mLinearOutFasterIn;
+        } else if (velAbs >= mMinVelocityPxPerSecond) {
+
+            // Cross fade between linear-out-faster-in and linear interpolator with current
+            // velocity.
+            durationSeconds = maxLengthSeconds;
+            VelocityInterpolator velocityInterpolator
+                    = new VelocityInterpolator(durationSeconds, velAbs, diff);
+            InterpolatorInterpolator superInterpolator = new InterpolatorInterpolator(
+                    velocityInterpolator, mLinearOutFasterIn, Interpolators.LINEAR_OUT_SLOW_IN);
+            mAnimatorProperties.interpolator = superInterpolator;
+        } else {
+
+            // Just use a normal interpolator which doesn't take the velocity into account.
+            durationSeconds = maxLengthSeconds;
+            mAnimatorProperties.interpolator = Interpolators.FAST_OUT_LINEAR_IN;
+        }
+        mAnimatorProperties.duration = (long) (durationSeconds * 1000);
+        return mAnimatorProperties;
+!!!3706885.java!!!	calculateLinearOutFasterInY2(in velocity : float) : float
+        float t = (velocity - mMinVelocityPxPerSecond)
+                / (mHighVelocityPxPerSecond - mMinVelocityPxPerSecond);
+        t = Math.max(0, Math.min(1, t));
+        return (1 - t) * LINEAR_OUT_FASTER_IN_Y2_MIN + t * LINEAR_OUT_FASTER_IN_Y2_MAX;
+!!!3707013.java!!!	getMinVelocityPxPerSecond() : float
+        return mMinVelocityPxPerSecond;

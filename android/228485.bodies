@@ -1,0 +1,102 @@
+class DeviceHalLocal
+!!!589957.cpp!!!	getSupportedDevices(inout devices : uint32_t) : status_t
+    if (mDev->get_supported_devices == NULL) return INVALID_OPERATION;
+    *devices = mDev->get_supported_devices(mDev);
+    return OK;
+!!!590085.cpp!!!	initCheck() : status_t
+    return mDev->init_check(mDev);
+!!!590213.cpp!!!	setVoiceVolume(in volume : float) : status_t
+    return mDev->set_voice_volume(mDev, volume);
+!!!590341.cpp!!!	setMasterVolume(in volume : float) : status_t
+    if (mDev->set_master_volume == NULL) return INVALID_OPERATION;
+    return mDev->set_master_volume(mDev, volume);
+!!!590469.cpp!!!	getMasterVolume(inout volume : float) : status_t
+    if (mDev->get_master_volume == NULL) return INVALID_OPERATION;
+    return mDev->get_master_volume(mDev, volume);
+!!!590597.cpp!!!	setMode(in mode : audio_mode_t) : status_t
+    return mDev->set_mode(mDev, mode);
+!!!590725.cpp!!!	setMicMute(in state : bool) : status_t
+    return mDev->set_mic_mute(mDev, state);
+!!!590853.cpp!!!	getMicMute(inout state : bool) : status_t
+    return mDev->get_mic_mute(mDev, state);
+!!!590981.cpp!!!	setMasterMute(in state : bool) : status_t
+    if (mDev->set_master_mute == NULL) return INVALID_OPERATION;
+    return mDev->set_master_mute(mDev, state);
+!!!591109.cpp!!!	getMasterMute(inout state : bool) : status_t
+    if (mDev->get_master_mute == NULL) return INVALID_OPERATION;
+    return mDev->get_master_mute(mDev, state);
+!!!591237.cpp!!!	setParameters(in kvPairs : String8) : status_t
+    return mDev->set_parameters(mDev, kvPairs.string());
+!!!591365.cpp!!!	getParameters(in keys : String8, inout values : String8) : status_t
+    char *halValues = mDev->get_parameters(mDev, keys.string());
+    if (halValues != NULL) {
+        values->setTo(halValues);
+        free(halValues);
+    } else {
+        values->clear();
+    }
+    return OK;
+!!!591493.cpp!!!	getInputBufferSize(in config : audio_config, inout size : size_t) : status_t
+    *size = mDev->get_input_buffer_size(mDev, config);
+    return OK;
+!!!591621.cpp!!!	openOutputStream(in handle : audio_io_handle_t, in devices : audio_devices_t, in flags : audio_output_flags_t, inout config : audio_config, in address : char, inout outStream : sp<StreamOutHalInterface>) : status_t
+    audio_stream_out_t *halStream;
+    ALOGV("open_output_stream handle: %d devices: %x flags: %#x"
+            "srate: %d format %#x channels %x address %s",
+            handle, devices, flags,
+            config->sample_rate, config->format, config->channel_mask,
+            address);
+    int openResut = mDev->open_output_stream(
+            mDev, handle, devices, flags, config, &halStream, address);
+    if (openResut == OK) {
+        *outStream = new StreamOutHalLocal(halStream, this);
+    }
+    ALOGV("open_output_stream status %d stream %p", openResut, halStream);
+    return openResut;
+!!!591749.cpp!!!	openInputStream(in handle : audio_io_handle_t, in devices : audio_devices_t, inout config : audio_config, in flags : audio_input_flags_t, in address : char, in source : audio_source_t, inout inStream : sp<StreamInHalInterface>) : status_t
+    audio_stream_in_t *halStream;
+    ALOGV("open_input_stream handle: %d devices: %x flags: %#x "
+            "srate: %d format %#x channels %x address %s source %d",
+            handle, devices, flags,
+            config->sample_rate, config->format, config->channel_mask,
+            address, source);
+    int openResult = mDev->open_input_stream(
+            mDev, handle, devices, config, &halStream, flags, address, source);
+    if (openResult == OK) {
+        *inStream = new StreamInHalLocal(halStream, this);
+    }
+    ALOGV("open_input_stream status %d stream %p", openResult, inStream);
+    return openResult;
+!!!591877.cpp!!!	supportsAudioPatches(inout supportsPatches : bool) : status_t
+    *supportsPatches = version() >= AUDIO_DEVICE_API_VERSION_3_0;
+    return OK;
+!!!592005.cpp!!!	createAudioPatch(in num_sources : uint, in sources : audio_port_config, in num_sinks : uint, in sinks : audio_port_config, inout patch : audio_patch_handle_t) : status_t
+    if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+        return mDev->create_audio_patch(
+                mDev, num_sources, sources, num_sinks, sinks, patch);
+    } else {
+        return INVALID_OPERATION;
+    }
+!!!592133.cpp!!!	releaseAudioPatch(in patch : audio_patch_handle_t) : status_t
+    if (version() >= AUDIO_DEVICE_API_VERSION_3_0) {
+        return mDev->release_audio_patch(mDev, patch);
+    } else {
+        return INVALID_OPERATION;
+    }
+!!!592261.cpp!!!	getAudioPort(inout port : audio_port) : status_t
+    return mDev->get_audio_port(mDev, port);
+!!!592389.cpp!!!	setAudioPortConfig(in config : audio_port_config) : status_t
+    if (version() >= AUDIO_DEVICE_API_VERSION_3_0)
+        return mDev->set_audio_port_config(mDev, config);
+    else
+        return INVALID_OPERATION;
+!!!592517.cpp!!!	dump(in fd : int) : status_t
+    return mDev->dump(mDev, fd);
+!!!592645.cpp!!!	closeOutputStream(inout stream_out : audio_stream_out) : void
+    mDev->close_output_stream(mDev, stream_out);
+!!!592773.cpp!!!	closeInputStream(inout stream_in : audio_stream_in) : void
+    mDev->close_input_stream(mDev, stream_in);
+!!!593029.cpp!!!	~DeviceHalLocal()
+    int status = audio_hw_device_close(mDev);
+    ALOGW_IF(status, "Error closing audio hw device %p: %s", mDev, strerror(-status));
+    mDev = 0;

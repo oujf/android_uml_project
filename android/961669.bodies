@@ -1,0 +1,278 @@
+class Display
+!!!8673413.java!!!	Display(inout global : DisplayManagerGlobal, in displayId : int, inout displayInfo : DisplayInfo, inout daj : DisplayAdjustments)
+        this(global, displayId, displayInfo, daj, null /*res*/);
+!!!8673541.java!!!	Display(inout global : DisplayManagerGlobal, in displayId : int, inout displayInfo : DisplayInfo, inout res : Resources)
+        this(global, displayId, displayInfo, null /*daj*/, res);
+!!!8673669.java!!!	Display(inout global : DisplayManagerGlobal, in displayId : int, inout displayInfo : DisplayInfo, inout daj : DisplayAdjustments, inout res : Resources)
+        mGlobal = global;
+        mDisplayId = displayId;
+        mDisplayInfo = displayInfo;
+        mResources = res;
+        mDisplayAdjustments = mResources != null
+            ? new DisplayAdjustments(mResources.getConfiguration())
+            : daj != null ? new DisplayAdjustments(daj) : null;
+        mIsValid = true;
+
+        // Cache properties that cannot change as long as the display is valid.
+        mLayerStack = displayInfo.layerStack;
+        mFlags = displayInfo.flags;
+        mType = displayInfo.type;
+        mAddress = displayInfo.address;
+        mOwnerUid = displayInfo.ownerUid;
+        mOwnerPackageName = displayInfo.ownerPackageName;
+!!!8673797.java!!!	getDisplayId() : int
+        return mDisplayId;
+!!!8673925.java!!!	isValid() : boolean
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mIsValid;
+        }
+!!!8674053.java!!!	getDisplayInfo(inout outDisplayInfo : DisplayInfo) : boolean
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            outDisplayInfo.copyFrom(mDisplayInfo);
+            return mIsValid;
+        }
+!!!8674181.java!!!	getLayerStack() : int
+        return mLayerStack;
+!!!8674309.java!!!	getFlags() : int
+        return mFlags;
+!!!8674437.java!!!	getType() : int
+        return mType;
+!!!8674565.java!!!	getAddress() : String
+        return mAddress;
+!!!8674693.java!!!	getOwnerUid() : int
+        return mOwnerUid;
+!!!8674821.java!!!	getOwnerPackageName() : String
+        return mOwnerPackageName;
+!!!8674949.java!!!	getDisplayAdjustments() : DisplayAdjustments
+        if (mResources != null) {
+            final DisplayAdjustments currentAdjustements = mResources.getDisplayAdjustments();
+            if (!mDisplayAdjustments.equals(currentAdjustements)) {
+                mDisplayAdjustments = new DisplayAdjustments(currentAdjustements);
+            }
+        }
+
+        return mDisplayAdjustments;
+!!!8675077.java!!!	getName() : String
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.name;
+        }
+!!!8675205.java!!!	getSize(inout outSize : Point) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(mTempMetrics, getDisplayAdjustments());
+            outSize.x = mTempMetrics.widthPixels;
+            outSize.y = mTempMetrics.heightPixels;
+        }
+!!!8675333.java!!!	getRectSize(inout outSize : Rect) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(mTempMetrics, getDisplayAdjustments());
+            outSize.set(0, 0, mTempMetrics.widthPixels, mTempMetrics.heightPixels);
+        }
+!!!8675461.java!!!	getCurrentSizeRange(inout outSmallestSize : Point, inout outLargestSize : Point) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            outSmallestSize.x = mDisplayInfo.smallestNominalAppWidth;
+            outSmallestSize.y = mDisplayInfo.smallestNominalAppHeight;
+            outLargestSize.x = mDisplayInfo.largestNominalAppWidth;
+            outLargestSize.y = mDisplayInfo.largestNominalAppHeight;
+        }
+!!!8675589.java!!!	getMaximumSizeDimension() : int
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return Math.max(mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight);
+        }
+!!!8675717.java!!!	getWidth() : int
+        synchronized (this) {
+            updateCachedAppSizeIfNeededLocked();
+            return mCachedAppWidthCompat;
+        }
+!!!8675845.java!!!	getHeight() : int
+        synchronized (this) {
+            updateCachedAppSizeIfNeededLocked();
+            return mCachedAppHeightCompat;
+        }
+!!!8675973.java!!!	getOverscanInsets(inout outRect : Rect) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            outRect.set(mDisplayInfo.overscanLeft, mDisplayInfo.overscanTop,
+                    mDisplayInfo.overscanRight, mDisplayInfo.overscanBottom);
+        }
+!!!8676101.java!!!	getRotation() : int
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.rotation;
+        }
+!!!8676229.java!!!	getOrientation() : int
+        return getRotation();
+!!!8676357.java!!!	getPixelFormat() : int
+        return PixelFormat.RGBA_8888;
+!!!8676485.java!!!	getRefreshRate() : float
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getMode().getRefreshRate();
+        }
+!!!8676613.java!!!	getSupportedRefreshRates() : float
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getDefaultRefreshRates();
+        }
+!!!8676741.java!!!	getMode() : Display::Mode
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getMode();
+        }
+!!!8676869.java!!!	getSupportedModes() : Display::Mode
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            final Display.Mode[] modes = mDisplayInfo.supportedModes;
+            return Arrays.copyOf(modes, modes.length);
+        }
+!!!8676997.java!!!	requestColorMode(in colorMode : int) : void
+        mGlobal.requestColorMode(mDisplayId, colorMode);
+!!!8677125.java!!!	getColorMode() : int
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.colorMode;
+        }
+!!!8677253.java!!!	getRemoveMode() : int
+        return mDisplayInfo.removeMode;
+!!!8677381.java!!!	getHdrCapabilities() : Display::HdrCapabilities
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.hdrCapabilities;
+        }
+!!!8677509.java!!!	isHdr() : boolean
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.isHdr();
+        }
+!!!8677637.java!!!	isWideColorGamut() : boolean
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.isWideColorGamut();
+        }
+!!!8677765.java!!!	getSupportedColorModes() : int
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            int[] colorModes = mDisplayInfo.supportedColorModes;
+            return Arrays.copyOf(colorModes, colorModes.length);
+        }
+!!!8677893.java!!!	getAppVsyncOffsetNanos() : long
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.appVsyncOffsetNanos;
+        }
+!!!8678021.java!!!	getPresentationDeadlineNanos() : long
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.presentationDeadlineNanos;
+        }
+!!!8678149.java!!!	getMetrics(inout outMetrics : DisplayMetrics) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(outMetrics, getDisplayAdjustments());
+        }
+!!!8678277.java!!!	getRealSize(inout outSize : Point) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            outSize.x = mDisplayInfo.logicalWidth;
+            outSize.y = mDisplayInfo.logicalHeight;
+        }
+!!!8678405.java!!!	getRealMetrics(inout outMetrics : DisplayMetrics) : void
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getLogicalMetrics(outMetrics,
+                    CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null);
+        }
+!!!8678533.java!!!	getState() : int
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mIsValid ? mDisplayInfo.state : STATE_UNKNOWN;
+        }
+!!!8678661.java!!!	hasAccess(in uid : int) : boolean
+        return Display.hasAccess(uid, mFlags, mOwnerUid);
+!!!8678789.java!!!	hasAccess(in uid : int, in flags : int, in ownerUid : int) : boolean
+        return (flags & Display.FLAG_PRIVATE) == 0
+                || uid == ownerUid
+                || uid == Process.SYSTEM_UID
+                || uid == 0;
+!!!8678917.java!!!	isPublicPresentation() : boolean
+        return (mFlags & (Display.FLAG_PRIVATE | Display.FLAG_PRESENTATION)) ==
+                Display.FLAG_PRESENTATION;
+!!!8679045.java!!!	updateDisplayInfoLocked() : void
+        // Note: The display manager caches display info objects on our behalf.
+        DisplayInfo newInfo = mGlobal.getDisplayInfo(mDisplayId);
+        if (newInfo == null) {
+            // Preserve the old mDisplayInfo after the display is removed.
+            if (mIsValid) {
+                mIsValid = false;
+                if (DEBUG) {
+                    Log.d(TAG, "Logical display " + mDisplayId + " was removed.");
+                }
+            }
+        } else {
+            // Use the new display info.  (It might be the same object if nothing changed.)
+            mDisplayInfo = newInfo;
+            if (!mIsValid) {
+                mIsValid = true;
+                if (DEBUG) {
+                    Log.d(TAG, "Logical display " + mDisplayId + " was recreated.");
+                }
+            }
+        }
+!!!8679173.java!!!	updateCachedAppSizeIfNeededLocked() : void
+        long now = SystemClock.uptimeMillis();
+        if (now > mLastCachedAppSizeUpdate + CACHED_APP_SIZE_DURATION_MILLIS) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(mTempMetrics, getDisplayAdjustments());
+            mCachedAppWidthCompat = mTempMetrics.widthPixels;
+            mCachedAppHeightCompat = mTempMetrics.heightPixels;
+            mLastCachedAppSizeUpdate = now;
+        }
+!!!8679301.java!!!	toString() : String
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(mTempMetrics, getDisplayAdjustments());
+            return "Display id " + mDisplayId + ": " + mDisplayInfo
+                    + ", " + mTempMetrics + ", isValid=" + mIsValid;
+        }
+!!!8679429.java!!!	typeToString(in type : int) : String
+        switch (type) {
+            case TYPE_UNKNOWN:
+                return "UNKNOWN";
+            case TYPE_BUILT_IN:
+                return "BUILT_IN";
+            case TYPE_HDMI:
+                return "HDMI";
+            case TYPE_WIFI:
+                return "WIFI";
+            case TYPE_OVERLAY:
+                return "OVERLAY";
+            case TYPE_VIRTUAL:
+                return "VIRTUAL";
+            default:
+                return Integer.toString(type);
+        }
+!!!8679557.java!!!	stateToString(in state : int) : String
+        switch (state) {
+            case STATE_UNKNOWN:
+                return "UNKNOWN";
+            case STATE_OFF:
+                return "OFF";
+            case STATE_ON:
+                return "ON";
+            case STATE_DOZE:
+                return "DOZE";
+            case STATE_DOZE_SUSPEND:
+                return "DOZE_SUSPEND";
+            case STATE_VR:
+                return "VR";
+            default:
+                return Integer.toString(state);
+        }
+!!!8679685.java!!!	isSuspendedState(in state : int) : boolean
+        return state == STATE_OFF || state == STATE_DOZE_SUSPEND;

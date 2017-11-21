@@ -1,0 +1,297 @@
+class PipManager
+!!!3296261.java!!!	initialize(inout context : Context) : void
+        if (mInitialized) {
+            return;
+        }
+        mInitialized = true;
+        mContext = context;
+
+        mActivityManager = ActivityManager.getService();
+        mWindowManager = WindowManagerGlobal.getWindowManagerService();
+        SystemServicesProxy.getInstance(context).registerTaskStackListener(mTaskStackListener);
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(Intent.ACTION_MEDIA_RESOURCE_GRANTED);
+        mContext.registerReceiver(mBroadcastReceiver, intentFilter);
+
+        if (sSettingsPackageAndClassNamePairList == null) {
+            String[] settings = mContext.getResources().getStringArray(
+                    R.array.tv_pip_settings_class_name);
+            sSettingsPackageAndClassNamePairList = new ArrayList<>();
+            if (settings != null) {
+                for (int i = 0; i < settings.length; i++) {
+                    Pair<String, String> entry = null;
+                    String[] packageAndClassName =
+                            settings[i].split(SETTINGS_PACKAGE_AND_CLASS_DELIMITER);
+                    switch (packageAndClassName.length) {
+                        case 1:
+                            entry = Pair.<String, String>create(packageAndClassName[0], null);
+                            break;
+                        case 2:
+                            if (packageAndClassName[1] != null
+                                    && packageAndClassName[1].startsWith(".")) {
+                                entry = Pair.<String, String>create(
+                                        packageAndClassName[0],
+                                        packageAndClassName[0] + packageAndClassName[1]);
+                            }
+                    }
+                    if (entry != null) {
+                        sSettingsPackageAndClassNamePairList.add(entry);
+                    } else {
+                        Log.w(TAG, "Ignoring malformed settings name " + settings[i]);
+                    }
+                }
+            }
+        }
+
+        // Initialize the last orientation and apply the current configuration
+        Configuration initialConfig = mContext.getResources().getConfiguration();
+        mLastOrientation = initialConfig.orientation;
+        loadConfigurationsAndApply(initialConfig);
+
+        mMediaSessionManager =
+                (MediaSessionManager) mContext.getSystemService(Context.MEDIA_SESSION_SERVICE);
+
+        try {
+            mWindowManager.registerPinnedStackListener(DEFAULT_DISPLAY, mPinnedStackListener);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to register pinned stack listener", e);
+        }
+
+        mPipNotification = new PipNotification(context);
+!!!3296389.java!!!	loadConfigurationsAndApply(inout newConfig : Configuration) : void
+        if (mLastOrientation != newConfig.orientation) {
+            // Don't resize the pinned stack on orientation change. TV does not care about this case
+            // and this could clobber the existing animation to the new bounds calculated by WM.
+            mLastOrientation = newConfig.orientation;
+            return;
+        }
+
+        Resources res = mContext.getResources();
+        mSettingsPipBounds = Rect.unflattenFromString(res.getString(
+                R.string.pip_settings_bounds));
+        mMenuModePipBounds = Rect.unflattenFromString(res.getString(
+                R.string.pip_menu_bounds));
+
+        // Reset the PIP bounds and apply. PIP bounds can be changed by two reasons.
+        //   1. Configuration changed due to the language change (RTL <-> RTL)
+        //   2. SystemUI restarts after the crash
+        mPipBounds = isSettingsShown() ? mSettingsPipBounds : mDefaultPipBounds;
+        resizePinnedStack(getPinnedStackInfo() == null ? STATE_NO_PIP : STATE_PIP);
+!!!3296517.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        loadConfigurationsAndApply(newConfig);
+        mPipNotification.onConfigurationChanged(mContext);
+!!!3296645.java!!!	showPictureInPictureMenu() : void
+        if (getState() == STATE_PIP) {
+            resizePinnedStack(STATE_PIP_MENU);
+        }
+!!!3296773.java!!!	closePip() : void
+        closePipInternal(true);
+!!!3296901.java!!!	closePipInternal(inout removePipStack : boolean) : void
+        mState = STATE_NO_PIP;
+        mPipTaskId = TASK_ID_NO_PIP;
+        mPipMediaController = null;
+        mMediaSessionManager.removeOnActiveSessionsChangedListener(mActiveMediaSessionListener);
+        if (removePipStack) {
+            try {
+                mActivityManager.removeStack(PINNED_STACK_ID);
+            } catch (RemoteException e) {
+                Log.e(TAG, "removeStack failed", e);
+            }
+        }
+        for (int i = mListeners.size() - 1; i >= 0; --i) {
+            mListeners.get(i).onPipActivityClosed();
+        }
+        mHandler.removeCallbacks(mClosePipRunnable);
+        updatePipVisibility(false);
+!!!3297029.java!!!	movePipToFullscreen() : void
+        mPipTaskId = TASK_ID_NO_PIP;
+        for (int i = mListeners.size() - 1; i >= 0; --i) {
+            mListeners.get(i).onMoveToFullscreen();
+        }
+        resizePinnedStack(STATE_NO_PIP);
+        updatePipVisibility(false);
+!!!3297157.java!!!	suspendPipResizing(in reason : int) : void
+        if (DEBUG) Log.d(TAG,
+                "suspendPipResizing() reason=" + reason + " callers=" + Debug.getCallers(2));
+        mSuspendPipResizingReason |= reason;
+!!!3297285.java!!!	resumePipResizing(in reason : int) : void
+        if ((mSuspendPipResizingReason & reason) == 0) {
+            return;
+        }
+        if (DEBUG) Log.d(TAG,
+                "resumePipResizing() reason=" + reason + " callers=" + Debug.getCallers(2));
+        mSuspendPipResizingReason &= ~reason;
+        mHandler.post(mResizePinnedStackRunnable);
+!!!3297413.java!!!	resizePinnedStack(in state : int) : void
+        if (DEBUG) Log.d(TAG, "resizePinnedStack() state=" + state, new Exception());
+        boolean wasStateNoPip = (mState == STATE_NO_PIP);
+        for (int i = mListeners.size() - 1; i >= 0; --i) {
+            mListeners.get(i).onPipResizeAboutToStart();
+        }
+        if (mSuspendPipResizingReason != 0) {
+            mResumeResizePinnedStackRunnableState = state;
+            if (DEBUG) Log.d(TAG, "resizePinnedStack() deferring"
+                    + " mSuspendPipResizingReason=" + mSuspendPipResizingReason
+                    + " mResumeResizePinnedStackRunnableState="
+                    + mResumeResizePinnedStackRunnableState);
+            return;
+        }
+        mState = state;
+        switch (mState) {
+            case STATE_NO_PIP:
+                mCurrentPipBounds = null;
+                // If the state was already STATE_NO_PIP, then do not resize the stack below as it
+                // will not exist
+                if (wasStateNoPip) {
+                    return;
+                }
+                break;
+            case STATE_PIP_MENU:
+                mCurrentPipBounds = mMenuModePipBounds;
+                break;
+            case STATE_PIP:
+                mCurrentPipBounds = mPipBounds;
+                break;
+            default:
+                mCurrentPipBounds = mPipBounds;
+                break;
+        }
+        try {
+            int animationDurationMs = -1;
+            mActivityManager.resizeStack(PINNED_STACK_ID, mCurrentPipBounds,
+                    true, true, true, animationDurationMs);
+        } catch (RemoteException e) {
+            Log.e(TAG, "resizeStack failed", e);
+        }
+!!!3297541.java!!!	getState() : int
+        if (mSuspendPipResizingReason != 0) {
+            return mResumeResizePinnedStackRunnableState;
+        }
+        return mState;
+!!!3297669.java!!!	getPipBounds() : Rect
+        return mPipBounds;
+!!!3297797.java!!!	showPipMenu() : void
+        if (DEBUG) Log.d(TAG, "showPipMenu()");
+        mState = STATE_PIP_MENU;
+        for (int i = mListeners.size() - 1; i >= 0; --i) {
+            mListeners.get(i).onShowPipMenu();
+        }
+        Intent intent = new Intent(mContext, PipMenuActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra(PipMenuActivity.EXTRA_CUSTOM_ACTIONS, mCustomActions);
+        mContext.startActivity(intent);
+!!!3297925.java!!!	addListener(inout listener : PipManager::Listener) : void
+        mListeners.add(listener);
+!!!3298053.java!!!	removeListener(inout listener : PipManager::Listener) : void
+        mListeners.remove(listener);
+!!!3298181.java!!!	addMediaListener(inout listener : PipManager::MediaListener) : void
+        mMediaListeners.add(listener);
+!!!3298309.java!!!	removeMediaListener(inout listener : PipManager::MediaListener) : void
+        mMediaListeners.remove(listener);
+!!!3298437.java!!!	isPipShown() : boolean
+        return mState != STATE_NO_PIP;
+!!!3298565.java!!!	getPinnedStackInfo() : StackInfo
+        StackInfo stackInfo = null;
+        try {
+            stackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+        } catch (RemoteException e) {
+            Log.e(TAG, "getStackInfo failed", e);
+        }
+        return stackInfo;
+!!!3298693.java!!!	handleMediaResourceGranted(inout packageNames : String [[]]) : void
+        if (getState() == STATE_NO_PIP) {
+            mLastPackagesResourceGranted = packageNames;
+        } else {
+            boolean requestedFromLastPackages = false;
+            if (mLastPackagesResourceGranted != null) {
+                for (String packageName : mLastPackagesResourceGranted) {
+                    for (String newPackageName : packageNames) {
+                        if (TextUtils.equals(newPackageName, packageName)) {
+                            requestedFromLastPackages = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            mLastPackagesResourceGranted = packageNames;
+            if (!requestedFromLastPackages) {
+                closePip();
+            }
+        }
+!!!3298821.java!!!	updateMediaController(inout controllers : List<MediaController>) : void
+        MediaController mediaController = null;
+        if (controllers != null && getState() != STATE_NO_PIP && mPipComponentName != null) {
+            for (int i = controllers.size() - 1; i >= 0; i--) {
+                MediaController controller = controllers.get(i);
+                // We assumes that an app with PIPable activity
+                // keeps the single instance of media controller especially when PIP is on.
+                if (controller.getPackageName().equals(mPipComponentName.getPackageName())) {
+                    mediaController = controller;
+                    break;
+                }
+            }
+        }
+        if (mPipMediaController != mediaController) {
+            mPipMediaController = mediaController;
+            for (int i = mMediaListeners.size() - 1; i >= 0; i--) {
+                mMediaListeners.get(i).onMediaControllerChanged();
+            }
+            if (mPipMediaController == null) {
+                mHandler.postDelayed(mClosePipRunnable,
+                        CLOSE_PIP_WHEN_MEDIA_SESSION_GONE_TIMEOUT_MS);
+            } else {
+                mHandler.removeCallbacks(mClosePipRunnable);
+            }
+        }
+!!!3298949.java!!!	getMediaController() : MediaController
+        return mPipMediaController;
+!!!3299077.java!!!	getPlaybackState() : int
+        if (mPipMediaController == null || mPipMediaController.getPlaybackState() == null) {
+            return PLAYBACK_STATE_UNAVAILABLE;
+        }
+        int state = mPipMediaController.getPlaybackState().getState();
+        boolean isPlaying = (state == PlaybackState.STATE_BUFFERING
+                || state == PlaybackState.STATE_CONNECTING
+                || state == PlaybackState.STATE_PLAYING
+                || state == PlaybackState.STATE_FAST_FORWARDING
+                || state == PlaybackState.STATE_REWINDING
+                || state == PlaybackState.STATE_SKIPPING_TO_PREVIOUS
+                || state == PlaybackState.STATE_SKIPPING_TO_NEXT);
+        long actions = mPipMediaController.getPlaybackState().getActions();
+        if (!isPlaying && ((actions & PlaybackState.ACTION_PLAY) != 0)) {
+            return PLAYBACK_STATE_PAUSED;
+        } else if (isPlaying && ((actions & PlaybackState.ACTION_PAUSE) != 0)) {
+            return PLAYBACK_STATE_PLAYING;
+        }
+        return PLAYBACK_STATE_UNAVAILABLE;
+!!!3299205.java!!!	isSettingsShown() : boolean
+        List<RunningTaskInfo> runningTasks;
+        try {
+            runningTasks = mActivityManager.getTasks(1, 0);
+            if (runningTasks == null || runningTasks.size() == 0) {
+                return false;
+            }
+        } catch (RemoteException e) {
+            Log.d(TAG, "Failed to detect top activity", e);
+            return false;
+        }
+        ComponentName topActivity = runningTasks.get(0).topActivity;
+        for (Pair<String, String> componentName : sSettingsPackageAndClassNamePairList) {
+            String packageName = componentName.first;
+            if (topActivity.getPackageName().equals(packageName)) {
+                String className = componentName.second;
+                if (className == null || topActivity.getClassName().equals(className)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!3300229.java!!!	getInstance() : PipManager
+        if (sPipManager == null) {
+            sPipManager = new PipManager();
+        }
+        return sPipManager;
+!!!3300357.java!!!	updatePipVisibility(in visible : boolean) : void
+        SystemServicesProxy.getInstance(mContext).setPipVisibility(visible);
+!!!3300485.java!!!	dump(inout pw : PrintWriter) : void
+        // Do nothing

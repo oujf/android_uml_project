@@ -1,0 +1,233 @@
+class NightDisplayService
+!!!11505029.java!!!	NightDisplayService(inout context : Context)
+        super(context);
+        mHandler = new Handler(Looper.getMainLooper());
+!!!11505157.java!!!	onStart() : void
+        // Nothing to publish.
+!!!11505285.java!!!	onBootPhase(in phase : int) : void
+        if (phase >= PHASE_SYSTEM_SERVICES_READY) {
+            final IVrManager vrManager = IVrManager.Stub.asInterface(
+                    getBinderService(Context.VR_SERVICE));
+            if (vrManager != null) {
+                try {
+                    vrManager.registerListener(mVrStateCallbacks);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Failed to register VR mode state listener: " + e);
+                }
+            }
+        }
+
+        if (phase >= PHASE_BOOT_COMPLETED) {
+            mBootCompleted = true;
+
+            // Register listeners now that boot is complete.
+            if (mCurrentUser != UserHandle.USER_NULL && mUserSetupObserver == null) {
+                setUp();
+            }
+        }
+!!!11505413.java!!!	onStartUser(in userHandle : int) : void
+        super.onStartUser(userHandle);
+
+        if (mCurrentUser == UserHandle.USER_NULL) {
+            onUserChanged(userHandle);
+        }
+!!!11505541.java!!!	onSwitchUser(in userHandle : int) : void
+        super.onSwitchUser(userHandle);
+
+        onUserChanged(userHandle);
+!!!11505669.java!!!	onStopUser(in userHandle : int) : void
+        super.onStopUser(userHandle);
+
+        if (mCurrentUser == userHandle) {
+            onUserChanged(UserHandle.USER_NULL);
+        }
+!!!11505797.java!!!	onUserChanged(in userHandle : int) : void
+        final ContentResolver cr = getContext().getContentResolver();
+
+        if (mCurrentUser != UserHandle.USER_NULL) {
+            if (mUserSetupObserver != null) {
+                cr.unregisterContentObserver(mUserSetupObserver);
+                mUserSetupObserver = null;
+            } else if (mBootCompleted) {
+                tearDown();
+            }
+        }
+
+        mCurrentUser = userHandle;
+
+        if (mCurrentUser != UserHandle.USER_NULL) {
+            if (!isUserSetupCompleted(cr, mCurrentUser)) {
+                mUserSetupObserver = new ContentObserver(mHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Uri uri) {
+                        if (isUserSetupCompleted(cr, mCurrentUser)) {
+                            cr.unregisterContentObserver(this);
+                            mUserSetupObserver = null;
+
+                            if (mBootCompleted) {
+                                setUp();
+                            }
+                        }
+                    }
+                };
+                cr.registerContentObserver(Secure.getUriFor(Secure.USER_SETUP_COMPLETE),
+                        false /* notifyForDescendents */, mUserSetupObserver, mCurrentUser);
+            } else if (mBootCompleted) {
+                setUp();
+            }
+        }
+!!!11505925.java!!!	isUserSetupCompleted(inout cr : ContentResolver, in userHandle : int) : boolean
+        return Secure.getIntForUser(cr, Secure.USER_SETUP_COMPLETE, 0, userHandle) == 1;
+!!!11506053.java!!!	setUp() : void
+        Slog.d(TAG, "setUp: currentUser=" + mCurrentUser);
+
+        // Create a new controller for the current user and start listening for changes.
+        mController = new NightDisplayController(getContext(), mCurrentUser);
+        mController.setListener(this);
+
+        // Prepare color transformation matrix.
+        setMatrix(mController.getColorTemperature(), mMatrixNight);
+
+        // Initialize the current auto mode.
+        onAutoModeChanged(mController.getAutoMode());
+
+        // Force the initialization current activated state.
+        if (mIsActivated == null) {
+            onActivated(mController.isActivated());
+        }
+
+        // Transition the screen to the current temperature.
+        applyTint(false);
+!!!11506181.java!!!	tearDown() : void
+        Slog.d(TAG, "tearDown: currentUser=" + mCurrentUser);
+
+        if (mController != null) {
+            mController.setListener(null);
+            mController = null;
+        }
+
+        if (mAutoMode != null) {
+            mAutoMode.onStop();
+            mAutoMode = null;
+        }
+
+        if (mColorMatrixAnimator != null) {
+            mColorMatrixAnimator.end();
+            mColorMatrixAnimator = null;
+        }
+
+        mIsActivated = null;
+!!!11506309.java!!!	onActivated(inout activated : boolean) : void
+        if (mIsActivated == null || mIsActivated != activated) {
+            Slog.i(TAG, activated ? "Turning on night display" : "Turning off night display");
+
+            mIsActivated = activated;
+
+            if (mAutoMode != null) {
+                mAutoMode.onActivated(activated);
+            }
+
+            applyTint(false);
+        }
+!!!11506437.java!!!	onAutoModeChanged(in autoMode : int) : void
+        Slog.d(TAG, "onAutoModeChanged: autoMode=" + autoMode);
+
+        if (mAutoMode != null) {
+            mAutoMode.onStop();
+            mAutoMode = null;
+        }
+
+        if (autoMode == NightDisplayController.AUTO_MODE_CUSTOM) {
+            mAutoMode = new CustomAutoMode();
+        } else if (autoMode == NightDisplayController.AUTO_MODE_TWILIGHT) {
+            mAutoMode = new TwilightAutoMode();
+        }
+
+        if (mAutoMode != null) {
+            mAutoMode.onStart();
+        }
+!!!11506565.java!!!	onCustomStartTimeChanged(inout startTime : NightDisplayController::LocalTime) : void
+        Slog.d(TAG, "onCustomStartTimeChanged: startTime=" + startTime);
+
+        if (mAutoMode != null) {
+            mAutoMode.onCustomStartTimeChanged(startTime);
+        }
+!!!11506693.java!!!	onCustomEndTimeChanged(inout endTime : NightDisplayController::LocalTime) : void
+        Slog.d(TAG, "onCustomEndTimeChanged: endTime=" + endTime);
+
+        if (mAutoMode != null) {
+            mAutoMode.onCustomEndTimeChanged(endTime);
+        }
+!!!11506821.java!!!	onColorTemperatureChanged(in colorTemperature : int) : void
+        setMatrix(colorTemperature, mMatrixNight);
+        applyTint(true);
+!!!11506949.java!!!	applyTint(inout immediate : boolean) : void
+        // Cancel the old animator if still running.
+        if (mColorMatrixAnimator != null) {
+            mColorMatrixAnimator.cancel();
+        }
+
+        // Don't do any color matrix change animations if we are ignoring them anyway.
+        if (mIgnoreAllColorMatrixChanges.get()) {
+            return;
+        }
+
+        final DisplayTransformManager dtm = getLocalService(DisplayTransformManager.class);
+        final float[] from = dtm.getColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY);
+        final float[] to = mIsActivated ? mMatrixNight : MATRIX_IDENTITY;
+
+        if (immediate) {
+            dtm.setColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY, to);
+        } else {
+            mColorMatrixAnimator = ValueAnimator.ofObject(COLOR_MATRIX_EVALUATOR,
+                    from == null ? MATRIX_IDENTITY : from, to);
+            mColorMatrixAnimator.setDuration(TRANSITION_DURATION);
+            mColorMatrixAnimator.setInterpolator(AnimationUtils.loadInterpolator(
+                    getContext(), android.R.interpolator.fast_out_slow_in));
+            mColorMatrixAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animator) {
+                    final float[] value = (float[]) animator.getAnimatedValue();
+                    dtm.setColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY, value);
+                }
+            });
+            mColorMatrixAnimator.addListener(new AnimatorListenerAdapter() {
+
+                private boolean mIsCancelled;
+
+                @Override
+                public void onAnimationCancel(Animator animator) {
+                    mIsCancelled = true;
+                }
+
+                @Override
+                public void onAnimationEnd(Animator animator) {
+                    if (!mIsCancelled) {
+                        // Ensure final color matrix is set at the end of the animation. If the
+                        // animation is cancelled then don't set the final color matrix so the new
+                        // animator can pick up from where this one left off.
+                        dtm.setColorMatrix(LEVEL_COLOR_MATRIX_NIGHT_DISPLAY, to);
+                    }
+                    mColorMatrixAnimator = null;
+                }
+            });
+            mColorMatrixAnimator.start();
+        }
+!!!11507077.java!!!	setMatrix(in colorTemperature : int, inout outTemp : float [[]]) : void
+        if (outTemp.length != 16) {
+            Slog.d(TAG, "The display transformation matrix must be 4x4");
+            return;
+        }
+
+        Matrix.setIdentityM(mMatrixNight, 0);
+
+        final float squareTemperature = colorTemperature * colorTemperature;
+        final float red = squareTemperature * mColorTempCoefficients[0]
+                + colorTemperature * mColorTempCoefficients[3] + mColorTempCoefficients[6];
+        final float green = squareTemperature * mColorTempCoefficients[1]
+                + colorTemperature * mColorTempCoefficients[4] + mColorTempCoefficients[7];
+        final float blue = squareTemperature * mColorTempCoefficients[2]
+                + colorTemperature * mColorTempCoefficients[5] + mColorTempCoefficients[8];
+        outTemp[0] = red;
+        outTemp[5] = green;
+        outTemp[10] = blue;

@@ -1,0 +1,61 @@
+class HotspotControllerImpl
+!!!4142597.java!!!	HotspotControllerImpl(inout context : Context)
+        mContext = context;
+        mConnectivityManager = (ConnectivityManager) context.getSystemService(
+                Context.CONNECTIVITY_SERVICE);
+!!!4142725.java!!!	isHotspotSupported() : boolean
+        return mConnectivityManager.isTetheringSupported()
+                && mConnectivityManager.getTetherableWifiRegexs().length != 0
+                && UserManager.get(mContext).isUserAdmin(ActivityManager.getCurrentUser());
+!!!4142853.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.println("HotspotController state:");
+        pw.print("  mHotspotEnabled="); pw.println(stateToString(mHotspotState));
+!!!4142981.java!!!	stateToString(in hotspotState : int) : String
+        switch (hotspotState) {
+            case WifiManager.WIFI_AP_STATE_DISABLED:
+                return "DISABLED";
+            case WifiManager.WIFI_AP_STATE_DISABLING:
+                return "DISABLING";
+            case WifiManager.WIFI_AP_STATE_ENABLED:
+                return "ENABLED";
+            case WifiManager.WIFI_AP_STATE_ENABLING:
+                return "ENABLING";
+            case WifiManager.WIFI_AP_STATE_FAILED:
+                return "FAILED";
+        }
+        return null;
+!!!4143109.java!!!	addCallback(inout callback : HotspotController::Callback) : void
+        synchronized (mCallbacks) {
+            if (callback == null || mCallbacks.contains(callback)) return;
+            if (DEBUG) Log.d(TAG, "addCallback " + callback);
+            mCallbacks.add(callback);
+            mReceiver.setListening(!mCallbacks.isEmpty());
+        }
+!!!4143237.java!!!	removeCallback(inout callback : HotspotController::Callback) : void
+        if (callback == null) return;
+        if (DEBUG) Log.d(TAG, "removeCallback " + callback);
+        synchronized (mCallbacks) {
+            mCallbacks.remove(callback);
+            mReceiver.setListening(!mCallbacks.isEmpty());
+        }
+!!!4143365.java!!!	isHotspotEnabled() : boolean
+        return mHotspotState == WifiManager.WIFI_AP_STATE_ENABLED;
+!!!4143493.java!!!	isHotspotTransient() : boolean
+        return mWaitingForCallback || (mHotspotState == WifiManager.WIFI_AP_STATE_ENABLING);
+!!!4143621.java!!!	setHotspotEnabled(inout enabled : boolean) : void
+        if (enabled) {
+            OnStartTetheringCallback callback = new OnStartTetheringCallback();
+            mWaitingForCallback = true;
+            if (DEBUG) Log.d(TAG, "Starting tethering");
+            mConnectivityManager.startTethering(
+                    ConnectivityManager.TETHERING_WIFI, false, callback);
+            fireCallback(isHotspotEnabled());
+        } else {
+            mConnectivityManager.stopTethering(ConnectivityManager.TETHERING_WIFI);
+        }
+!!!4143749.java!!!	fireCallback(inout isEnabled : boolean) : void
+        synchronized (mCallbacks) {
+            for (Callback callback : mCallbacks) {
+                callback.onHotspotChanged(isEnabled);
+            }
+        }

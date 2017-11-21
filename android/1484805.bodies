@@ -1,0 +1,143 @@
+class RatingBar
+!!!9573765.java!!!	RatingBar(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        this(context, attrs, defStyleAttr, 0);
+!!!9573893.java!!!	RatingBar(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.RatingBar, defStyleAttr, defStyleRes);
+        final int numStars = a.getInt(R.styleable.RatingBar_numStars, mNumStars);
+        setIsIndicator(a.getBoolean(R.styleable.RatingBar_isIndicator, !mIsUserSeekable));
+        final float rating = a.getFloat(R.styleable.RatingBar_rating, -1);
+        final float stepSize = a.getFloat(R.styleable.RatingBar_stepSize, -1);
+        a.recycle();
+
+        if (numStars > 0 && numStars != mNumStars) {
+            setNumStars(numStars);
+        }
+
+        if (stepSize >= 0) {
+            setStepSize(stepSize);
+        } else {
+            setStepSize(0.5f);
+        }
+
+        if (rating >= 0) {
+            setRating(rating);
+        }
+
+        // A touch inside a star fill up to that fractional area (slightly more
+        // than 0.5 so boundaries round up).
+        mTouchProgressOffset = 0.6f;
+!!!9574021.java!!!	RatingBar(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, com.android.internal.R.attr.ratingBarStyle);
+!!!9574149.java!!!	RatingBar(inout context : Context)
+        this(context, null);
+!!!9574277.java!!!	setOnRatingBarChangeListener(inout listener : RatingBar::OnRatingBarChangeListener) : void
+        mOnRatingBarChangeListener = listener;
+!!!9574405.java!!!	getOnRatingBarChangeListener() : RatingBar::OnRatingBarChangeListener
+        return mOnRatingBarChangeListener;
+!!!9574533.java!!!	setIsIndicator(inout isIndicator : boolean) : void
+        mIsUserSeekable = !isIndicator;
+        if (isIndicator) {
+            setFocusable(FOCUSABLE_AUTO);
+        } else {
+            setFocusable(FOCUSABLE);
+        }
+!!!9574661.java!!!	isIndicator() : boolean
+        return !mIsUserSeekable;
+!!!9574789.java!!!	setNumStars(in numStars : int) : void
+        if (numStars <= 0) {
+            return;
+        }
+
+        mNumStars = numStars;
+
+        // This causes the width to change, so re-layout
+        requestLayout();
+!!!9574917.java!!!	getNumStars() : int
+        return mNumStars;
+!!!9575045.java!!!	setRating(in rating : float) : void
+        setProgress(Math.round(rating * getProgressPerStar()));
+!!!9575173.java!!!	getRating() : float
+        return getProgress() / getProgressPerStar();
+!!!9575301.java!!!	setStepSize(in stepSize : float) : void
+        if (stepSize <= 0) {
+            return;
+        }
+
+        final float newMax = mNumStars / stepSize;
+        final int newProgress = (int) (newMax / getMax() * getProgress());
+        setMax((int) newMax);
+        setProgress(newProgress);
+!!!9575429.java!!!	getStepSize() : float
+        return (float) getNumStars() / getMax();
+!!!9575557.java!!!	getProgressPerStar() : float
+        if (mNumStars > 0) {
+            return 1f * getMax() / mNumStars;
+        } else {
+            return 1;
+        }
+!!!9575685.java!!!	getDrawableShape() : Shape
+        // TODO: Once ProgressBar's TODOs are fixed, this won't be needed
+        return new RectShape();
+!!!9575813.java!!!	onProgressRefresh(in scale : float, inout fromUser : boolean, in progress : int) : void
+        super.onProgressRefresh(scale, fromUser, progress);
+
+        // Keep secondary progress in sync with primary
+        updateSecondaryProgress(progress);
+
+        if (!fromUser) {
+            // Callback for non-user rating changes
+            dispatchRatingChange(false);
+        }
+!!!9575941.java!!!	updateSecondaryProgress(in progress : int) : void
+        final float ratio = getProgressPerStar();
+        if (ratio > 0) {
+            final float progressInStars = progress / ratio;
+            final int secondaryProgress = (int) (Math.ceil(progressInStars) * ratio);
+            setSecondaryProgress(secondaryProgress);
+        }
+!!!9576069.java!!!	onMeasure(in widthMeasureSpec : int, in heightMeasureSpec : int) : void
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+
+        if (mSampleWidth > 0) {
+            final int width = mSampleWidth * mNumStars;
+            setMeasuredDimension(resolveSizeAndState(width, widthMeasureSpec, 0),
+                    getMeasuredHeight());
+        }
+!!!9576197.java!!!	onStartTrackingTouch() : void
+        mProgressOnStartTracking = getProgress();
+
+        super.onStartTrackingTouch();
+!!!9576325.java!!!	onStopTrackingTouch() : void
+        super.onStopTrackingTouch();
+
+        if (getProgress() != mProgressOnStartTracking) {
+            dispatchRatingChange(true);
+        }
+!!!9576453.java!!!	onKeyChange() : void
+        super.onKeyChange();
+        dispatchRatingChange(true);
+!!!9576581.java!!!	dispatchRatingChange(inout fromUser : boolean) : void
+        if (mOnRatingBarChangeListener != null) {
+            mOnRatingBarChangeListener.onRatingChanged(this, getRating(),
+                    fromUser);
+        }
+!!!9576709.java!!!	setMax(in max : int) : void
+        // Disallow max progress = 0
+        if (max <= 0) {
+            return;
+        }
+
+        super.setMax(max);
+!!!9576837.java!!!	getAccessibilityClassName() : CharSequence
+        return RatingBar.class.getName();
+!!!9576965.java!!!	onInitializeAccessibilityNodeInfoInternal(inout info : AccessibilityNodeInfo) : void
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+
+        if (canUserSetProgress()) {
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS);
+        }
+!!!9577093.java!!!	canUserSetProgress() : boolean
+        return super.canUserSetProgress() && !isIndicator();

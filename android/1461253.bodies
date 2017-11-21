@@ -1,0 +1,244 @@
+class PackageMonitor
+!!!9283333.java!!!	register(inout context : Context, inout thread : Looper, inout externalStorage : boolean) : void
+        register(context, thread, null, externalStorage);
+!!!9283461.java!!!	register(inout context : Context, inout thread : Looper, inout user : UserHandle, inout externalStorage : boolean) : void
+        register(context, user, externalStorage,
+                (thread == null) ? BackgroundThread.getHandler() : new Handler(thread));
+!!!9283589.java!!!	register(inout context : Context, inout user : UserHandle, inout externalStorage : boolean, inout handler : Handler) : void
+        if (mRegisteredContext != null) {
+            throw new IllegalStateException("Already registered");
+        }
+        mRegisteredContext = context;
+        mRegisteredHandler = Preconditions.checkNotNull(handler);
+        if (user != null) {
+            context.registerReceiverAsUser(this, user, sPackageFilt, null, mRegisteredHandler);
+            context.registerReceiverAsUser(this, user, sNonDataFilt, null, mRegisteredHandler);
+            if (externalStorage) {
+                context.registerReceiverAsUser(this, user, sExternalFilt, null,
+                        mRegisteredHandler);
+            }
+        } else {
+            context.registerReceiver(this, sPackageFilt, null, mRegisteredHandler);
+            context.registerReceiver(this, sNonDataFilt, null, mRegisteredHandler);
+            if (externalStorage) {
+                context.registerReceiver(this, sExternalFilt, null, mRegisteredHandler);
+            }
+        }
+!!!9283717.java!!!	getRegisteredHandler() : Handler
+        return mRegisteredHandler;
+!!!9283845.java!!!	unregister() : void
+        if (mRegisteredContext == null) {
+            throw new IllegalStateException("Not registered");
+        }
+        mRegisteredContext.unregisterReceiver(this);
+        mRegisteredContext = null;
+!!!9283973.java!!!	isPackageUpdating(in packageName : String) : boolean
+        synchronized (mUpdatingPackages) {
+            return mUpdatingPackages.contains(packageName);
+        }
+!!!9284869.java!!!	onPackageChanged(in packageName : String, in uid : int, inout components : String [[]]) : boolean
+        if (components != null) {
+            for (String name : components) {
+                if (packageName.equals(name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!9284997.java!!!	onHandleForceStop(inout intent : Intent, inout packages : String [[]], in uid : int, inout doit : boolean) : boolean
+        return false;
+!!!9286277.java!!!	didSomePackagesChange() : boolean
+        return mSomePackagesChanged;
+!!!9286405.java!!!	isPackageAppearing(in packageName : String) : int
+        if (mAppearingPackages != null) {
+            for (int i=mAppearingPackages.length-1; i>=0; i--) {
+                if (packageName.equals(mAppearingPackages[i])) {
+                    return mChangeType;
+                }
+            }
+        }
+        return PACKAGE_UNCHANGED;
+!!!9286533.java!!!	anyPackagesAppearing() : boolean
+        return mAppearingPackages != null;
+!!!9286661.java!!!	isPackageDisappearing(in packageName : String) : int
+        if (mDisappearingPackages != null) {
+            for (int i=mDisappearingPackages.length-1; i>=0; i--) {
+                if (packageName.equals(mDisappearingPackages[i])) {
+                    return mChangeType;
+                }
+            }
+        }
+        return PACKAGE_UNCHANGED;
+!!!9286789.java!!!	anyPackagesDisappearing() : boolean
+        return mDisappearingPackages != null;
+!!!9286917.java!!!	isReplacing() : boolean
+        return mChangeType == PACKAGE_UPDATING;
+!!!9287045.java!!!	isPackageModified(in packageName : String) : boolean
+        if (mModifiedPackages != null) {
+            for (int i=mModifiedPackages.length-1; i>=0; i--) {
+                if (packageName.equals(mModifiedPackages[i])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!9287173.java!!!	isComponentModified(in className : String) : boolean
+        if (className == null || mModifiedComponents == null) {
+            return false;
+        }
+        for (int i = mModifiedComponents.length - 1; i >= 0; i--) {
+            if (className.equals(mModifiedComponents[i])) {
+                return true;
+            }
+        }
+        return false;
+!!!9287685.java!!!	getChangingUserId() : int
+        return mChangeUserId;
+!!!9287813.java!!!	getPackageName(inout intent : Intent) : String
+        Uri uri = intent.getData();
+        String pkg = uri != null ? uri.getSchemeSpecificPart() : null;
+        return pkg;
+!!!9287941.java!!!	onReceive(inout context : Context, inout intent : Intent) : void
+        mChangeUserId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE,
+                UserHandle.USER_NULL);
+        if (mChangeUserId == UserHandle.USER_NULL) {
+            Slog.w("PackageMonitor", "Intent broadcast does not contain user handle: " + intent);
+            return;
+        }
+        onBeginPackageChanges();
+        
+        mDisappearingPackages = mAppearingPackages = null;
+        mSomePackagesChanged = false;
+        mModifiedComponents = null;
+        
+        String action = intent.getAction();
+        if (Intent.ACTION_PACKAGE_ADDED.equals(action)) {
+            String pkg = getPackageName(intent);
+            int uid = intent.getIntExtra(Intent.EXTRA_UID, 0);
+            // We consider something to have changed regardless of whether
+            // this is just an update, because the update is now finished
+            // and the contents of the package may have changed.
+            mSomePackagesChanged = true;
+            if (pkg != null) {
+                mAppearingPackages = mTempArray;
+                mTempArray[0] = pkg;
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                    mModifiedPackages = mTempArray;
+                    mChangeType = PACKAGE_UPDATING;
+                    onPackageUpdateFinished(pkg, uid);
+                    onPackageModified(pkg);
+                } else {
+                    mChangeType = PACKAGE_PERMANENT_CHANGE;
+                    onPackageAdded(pkg, uid);
+                }
+                onPackageAppeared(pkg, mChangeType);
+                if (mChangeType == PACKAGE_UPDATING) {
+                    synchronized (mUpdatingPackages) {
+                        mUpdatingPackages.remove(pkg);
+                    }
+                }
+            }
+        } else if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
+            String pkg = getPackageName(intent);
+            int uid = intent.getIntExtra(Intent.EXTRA_UID, 0);
+            if (pkg != null) {
+                mDisappearingPackages = mTempArray;
+                mTempArray[0] = pkg;
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                    mChangeType = PACKAGE_UPDATING;
+                    synchronized (mUpdatingPackages) {
+                        //not used for now
+                        //mUpdatingPackages.add(pkg);
+                    }
+                    onPackageUpdateStarted(pkg, uid);
+                } else {
+                    mChangeType = PACKAGE_PERMANENT_CHANGE;
+                    // We only consider something to have changed if this is
+                    // not a replace; for a replace, we just need to consider
+                    // it when it is re-added.
+                    mSomePackagesChanged = true;
+                    onPackageRemoved(pkg, uid);
+                    if (intent.getBooleanExtra(Intent.EXTRA_REMOVED_FOR_ALL_USERS, false)) {
+                        onPackageRemovedAllUsers(pkg, uid);
+                    }
+                }
+                onPackageDisappeared(pkg, mChangeType);
+            }
+        } else if (Intent.ACTION_PACKAGE_CHANGED.equals(action)) {
+            String pkg = getPackageName(intent);
+            int uid = intent.getIntExtra(Intent.EXTRA_UID, 0);
+            mModifiedComponents = intent.getStringArrayExtra(
+                    Intent.EXTRA_CHANGED_COMPONENT_NAME_LIST);
+            if (pkg != null) {
+                mModifiedPackages = mTempArray;
+                mTempArray[0] = pkg;
+                mChangeType = PACKAGE_PERMANENT_CHANGE;
+                if (onPackageChanged(pkg, uid, mModifiedComponents)) {
+                    mSomePackagesChanged = true;
+                }
+                onPackageModified(pkg);
+            }
+        } else if (Intent.ACTION_PACKAGE_DATA_CLEARED.equals(action)) {
+            String pkg = getPackageName(intent);
+            int uid = intent.getIntExtra(Intent.EXTRA_UID, 0);
+            if (pkg != null) {
+                onPackageDataCleared(pkg, uid);
+            }
+        } else if (Intent.ACTION_QUERY_PACKAGE_RESTART.equals(action)) {
+            mDisappearingPackages = intent.getStringArrayExtra(Intent.EXTRA_PACKAGES);
+            mChangeType = PACKAGE_TEMPORARY_CHANGE;
+            boolean canRestart = onHandleForceStop(intent,
+                    mDisappearingPackages,
+                    intent.getIntExtra(Intent.EXTRA_UID, 0), false);
+            if (canRestart) setResultCode(Activity.RESULT_OK);
+        } else if (Intent.ACTION_PACKAGE_RESTARTED.equals(action)) {
+            mDisappearingPackages = new String[] {getPackageName(intent)};
+            mChangeType = PACKAGE_TEMPORARY_CHANGE;
+            onHandleForceStop(intent, mDisappearingPackages,
+                    intent.getIntExtra(Intent.EXTRA_UID, 0), true);
+        } else if (Intent.ACTION_UID_REMOVED.equals(action)) {
+            onUidRemoved(intent.getIntExtra(Intent.EXTRA_UID, 0));
+        } else if (Intent.ACTION_USER_STOPPED.equals(action)) {
+            if (intent.hasExtra(Intent.EXTRA_USER_HANDLE)) {
+                onHandleUserStop(intent, intent.getIntExtra(Intent.EXTRA_USER_HANDLE, 0));
+            }
+        } else if (Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE.equals(action)) {
+            String[] pkgList = intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+            mAppearingPackages = pkgList;
+            mChangeType = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                    ? PACKAGE_UPDATING : PACKAGE_TEMPORARY_CHANGE;
+            mSomePackagesChanged = true;
+            if (pkgList != null) {
+                onPackagesAvailable(pkgList);
+                for (int i=0; i<pkgList.length; i++) {
+                    onPackageAppeared(pkgList[i], mChangeType);
+                }
+            }
+        } else if (Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE.equals(action)) {
+            String[] pkgList = intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+            mDisappearingPackages = pkgList;
+            mChangeType = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                    ? PACKAGE_UPDATING : PACKAGE_TEMPORARY_CHANGE;
+            mSomePackagesChanged = true;
+            if (pkgList != null) {
+                onPackagesUnavailable(pkgList);
+                for (int i=0; i<pkgList.length; i++) {
+                    onPackageDisappeared(pkgList[i], mChangeType);
+                }
+            }
+        } else if (Intent.ACTION_PACKAGES_SUSPENDED.equals(action)) {
+            String[] pkgList = intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+            mSomePackagesChanged = true;
+            onPackagesSuspended(pkgList);
+        } else if (Intent.ACTION_PACKAGES_UNSUSPENDED.equals(action)) {
+            String[] pkgList = intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+            mSomePackagesChanged = true;
+            onPackagesUnsuspended(pkgList);
+        }
+
+        if (mSomePackagesChanged) {
+            onSomePackagesChanged();
+        }
+        
+        onFinishPackageChanges();
+        mChangeUserId = UserHandle.USER_NULL;

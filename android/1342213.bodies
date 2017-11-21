@@ -1,0 +1,98 @@
+class FillContext
+!!!7973509.java!!!	FillContext(in requestId : int, inout structure : AssistStructure)
+        mRequestId = requestId;
+        mStructure = structure;
+!!!7973637.java!!!	FillContext(inout parcel : Parcel)
+        this(parcel.readInt(), parcel.readParcelable(null));
+!!!7973765.java!!!	getRequestId() : int
+        return mRequestId;
+!!!7973893.java!!!	getStructure() : AssistStructure
+        return mStructure;
+!!!7974021.java!!!	toString() : String
+        if (!sDebug)  return super.toString();
+
+        return "FillContext [reqId=" + mRequestId + "]";
+!!!7974149.java!!!	describeContents() : int
+        return 0;
+!!!7974277.java!!!	writeToParcel(inout parcel : Parcel, in flags : int) : void
+        parcel.writeInt(mRequestId);
+        parcel.writeParcelable(mStructure, flags);
+!!!7974405.java!!!	findViewNodesByAutofillIds(inout ids : AutofillId [[]]) : AssistStructure::ViewNode
+        final LinkedList<ViewNode> nodesToProcess = new LinkedList<>();
+        final ViewNode[] foundNodes = new AssistStructure.ViewNode[ids.length];
+
+        // Indexes of foundNodes that are not found yet
+        final SparseIntArray missingNodeIndexes = new SparseIntArray(ids.length);
+
+        for (int i = 0; i < ids.length; i++) {
+            if (mViewNodeLookupTable != null) {
+                int lookupTableIndex = mViewNodeLookupTable.indexOfKey(ids[i]);
+
+                if (lookupTableIndex >= 0) {
+                    foundNodes[i] = mViewNodeLookupTable.valueAt(lookupTableIndex);
+                } else {
+                    missingNodeIndexes.put(i, /* ignored */ 0);
+                }
+            } else {
+                missingNodeIndexes.put(i, /* ignored */ 0);
+            }
+        }
+
+        final int numWindowNodes = mStructure.getWindowNodeCount();
+        for (int i = 0; i < numWindowNodes; i++) {
+            nodesToProcess.add(mStructure.getWindowNodeAt(i).getRootViewNode());
+        }
+
+        while (missingNodeIndexes.size() > 0 && !nodesToProcess.isEmpty()) {
+            final ViewNode node = nodesToProcess.removeFirst();
+
+            for (int i = 0; i < missingNodeIndexes.size(); i++) {
+                final int index = missingNodeIndexes.keyAt(i);
+                final AutofillId id = ids[index];
+
+                if (id.equals(node.getAutofillId())) {
+                    foundNodes[index] = node;
+
+                    if (mViewNodeLookupTable == null) {
+                        mViewNodeLookupTable = new ArrayMap<>(ids.length);
+                    }
+
+                    mViewNodeLookupTable.put(id, node);
+
+                    missingNodeIndexes.removeAt(i);
+                    break;
+                }
+            }
+
+            for (int i = 0; i < node.getChildCount(); i++) {
+                nodesToProcess.addLast(node.getChildAt(i));
+            }
+        }
+
+        // Remember which ids could not be resolved to not search for them again the next time
+        for (int i = 0; i < missingNodeIndexes.size(); i++) {
+            if (mViewNodeLookupTable == null) {
+                mViewNodeLookupTable = new ArrayMap<>(missingNodeIndexes.size());
+            }
+
+            mViewNodeLookupTable.put(ids[missingNodeIndexes.keyAt(i)], null);
+        }
+
+        return foundNodes;
+!!!7974533.java!!!	findViewNodeByAutofillId(inout id : AutofillId) : AssistStructure::ViewNode
+        final LinkedList<ViewNode> nodesToProcess = new LinkedList<>();
+        final int numWindowNodes = mStructure.getWindowNodeCount();
+        for (int i = 0; i < numWindowNodes; i++) {
+            nodesToProcess.add(mStructure.getWindowNodeAt(i).getRootViewNode());
+        }
+        while (!nodesToProcess.isEmpty()) {
+            final ViewNode node = nodesToProcess.removeFirst();
+            if (id.equals(node.getAutofillId())) {
+                return node;
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                nodesToProcess.addLast(node.getChildAt(i));
+            }
+        }
+
+        return null;

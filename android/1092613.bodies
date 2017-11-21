@@ -1,0 +1,123 @@
+class QueuedWork
+!!!5662725.java!!!	getHandler() : Handler
+        synchronized (sLock) {
+            if (sHandler == null) {
+                HandlerThread handlerThread = new HandlerThread("queued-work-looper",
+                        Process.THREAD_PRIORITY_FOREGROUND);
+                handlerThread.start();
+
+                sHandler = new QueuedWorkHandler(handlerThread.getLooper());
+            }
+            return sHandler;
+        }
+!!!5662853.java!!!	addFinisher(inout finisher : Runnable) : void
+        synchronized (sLock) {
+            sFinishers.add(finisher);
+        }
+!!!5662981.java!!!	removeFinisher(inout finisher : Runnable) : void
+        synchronized (sLock) {
+            sFinishers.remove(finisher);
+        }
+!!!5663109.java!!!	waitToFinish() : void
+        long startTime = System.currentTimeMillis();
+        boolean hadMessages = false;
+
+        Handler handler = getHandler();
+
+        synchronized (sLock) {
+            if (handler.hasMessages(QueuedWorkHandler.MSG_RUN)) {
+                // Delayed work will be processed at processPendingWork() below
+                handler.removeMessages(QueuedWorkHandler.MSG_RUN);
+
+                if (DEBUG) {
+                    hadMessages = true;
+                    Log.d(LOG_TAG, "waiting");
+                }
+            }
+
+            // We should not delay any work as this might delay the finishers
+            sCanDelay = false;
+        }
+
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
+        try {
+            processPendingWork();
+        } finally {
+            StrictMode.setThreadPolicy(oldPolicy);
+        }
+
+        try {
+            while (true) {
+                Runnable finisher;
+
+                synchronized (sLock) {
+                    finisher = sFinishers.poll();
+                }
+
+                if (finisher == null) {
+                    break;
+                }
+
+                finisher.run();
+            }
+        } finally {
+            sCanDelay = true;
+        }
+
+        synchronized (sLock) {
+            long waitTime = System.currentTimeMillis() - startTime;
+
+            if (waitTime > 0 || hadMessages) {
+                mWaitTimes.add(Long.valueOf(waitTime).intValue());
+                mNumWaits++;
+
+                if (DEBUG || mNumWaits % 1024 == 0 || waitTime > MAX_WAIT_TIME_MILLIS) {
+                    mWaitTimes.log(LOG_TAG, "waited: ");
+                }
+            }
+        }
+!!!5663237.java!!!	queue(inout work : Runnable, inout shouldDelay : boolean) : void
+        Handler handler = getHandler();
+
+        synchronized (sLock) {
+            sWork.add(work);
+
+            if (shouldDelay && sCanDelay) {
+                handler.sendEmptyMessageDelayed(QueuedWorkHandler.MSG_RUN, DELAY);
+            } else {
+                handler.sendEmptyMessage(QueuedWorkHandler.MSG_RUN);
+            }
+        }
+!!!5663365.java!!!	hasPendingWork() : boolean
+        synchronized (sLock) {
+            return !sWork.isEmpty();
+        }
+!!!5663493.java!!!	processPendingWork() : void
+        long startTime = 0;
+
+        if (DEBUG) {
+            startTime = System.currentTimeMillis();
+        }
+
+        synchronized (sProcessingWork) {
+            LinkedList<Runnable> work;
+
+            synchronized (sLock) {
+                work = (LinkedList<Runnable>) sWork.clone();
+                sWork.clear();
+
+                // Remove all msg-s as all work will be processed now
+                getHandler().removeMessages(QueuedWorkHandler.MSG_RUN);
+            }
+
+            if (work.size() > 0) {
+                for (Runnable w : work) {
+                    w.run();
+                }
+
+                if (DEBUG) {
+                    Log.d(LOG_TAG, "processing " + work.size() + " items took " +
+                            +(System.currentTimeMillis() - startTime) + " ms");
+                }
+            }
+        }

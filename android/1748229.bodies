@@ -1,0 +1,364 @@
+class ShortcutUser
+!!!12302725.java!!!	ShortcutUser(inout service : ShortcutService, in userId : int)
+        mService = service;
+        mUserId = userId;
+!!!12302853.java!!!	getUserId() : int
+        return mUserId;
+!!!12302981.java!!!	getLastAppScanTime() : long
+        return mLastAppScanTime;
+!!!12303109.java!!!	setLastAppScanTime(in lastAppScanTime : long) : void
+        mLastAppScanTime = lastAppScanTime;
+!!!12303237.java!!!	getLastAppScanOsFingerprint() : String
+        return mLastAppScanOsFingerprint;
+!!!12303365.java!!!	setLastAppScanOsFingerprint(in lastAppScanOsFingerprint : String) : void
+        mLastAppScanOsFingerprint = lastAppScanOsFingerprint;
+!!!12303493.java!!!	getAllPackagesForTest() : ArrayMap
+        return mPackages;
+!!!12303621.java!!!	hasPackage(in packageName : String) : boolean
+        return mPackages.containsKey(packageName);
+!!!12303749.java!!!	addPackage(inout p : ShortcutPackage) : void
+        p.replaceUser(this);
+        mPackages.put(p.getPackageName(), p);
+!!!12303877.java!!!	removePackage(in packageName : String) : ShortcutPackage
+        final ShortcutPackage removed = mPackages.remove(packageName);
+
+        mService.cleanupBitmapsForPackage(mUserId, packageName);
+
+        return removed;
+!!!12304005.java!!!	getAllLaunchersForTest() : ArrayMap
+        return mLaunchers;
+!!!12304133.java!!!	addLauncher(inout launcher : ShortcutLauncher) : void
+        launcher.replaceUser(this);
+        mLaunchers.put(PackageWithUser.of(launcher.getPackageUserId(),
+                launcher.getPackageName()), launcher);
+!!!12304261.java!!!	removeLauncher(in packageUserId : int, in packageName : String) : ShortcutLauncher
+        return mLaunchers.remove(PackageWithUser.of(packageUserId, packageName));
+!!!12304389.java!!!	getPackageShortcutsIfExists(in packageName : String) : ShortcutPackage
+        final ShortcutPackage ret = mPackages.get(packageName);
+        if (ret != null) {
+            ret.attemptToRestoreIfNeededAndSave();
+        }
+        return ret;
+!!!12304517.java!!!	getPackageShortcuts(in packageName : String) : ShortcutPackage
+        ShortcutPackage ret = getPackageShortcutsIfExists(packageName);
+        if (ret == null) {
+            ret = new ShortcutPackage(this, mUserId, packageName);
+            mPackages.put(packageName, ret);
+        }
+        return ret;
+!!!12304645.java!!!	getLauncherShortcuts(in packageName : String, in launcherUserId : int) : ShortcutLauncher
+        final PackageWithUser key = PackageWithUser.of(launcherUserId, packageName);
+        ShortcutLauncher ret = mLaunchers.get(key);
+        if (ret == null) {
+            ret = new ShortcutLauncher(this, mUserId, packageName, launcherUserId);
+            mLaunchers.put(key, ret);
+        } else {
+            ret.attemptToRestoreIfNeededAndSave();
+        }
+        return ret;
+!!!12304773.java!!!	forAllPackages(inout callback : Consumer<? super ShortcutPackage>) : void
+        final int size = mPackages.size();
+        for (int i = 0; i < size; i++) {
+            callback.accept(mPackages.valueAt(i));
+        }
+!!!12304901.java!!!	forAllLaunchers(inout callback : Consumer<? super ShortcutLauncher>) : void
+        final int size = mLaunchers.size();
+        for (int i = 0; i < size; i++) {
+            callback.accept(mLaunchers.valueAt(i));
+        }
+!!!12305029.java!!!	forAllPackageItems(inout callback : Consumer<? super ShortcutPackageItem>) : void
+        forAllLaunchers(callback);
+        forAllPackages(callback);
+!!!12305157.java!!!	forPackageItem(in packageName : String, in packageUserId : int, inout callback : Consumer<ShortcutPackageItem>) : void
+        forAllPackageItems(spi -> {
+            if ((spi.getPackageUserId() == packageUserId)
+                    && spi.getPackageName().equals(packageName)) {
+                callback.accept(spi);
+            }
+        });
+!!!12305285.java!!!	onCalledByPublisher(in packageName : String) : void
+        detectLocaleChange();
+        rescanPackageIfNeeded(packageName, /*forceRescan=*/ false);
+!!!12305413.java!!!	getKnownLocales() : String
+        if (TextUtils.isEmpty(mKnownLocales)) {
+            mKnownLocales = mService.injectGetLocaleTagsForUser(mUserId);
+            mService.scheduleSaveUser(mUserId);
+        }
+        return mKnownLocales;
+!!!12305541.java!!!	detectLocaleChange() : void
+        final String currentLocales = mService.injectGetLocaleTagsForUser(mUserId);
+        if (getKnownLocales().equals(currentLocales)) {
+            return;
+        }
+        if (ShortcutService.DEBUG) {
+            Slog.d(TAG, "Locale changed from " + currentLocales + " to " + mKnownLocales
+                    + " for user " + mUserId);
+        }
+        mKnownLocales = currentLocales;
+
+        forAllPackages(pkg -> {
+            pkg.resetRateLimiting();
+            pkg.resolveResourceStrings();
+        });
+
+        mService.scheduleSaveUser(mUserId);
+!!!12305669.java!!!	rescanPackageIfNeeded(in packageName : String, inout forceRescan : boolean) : void
+        final boolean isNewApp = !mPackages.containsKey(packageName);
+
+        final ShortcutPackage shortcutPackage = getPackageShortcuts(packageName);
+
+        if (!shortcutPackage.rescanPackageIfNeeded(isNewApp, forceRescan)) {
+            if (isNewApp) {
+                mPackages.remove(packageName);
+            }
+        }
+!!!12305797.java!!!	attemptToRestoreIfNeededAndSave(inout s : ShortcutService, in packageName : String, in packageUserId : int) : void
+        forPackageItem(packageName, packageUserId, spi -> {
+            spi.attemptToRestoreIfNeededAndSave();
+        });
+!!!12305925.java!!!	saveToXml(inout out : XmlSerializer, inout forBackup : boolean) : void
+        out.startTag(null, TAG_ROOT);
+
+        if (!forBackup) {
+            // Don't have to back them up.
+            ShortcutService.writeAttr(out, ATTR_KNOWN_LOCALES, mKnownLocales);
+            ShortcutService.writeAttr(out, ATTR_LAST_APP_SCAN_TIME,
+                    mLastAppScanTime);
+            ShortcutService.writeAttr(out, ATTR_LAST_APP_SCAN_OS_FINGERPRINT,
+                    mLastAppScanOsFingerprint);
+
+            ShortcutService.writeTagValue(out, TAG_LAUNCHER, mLastKnownLauncher);
+        }
+
+        // Can't use forEachPackageItem due to the checked exceptions.
+        {
+            final int size = mLaunchers.size();
+            for (int i = 0; i < size; i++) {
+                saveShortcutPackageItem(out, mLaunchers.valueAt(i), forBackup);
+            }
+        }
+        {
+            final int size = mPackages.size();
+            for (int i = 0; i < size; i++) {
+                saveShortcutPackageItem(out, mPackages.valueAt(i), forBackup);
+            }
+        }
+
+        out.endTag(null, TAG_ROOT);
+!!!12306053.java!!!	saveShortcutPackageItem(inout out : XmlSerializer, inout spi : ShortcutPackageItem, inout forBackup : boolean) : void
+        if (forBackup) {
+            if (!mService.shouldBackupApp(spi.getPackageName(), spi.getPackageUserId())) {
+                return; // Don't save.
+            }
+            if (spi.getPackageUserId() != spi.getOwnerUserId()) {
+                return; // Don't save cross-user information.
+            }
+        }
+        spi.saveToXml(out, forBackup);
+!!!12306181.java!!!	loadFromXml(inout s : ShortcutService, inout parser : XmlPullParser, in userId : int, inout fromBackup : boolean) : ShortcutUser
+        final ShortcutUser ret = new ShortcutUser(s, userId);
+
+        try {
+            ret.mKnownLocales = ShortcutService.parseStringAttribute(parser,
+                    ATTR_KNOWN_LOCALES);
+
+            // If lastAppScanTime is in the future, that means the clock went backwards.
+            // Just scan all apps again.
+            final long lastAppScanTime = ShortcutService.parseLongAttribute(parser,
+                    ATTR_LAST_APP_SCAN_TIME);
+            final long currentTime = s.injectCurrentTimeMillis();
+            ret.mLastAppScanTime = lastAppScanTime < currentTime ? lastAppScanTime : 0;
+            ret.mLastAppScanOsFingerprint = ShortcutService.parseStringAttribute(parser,
+                    ATTR_LAST_APP_SCAN_OS_FINGERPRINT);
+            final int outerDepth = parser.getDepth();
+            int type;
+            while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
+                    && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+                if (type != XmlPullParser.START_TAG) {
+                    continue;
+                }
+                final int depth = parser.getDepth();
+                final String tag = parser.getName();
+
+                if (depth == outerDepth + 1) {
+                    switch (tag) {
+                        case TAG_LAUNCHER: {
+                            ret.mLastKnownLauncher = ShortcutService.parseComponentNameAttribute(
+                                    parser, ATTR_VALUE);
+                            continue;
+                        }
+                        case ShortcutPackage.TAG_ROOT: {
+                            final ShortcutPackage shortcuts = ShortcutPackage.loadFromXml(
+                                    s, ret, parser, fromBackup);
+
+                            // Don't use addShortcut(), we don't need to save the icon.
+                            ret.mPackages.put(shortcuts.getPackageName(), shortcuts);
+                            continue;
+                        }
+
+                        case ShortcutLauncher.TAG_ROOT: {
+                            ret.addLauncher(
+                                    ShortcutLauncher.loadFromXml(parser, ret, userId, fromBackup));
+                            continue;
+                        }
+                    }
+                }
+                ShortcutService.warnForInvalidTag(depth, tag);
+            }
+        } catch (RuntimeException e) {
+            throw new ShortcutService.InvalidFileFormatException(
+                    "Unable to parse file", e);
+        }
+        return ret;
+!!!12306309.java!!!	getLastKnownLauncher() : ComponentName
+        return mLastKnownLauncher;
+!!!12306437.java!!!	setLauncher(inout launcherComponent : ComponentName) : void
+        setLauncher(launcherComponent, /* allowPurgeLastKnown */ false);
+!!!12306565.java!!!	clearLauncher() : void
+        setLauncher(null);
+!!!12306693.java!!!	forceClearLauncher() : void
+        setLauncher(null, /* allowPurgeLastKnown */ true);
+!!!12306821.java!!!	setLauncher(inout launcherComponent : ComponentName, inout allowPurgeLastKnown : boolean) : void
+        mCachedLauncher = launcherComponent; // Always update the in-memory cache.
+
+        if (Objects.equal(mLastKnownLauncher, launcherComponent)) {
+            return;
+        }
+        if (!allowPurgeLastKnown && launcherComponent == null) {
+            return;
+        }
+        mLastKnownLauncher = launcherComponent;
+        mService.scheduleSaveUser(mUserId);
+!!!12306949.java!!!	getCachedLauncher() : ComponentName
+        return mCachedLauncher;
+!!!12307077.java!!!	resetThrottling() : void
+        for (int i = mPackages.size() - 1; i >= 0; i--) {
+            mPackages.valueAt(i).resetThrottling();
+        }
+!!!12307205.java!!!	mergeRestoredFile(inout restored : ShortcutUser) : void
+        final ShortcutService s = mService;
+        // Note, a restore happens only at the end of setup wizard.  At this point, no apps are
+        // installed from Play Store yet, but it's still possible that system apps have already
+        // published dynamic shortcuts, since some apps do so on BOOT_COMPLETED.
+        // When such a system app has allowbackup=true, then we go ahead and replace all existing
+        // shortcuts with the restored shortcuts.  (Then we'll re-publish manifest shortcuts later
+        // in the call site.)
+        // When such a system app has allowbackup=false, then we'll keep the shortcuts that have
+        // already been published.  So we selectively add restored ShortcutPackages here.
+        //
+        // The same logic applies to launchers, but since launchers shouldn't pin shortcuts
+        // without users interaction it's really not a big deal, so we just clear existing
+        // ShortcutLauncher instances in mLaunchers and add all the restored ones here.
+
+        mLaunchers.clear();
+        restored.forAllLaunchers(sl -> {
+            // If the app is already installed and allowbackup = false, then ignore the restored
+            // data.
+            if (s.isPackageInstalled(sl.getPackageName(), getUserId())
+                    && !s.shouldBackupApp(sl.getPackageName(), getUserId())) {
+                return;
+            }
+            addLauncher(sl);
+        });
+        restored.forAllPackages(sp -> {
+            // If the app is already installed and allowbackup = false, then ignore the restored
+            // data.
+            if (s.isPackageInstalled(sp.getPackageName(), getUserId())
+                    && !s.shouldBackupApp(sp.getPackageName(), getUserId())) {
+                return;
+            }
+
+            final ShortcutPackage previous = getPackageShortcutsIfExists(sp.getPackageName());
+            if (previous != null && previous.hasNonManifestShortcuts()) {
+                Log.w(TAG, "Shortcuts for package " + sp.getPackageName() + " are being restored."
+                        + " Existing non-manifeset shortcuts will be overwritten.");
+            }
+            addPackage(sp);
+        });
+        // Empty the launchers and packages in restored to avoid accidentally using them.
+        restored.mLaunchers.clear();
+        restored.mPackages.clear();
+!!!12307333.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.print(prefix);
+        pw.print("User: ");
+        pw.print(mUserId);
+        pw.print("  Known locales: ");
+        pw.print(mKnownLocales);
+        pw.print("  Last app scan: [");
+        pw.print(mLastAppScanTime);
+        pw.print("] ");
+        pw.print(ShortcutService.formatTime(mLastAppScanTime));
+        pw.print("  Last app scan FP: ");
+        pw.print(mLastAppScanOsFingerprint);
+        pw.println();
+
+        prefix += prefix + "  ";
+
+        pw.print(prefix);
+        pw.print("Cached launcher: ");
+        pw.print(mCachedLauncher);
+        pw.println();
+
+        pw.print(prefix);
+        pw.print("Last known launcher: ");
+        pw.print(mLastKnownLauncher);
+        pw.println();
+
+        for (int i = 0; i < mLaunchers.size(); i++) {
+            mLaunchers.valueAt(i).dump(pw, prefix);
+        }
+
+        for (int i = 0; i < mPackages.size(); i++) {
+            mPackages.valueAt(i).dump(pw, prefix);
+        }
+
+        pw.println();
+        pw.print(prefix);
+        pw.println("Bitmap directories: ");
+        dumpDirectorySize(pw, prefix + "  ", mService.getUserBitmapFilePath(mUserId));
+!!!12307461.java!!!	dumpDirectorySize(inout pw : PrintWriter, in prefix : String, inout path : File) : void
+        int numFiles = 0;
+        long size = 0;
+        final File[] children = path.listFiles();
+        if (children != null) {
+            for (File child : path.listFiles()) {
+                if (child.isFile()) {
+                    numFiles++;
+                    size += child.length();
+                } else if (child.isDirectory()) {
+                    dumpDirectorySize(pw, prefix + "  ", child);
+                }
+            }
+        }
+        pw.print(prefix);
+        pw.print("Path: ");
+        pw.print(path.getName());
+        pw.print("/ has ");
+        pw.print(numFiles);
+        pw.print(" files, size=");
+        pw.print(size);
+        pw.print(" (");
+        pw.print(Formatter.formatFileSize(mService.mContext, size));
+        pw.println(")");
+!!!12307589.java!!!	dumpCheckin(inout clear : boolean) : JSONObject
+        final JSONObject result = new JSONObject();
+
+        result.put(KEY_USER_ID, mUserId);
+
+        {
+            final JSONArray launchers = new JSONArray();
+            for (int i = 0; i < mLaunchers.size(); i++) {
+                launchers.put(mLaunchers.valueAt(i).dumpCheckin(clear));
+            }
+            result.put(KEY_LAUNCHERS, launchers);
+        }
+
+        {
+            final JSONArray packages = new JSONArray();
+            for (int i = 0; i < mPackages.size(); i++) {
+                packages.put(mPackages.valueAt(i).dumpCheckin(clear));
+            }
+            result.put(KEY_PACKAGES, packages);
+        }
+
+        return result;

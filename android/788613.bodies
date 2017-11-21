@@ -1,0 +1,345 @@
+class PipMenuActivity
+!!!3274629.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        // Set the flags to allow us to watch for outside touches and also hide the menu and start
+        // manipulating the PIP in the same touch gesture
+        mViewConfig = ViewConfiguration.get(this);
+        getWindow().addFlags(LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH | LayoutParams.FLAG_SLIPPERY);
+
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.pip_menu_activity);
+
+        mBackgroundDrawable = new ColorDrawable(Color.BLACK);
+        mBackgroundDrawable.setAlpha(0);
+        mViewRoot = findViewById(R.id.background);
+        mViewRoot.setBackground(mBackgroundDrawable);
+        mMenuContainer = findViewById(R.id.menu_container);
+        mMenuContainer.setAlpha(0);
+        mMenuContainer.setOnClickListener((v) -> {
+            if (mMenuState == MENU_STATE_CLOSE) {
+                showPipMenu();
+            } else {
+                expandPip();
+            }
+        });
+        mDismissButton = findViewById(R.id.dismiss);
+        mDismissButton.setAlpha(0);
+        mDismissButton.setOnClickListener((v) -> {
+            dismissPip();
+        });
+        mActionsGroup = findViewById(R.id.actions_group);
+        mBetweenActionPaddingLand = getResources().getDimensionPixelSize(
+                R.dimen.pip_between_action_padding_land);
+        mExpandButton = findViewById(R.id.expand_button);
+
+        updateFromIntent(getIntent());
+        setTitle(R.string.pip_menu_title);
+        setDisablePreviewScreenshots(true);
+!!!3274757.java!!!	onNewIntent(inout intent : Intent) : void
+        super.onNewIntent(intent);
+        updateFromIntent(intent);
+!!!3274885.java!!!	onUserInteraction() : void
+        if (mAllowMenuTimeout) {
+            repostDelayedFinish(POST_INTERACTION_DISMISS_DELAY);
+        }
+!!!3275013.java!!!	onUserLeaveHint() : void
+        super.onUserLeaveHint();
+
+        // If another task is starting on top of the menu, then hide and finish it so that it can be
+        // recreated on the top next time it starts
+        hideMenu();
+!!!3275141.java!!!	onStop() : void
+        super.onStop();
+
+        cancelDelayedFinish();
+        EventBus.getDefault().unregister(this);
+!!!3275269.java!!!	onDestroy() : void
+        super.onDestroy();
+
+        // Fallback, if we are destroyed for any other reason (like when the task is being reset),
+        // also reset the callback.
+        notifyActivityCallback(null);
+!!!3275397.java!!!	onPictureInPictureModeChanged(inout isInPictureInPictureMode : boolean) : void
+        if (!isInPictureInPictureMode) {
+            finish();
+        }
+!!!3275525.java!!!	dispatchTouchEvent(inout ev : MotionEvent) : boolean
+        if (!mAllowTouches) {
+            return super.dispatchTouchEvent(ev);
+        }
+
+        // On the first action outside the window, hide the menu
+        switch (ev.getAction()) {
+            case MotionEvent.ACTION_OUTSIDE:
+                hideMenu();
+                break;
+            case MotionEvent.ACTION_DOWN:
+                mDownPosition.set(ev.getX(), ev.getY());
+                mDownDelta.set(0f, 0f);
+                break;
+            case MotionEvent.ACTION_MOVE:
+                mDownDelta.set(ev.getX() - mDownPosition.x, ev.getY() - mDownPosition.y);
+                if (mDownDelta.length() > mViewConfig.getScaledTouchSlop()
+                        && mMenuState != MENU_STATE_NONE) {
+                    // Restore the input consumer and let that drive the movement of this menu
+                    notifyRegisterInputConsumer();
+                    cancelDelayedFinish();
+                }
+                break;
+        }
+        return super.dispatchTouchEvent(ev);
+!!!3275653.java!!!	finish() : void
+        notifyActivityCallback(null);
+        super.finish();
+        // Hide without an animation (the menu should already be invisible at this point)
+        overridePendingTransition(0, 0);
+!!!3275781.java!!!	setTaskDescription(inout taskDescription : ActivityManager.TaskDescription) : void
+        // Do nothing
+!!!3275909.java!!!	onBusEvent(inout event : HidePipMenuEvent) : void
+        if (mMenuState != MENU_STATE_NONE) {
+            // If the menu is visible in either the closed or full state, then hide the menu and
+            // trigger the animation trigger afterwards
+            event.getAnimationTrigger().increment();
+            hideMenu(() -> {
+                mHandler.post(() -> {
+                    event.getAnimationTrigger().decrement();
+                });
+            }, true /* notifyMenuVisibility */);
+        }
+!!!3276037.java!!!	showMenu(in menuState : int, inout stackBounds : Rect, inout movementBounds : Rect, inout allowMenuTimeout : boolean) : void
+        mAllowMenuTimeout = allowMenuTimeout;
+        if (mMenuState != menuState) {
+            boolean deferTouchesUntilAnimationEnds = (mMenuState == MENU_STATE_FULL) ||
+                    (menuState == MENU_STATE_FULL);
+            mAllowTouches = !deferTouchesUntilAnimationEnds;
+            cancelDelayedFinish();
+            updateActionViews(stackBounds);
+            if (mMenuContainerAnimator != null) {
+                mMenuContainerAnimator.cancel();
+            }
+            notifyMenuStateChange(menuState);
+            mMenuContainerAnimator = new AnimatorSet();
+            ObjectAnimator menuAnim = ObjectAnimator.ofFloat(mMenuContainer, View.ALPHA,
+                    mMenuContainer.getAlpha(), 1f);
+            menuAnim.addUpdateListener(mMenuBgUpdateListener);
+            ObjectAnimator dismissAnim = ObjectAnimator.ofFloat(mDismissButton, View.ALPHA,
+                    mDismissButton.getAlpha(), 1f);
+            if (menuState == MENU_STATE_FULL) {
+                mMenuContainerAnimator.playTogether(menuAnim, dismissAnim);
+            } else {
+                mMenuContainerAnimator.play(dismissAnim);
+            }
+            mMenuContainerAnimator.setInterpolator(Interpolators.ALPHA_IN);
+            mMenuContainerAnimator.setDuration(MENU_FADE_DURATION);
+            if (allowMenuTimeout) {
+                mMenuContainerAnimator.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        repostDelayedFinish(INITIAL_DISMISS_DELAY);
+                    }
+                });
+            }
+            mMenuContainerAnimator.start();
+        } else {
+            // If we are already visible, then just start the delayed dismiss and unregister any
+            // existing input consumers from the previous drag
+            if (allowMenuTimeout) {
+                repostDelayedFinish(POST_INTERACTION_DISMISS_DELAY);
+            }
+            notifyUnregisterInputConsumer();
+        }
+!!!3276165.java!!!	hideMenu() : void
+        hideMenu(null /* animationFinishedRunnable */, true /* notifyMenuVisibility */);
+!!!3276293.java!!!	hideMenu(in animationFinishedRunnable : Runnable, inout notifyMenuVisibility : boolean) : void
+        if (mMenuState != MENU_STATE_NONE) {
+            cancelDelayedFinish();
+            if (notifyMenuVisibility) {
+                notifyMenuStateChange(MENU_STATE_NONE);
+            }
+            mMenuContainerAnimator = new AnimatorSet();
+            ObjectAnimator menuAnim = ObjectAnimator.ofFloat(mMenuContainer, View.ALPHA,
+                    mMenuContainer.getAlpha(), 0f);
+            menuAnim.addUpdateListener(mMenuBgUpdateListener);
+            ObjectAnimator dismissAnim = ObjectAnimator.ofFloat(mDismissButton, View.ALPHA,
+                    mDismissButton.getAlpha(), 0f);
+            mMenuContainerAnimator.playTogether(menuAnim, dismissAnim);
+            mMenuContainerAnimator.setInterpolator(Interpolators.ALPHA_OUT);
+            mMenuContainerAnimator.setDuration(MENU_FADE_DURATION);
+            mMenuContainerAnimator.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    if (animationFinishedRunnable != null) {
+                        animationFinishedRunnable.run();
+                    }
+                    finish();
+                }
+            });
+            mMenuContainerAnimator.start();
+        } else {
+            // If the menu is not visible, just finish now
+            finish();
+        }
+!!!3276421.java!!!	updateFromIntent(inout intent : Intent) : void
+        mToControllerMessenger = intent.getParcelableExtra(EXTRA_CONTROLLER_MESSENGER);
+        notifyActivityCallback(mMessenger);
+
+        // Register for HidePipMenuEvents once we notify the controller of this activity
+        EventBus.getDefault().register(this);
+
+        ParceledListSlice actions = intent.getParcelableExtra(EXTRA_ACTIONS);
+        if (actions != null) {
+            mActions.clear();
+            mActions.addAll(actions.getList());
+        }
+
+        final int menuState = intent.getIntExtra(EXTRA_MENU_STATE, MENU_STATE_NONE);
+        if (menuState != MENU_STATE_NONE) {
+            Rect stackBounds = intent.getParcelableExtra(EXTRA_STACK_BOUNDS);
+            Rect movementBounds = intent.getParcelableExtra(EXTRA_MOVEMENT_BOUNDS);
+            boolean allowMenuTimeout = intent.getBooleanExtra(EXTRA_ALLOW_TIMEOUT, true);
+            showMenu(menuState, stackBounds, movementBounds, allowMenuTimeout);
+        }
+!!!3276549.java!!!	setActions(inout stackBounds : Rect, inout actions : List<RemoteAction>) : void
+        mActions.clear();
+        mActions.addAll(actions);
+        updateActionViews(stackBounds);
+!!!3276677.java!!!	updateActionViews(inout stackBounds : Rect) : void
+        ViewGroup expandContainer = findViewById(R.id.expand_container);
+        ViewGroup actionsContainer = findViewById(R.id.actions_container);
+        actionsContainer.setOnTouchListener((v, ev) -> {
+            // Do nothing, prevent click through to parent
+            return true;
+        });
+
+        if (mActions.isEmpty() || mMenuState == MENU_STATE_CLOSE) {
+            actionsContainer.setVisibility(View.INVISIBLE);
+        } else {
+            actionsContainer.setVisibility(View.VISIBLE);
+            if (mActionsGroup != null) {
+                // Ensure we have as many buttons as actions
+                final LayoutInflater inflater = LayoutInflater.from(this);
+                while (mActionsGroup.getChildCount() < mActions.size()) {
+                    final ImageView actionView = (ImageView) inflater.inflate(
+                            R.layout.pip_menu_action, mActionsGroup, false);
+                    mActionsGroup.addView(actionView);
+                }
+
+                // Update the visibility of all views
+                for (int i = 0; i < mActionsGroup.getChildCount(); i++) {
+                    mActionsGroup.getChildAt(i).setVisibility(i < mActions.size()
+                            ? View.VISIBLE
+                            : View.GONE);
+                }
+
+                // Recreate the layout
+                final boolean isLandscapePip = stackBounds != null &&
+                        (stackBounds.width() > stackBounds.height());
+                for (int i = 0; i < mActions.size(); i++) {
+                    final RemoteAction action = mActions.get(i);
+                    final ImageView actionView = (ImageView) mActionsGroup.getChildAt(i);
+
+                    // TODO: Check if the action drawable has changed before we reload it
+                    action.getIcon().loadDrawableAsync(this, d -> {
+                        d.setTint(Color.WHITE);
+                        actionView.setImageDrawable(d);
+                    }, mHandler);
+                    actionView.setContentDescription(action.getContentDescription());
+                    if (action.isEnabled()) {
+                        actionView.setOnClickListener(v -> {
+                            try {
+                                action.getActionIntent().send();
+                            } catch (CanceledException e) {
+                                Log.w(TAG, "Failed to send action", e);
+                            }
+                        });
+                    }
+                    actionView.setEnabled(action.isEnabled());
+                    actionView.setAlpha(action.isEnabled() ? 1f : DISABLED_ACTION_ALPHA);
+
+                    // Update the margin between actions
+                    LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams)
+                            actionView.getLayoutParams();
+                    lp.leftMargin = (isLandscapePip && i > 0) ? mBetweenActionPaddingLand : 0;
+                }
+            }
+
+            // Update the expand container margin to adjust the center of the expand button to
+            // account for the existence of the action container
+            FrameLayout.LayoutParams expandedLp =
+                    (FrameLayout.LayoutParams) expandContainer.getLayoutParams();
+            expandedLp.topMargin = getResources().getDimensionPixelSize(
+                    R.dimen.pip_action_padding);
+            expandedLp.bottomMargin = getResources().getDimensionPixelSize(
+                    R.dimen.pip_expand_container_edge_margin);
+            expandContainer.requestLayout();
+        }
+!!!3276805.java!!!	updateDismissFraction(in fraction : float) : void
+        int alpha;
+        final float menuAlpha = 1 - fraction;
+        if (mMenuState == MENU_STATE_FULL) {
+            mMenuContainer.setAlpha(menuAlpha);
+            mDismissButton.setAlpha(menuAlpha);
+            final float interpolatedAlpha =
+                    MENU_BACKGROUND_ALPHA * menuAlpha + DISMISS_BACKGROUND_ALPHA * fraction;
+            alpha = (int) (interpolatedAlpha * 255);
+        } else {
+            if (mMenuState == MENU_STATE_CLOSE) {
+                mDismissButton.setAlpha(menuAlpha);
+            }
+            alpha = (int) (fraction * DISMISS_BACKGROUND_ALPHA * 255);
+        }
+        mBackgroundDrawable.setAlpha(alpha);
+!!!3276933.java!!!	notifyRegisterInputConsumer() : void
+        Message m = Message.obtain();
+        m.what = PipMenuActivityController.MESSAGE_REGISTER_INPUT_CONSUMER;
+        sendMessage(m, "Could not notify controller to register input consumer");
+!!!3277061.java!!!	notifyUnregisterInputConsumer() : void
+        Message m = Message.obtain();
+        m.what = PipMenuActivityController.MESSAGE_UNREGISTER_INPUT_CONSUMER;
+        sendMessage(m, "Could not notify controller to unregister input consumer");
+!!!3277189.java!!!	notifyMenuStateChange(in menuState : int) : void
+        mMenuState = menuState;
+        Message m = Message.obtain();
+        m.what = PipMenuActivityController.MESSAGE_MENU_STATE_CHANGED;
+        m.arg1 = menuState;
+        sendMessage(m, "Could not notify controller of PIP menu visibility");
+!!!3277317.java!!!	expandPip() : void
+        // Do not notify menu visibility when hiding the menu, the controller will do this when it
+        // handles the message
+        hideMenu(() -> {
+            sendEmptyMessage(PipMenuActivityController.MESSAGE_EXPAND_PIP,
+                    "Could not notify controller to expand PIP");
+        }, false /* notifyMenuVisibility */);
+!!!3277445.java!!!	minimizePip() : void
+        sendEmptyMessage(PipMenuActivityController.MESSAGE_MINIMIZE_PIP,
+                "Could not notify controller to minimize PIP");
+!!!3277573.java!!!	dismissPip() : void
+        // Do not notify menu visibility when hiding the menu, the controller will do this when it
+        // handles the message
+        hideMenu(() -> {
+            sendEmptyMessage(PipMenuActivityController.MESSAGE_DISMISS_PIP,
+                    "Could not notify controller to dismiss PIP");
+        }, false /* notifyMenuVisibility */);
+!!!3277701.java!!!	showPipMenu() : void
+        Message m = Message.obtain();
+        m.what = PipMenuActivityController.MESSAGE_SHOW_MENU;
+        sendMessage(m, "Could not notify controller to show PIP menu");
+!!!3277829.java!!!	notifyActivityCallback(inout callback : Messenger) : void
+        Message m = Message.obtain();
+        m.what = PipMenuActivityController.MESSAGE_UPDATE_ACTIVITY_CALLBACK;
+        m.replyTo = callback;
+        sendMessage(m, "Could not notify controller of activity finished");
+!!!3277957.java!!!	sendEmptyMessage(in what : int, in errorMsg : String) : void
+        Message m = Message.obtain();
+        m.what = what;
+        sendMessage(m, errorMsg);
+!!!3278085.java!!!	sendMessage(inout m : Message, in errorMsg : String) : void
+        try {
+            mToControllerMessenger.send(m);
+        } catch (RemoteException e) {
+            Log.e(TAG, errorMsg, e);
+        }
+!!!3278213.java!!!	cancelDelayedFinish() : void
+        mHandler.removeCallbacks(mFinishRunnable);
+!!!3278341.java!!!	repostDelayedFinish(in delay : long) : void
+        mHandler.removeCallbacks(mFinishRunnable);
+        mHandler.postDelayed(mFinishRunnable, delay);

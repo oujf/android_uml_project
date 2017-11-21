@@ -1,0 +1,50 @@
+class FilteringCacheUpdatingConsumer
+!!!10797445.java!!!	create(inout context : Context, inout scoredNetworkList : List<ScoredNetwork>, in networkType : int) : NetworkScoreService::FilteringCacheUpdatingConsumer
+            return new FilteringCacheUpdatingConsumer(context, scoredNetworkList, networkType,
+                    null, null);
+!!!10797573.java!!!	FilteringCacheUpdatingConsumer(inout context : Context, inout scoredNetworkList : List<ScoredNetwork>, in networkType : int, inout currentNetworkFilter : UnaryOperator<List<ScoredNetwork>>, inout scanResultsFilter : UnaryOperator<List<ScoredNetwork>>)
+            mContext = context;
+            mScoredNetworkList = scoredNetworkList;
+            mNetworkType = networkType;
+            mCurrentNetworkFilter = currentNetworkFilter;
+            mScanResultsFilter = scanResultsFilter;
+!!!10797701.java!!!	accept(inout networkScoreCache : INetworkScoreCache, inout cookie : Object) : void
+            int filterType = NetworkScoreManager.CACHE_FILTER_NONE;
+            if (cookie instanceof Integer) {
+                filterType = (Integer) cookie;
+            }
+
+            try {
+                final List<ScoredNetwork> filteredNetworkList =
+                        filterScores(mScoredNetworkList, filterType);
+                if (!filteredNetworkList.isEmpty()) {
+                    networkScoreCache.updateScores(filteredNetworkList);
+                }
+            } catch (RemoteException e) {
+                if (VERBOSE) {
+                    Log.v(TAG, "Unable to update scores of type " + mNetworkType, e);
+                }
+            }
+!!!10797829.java!!!	filterScores(inout scoredNetworkList : List<ScoredNetwork>, in filterType : int) : ScoredNetwork
+            switch (filterType) {
+                case NetworkScoreManager.CACHE_FILTER_NONE:
+                    return scoredNetworkList;
+
+                case NetworkScoreManager.CACHE_FILTER_CURRENT_NETWORK:
+                    if (mCurrentNetworkFilter == null) {
+                        mCurrentNetworkFilter =
+                                new CurrentNetworkScoreCacheFilter(new WifiInfoSupplier(mContext));
+                    }
+                    return mCurrentNetworkFilter.apply(scoredNetworkList);
+
+                case NetworkScoreManager.CACHE_FILTER_SCAN_RESULTS:
+                    if (mScanResultsFilter == null) {
+                        mScanResultsFilter = new ScanResultsScoreCacheFilter(
+                                new ScanResultsSupplier(mContext));
+                    }
+                    return mScanResultsFilter.apply(scoredNetworkList);
+
+                default:
+                    Log.w(TAG, "Unknown filter type: " + filterType);
+                    return scoredNetworkList;
+            }

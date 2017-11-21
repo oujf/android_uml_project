@@ -1,0 +1,88 @@
+class IpPrefix
+!!!14673797.cpp!!!	getAddressAsIn6Addr(inout addr : in6_addr) : bool
+    if (isIpv6()) {
+        *addr = mUnion.mIn6Addr;
+        return true;
+    }
+    return false;
+!!!14673925.cpp!!!	getAddressAsInAddr(inout addr : in_addr) : bool
+    if (isIpv4()) {
+        *addr = mUnion.mInAddr;
+        return true;
+    }
+    return false;
+!!!14674053.cpp!!!	getAddressAsIn6Addr() : in6_addr
+    return mUnion.mIn6Addr;
+!!!14674181.cpp!!!	getAddressAsInAddr() : in_addr
+    return mUnion.mInAddr;
+!!!14674309.cpp!!!	isIpv6() : bool
+    return mIsIpv6;
+!!!14674437.cpp!!!	isIpv4() : bool
+    return !mIsIpv6;
+!!!14674565.cpp!!!	getPrefixLength() : int32_t
+    return mPrefixLength;
+!!!14674693.cpp!!!	setAddress(in addr : in6_addr) : void
+    mUnion.mIn6Addr = addr;
+    mIsIpv6 = true;
+!!!14674821.cpp!!!	setAddress(in addr : in_addr) : void
+    mUnion.mInAddr = addr;
+    mIsIpv6 = false;
+!!!14674949.cpp!!!	setPrefixLength(in prefix : int32_t) : void
+    mPrefixLength = prefix;
+!!!14675077.cpp!!!	operator ==(in lhs : IpPrefix, in rhs : IpPrefix) : bool
+    if (lhs.mIsIpv6 != rhs.mIsIpv6) {
+        return false;
+    }
+
+    if (lhs.mPrefixLength != rhs.mPrefixLength) {
+        return false;
+    }
+
+    if (lhs.mIsIpv6) {
+        return 0 == memcmp(lhs.mUnion.mIn6Addr.s6_addr, rhs.mUnion.mIn6Addr.s6_addr, sizeof(struct in6_addr));
+    }
+
+    return 0 == memcmp(&lhs.mUnion.mInAddr, &rhs.mUnion.mInAddr, sizeof(struct in_addr));
+!!!14675333.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    /*
+     * Keep implementation in sync with writeToParcel() in
+     * frameworks/base/core/java/android/net/IpPrefix.java.
+     */
+    std::vector<uint8_t> byte_vector;
+
+    if (mIsIpv6) {
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&mUnion.mIn6Addr);
+        byte_vector.insert(byte_vector.end(), bytes, bytes+sizeof(mUnion.mIn6Addr));
+    } else {
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&mUnion.mInAddr);
+        byte_vector.insert(byte_vector.end(), bytes, bytes+sizeof(mUnion.mIn6Addr));
+    }
+
+    RETURN_IF_FAILED(parcel->writeByteVector(byte_vector));
+    RETURN_IF_FAILED(parcel->writeInt32(static_cast<int32_t>(mPrefixLength)));
+
+    return NO_ERROR;
+!!!14675461.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    /*
+     * Keep implementation in sync with readFromParcel() in
+     * frameworks/base/core/java/android/net/IpPrefix.java.
+     */
+    std::vector<uint8_t> byte_vector;
+
+    RETURN_IF_FAILED(parcel->readByteVector(&byte_vector));
+    RETURN_IF_FAILED(parcel->readInt32(&mPrefixLength));
+
+    if (byte_vector.size() == 16) {
+        mIsIpv6 = true;
+        memcpy((void*)&mUnion.mIn6Addr, &byte_vector[0], sizeof(mUnion.mIn6Addr));
+
+    } else if (byte_vector.size() == 4) {
+        mIsIpv6 = false;
+        memcpy((void*)&mUnion.mInAddr, &byte_vector[0], sizeof(mUnion.mInAddr));
+
+    } else {
+        ALOGE("Failed at %s:%d (%s)", __FILE__, __LINE__, __func__); \
+        return BAD_VALUE;
+    }
+
+    return NO_ERROR;

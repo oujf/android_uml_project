@@ -1,0 +1,238 @@
+class StreamOutHalHidl
+!!!606725.cpp!!!	getFrameSize(inout size : size_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("getFrameSize", mStream->getFrameSize(), size);
+!!!606853.cpp!!!	getLatency(inout latency : uint32_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    if (mWriterClient == gettid() && mCommandMQ) {
+        return callWriterThread(
+                WriteCommand::GET_LATENCY, "getLatency", nullptr, 0,
+                [&](const WriteStatus& writeStatus) {
+                    *latency = writeStatus.reply.latencyMs;
+                });
+    } else {
+        return processReturn("getLatency", mStream->getLatency(), latency);
+    }
+!!!606981.cpp!!!	setVolume(in left : float, in right : float) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("setVolume", mStream->setVolume(left, right));
+!!!607109.cpp!!!	write(in buffer : void, in bytes : size_t, inout written : size_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    *written = 0;
+
+    if (bytes == 0 && !mDataMQ) {
+        // Can't determine the size for the MQ buffer. Wait for a non-empty write request.
+        ALOGW_IF(mCallback.unsafe_get(), "First call to async write with 0 bytes");
+        return OK;
+    }
+
+    status_t status;
+    if (!mDataMQ && (status = prepareForWriting(bytes)) != OK) {
+        return status;
+    }
+
+    return callWriterThread(
+            WriteCommand::WRITE, "write", static_cast<const uint8_t*>(buffer), bytes,
+            [&] (const WriteStatus& writeStatus) {
+                *written = writeStatus.reply.written;
+                // Diagnostics of the cause of b/35813113.
+                ALOGE_IF(*written > bytes,
+                        "hal reports more bytes written than asked for: %lld > %lld",
+                        (long long)*written, (long long)bytes);
+            });
+!!!607237.cpp!!!	getRenderPosition(inout dspFrames : uint32_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    Result retval;
+    Return<void> ret = mStream->getRenderPosition(
+            [&](Result r, uint32_t d) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *dspFrames = d;
+                }
+            });
+    return processReturn("getRenderPosition", ret, retval);
+!!!607365.cpp!!!	getNextWriteTimestamp(inout timestamp : int64_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    Result retval;
+    Return<void> ret = mStream->getNextWriteTimestamp(
+            [&](Result r, int64_t t) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *timestamp = t;
+                }
+            });
+    return processReturn("getRenderPosition", ret, retval);
+!!!607493.cpp!!!	setCallback(in callback : wp<StreamOutHalInterfaceCallback>) : status_t
+    if (mStream == 0) return NO_INIT;
+    status_t status = processReturn(
+            "setCallback", mStream->setCallback(new StreamOutCallback(this)));
+    if (status == OK) {
+        mCallback = callback;
+    }
+    return status;
+!!!607621.cpp!!!	supportsPauseAndResume(inout supportsPause : bool, inout supportsResume : bool) : status_t
+    if (mStream == 0) return NO_INIT;
+    Return<void> ret = mStream->supportsPauseAndResume(
+            [&](bool p, bool r) {
+                *supportsPause = p;
+                *supportsResume = r;
+            });
+    return processReturn("supportsPauseAndResume", ret);
+!!!607749.cpp!!!	pause() : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("pause", mStream->pause());
+!!!607877.cpp!!!	resume() : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("pause", mStream->resume());
+!!!608005.cpp!!!	supportsDrain(inout supportsDrain : bool) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("supportsDrain", mStream->supportsDrain(), supportsDrain);
+!!!608133.cpp!!!	drain(in earlyNotify : bool) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn(
+            "drain", mStream->drain(earlyNotify ? AudioDrain::EARLY_NOTIFY : AudioDrain::ALL));
+!!!608261.cpp!!!	flush() : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("pause", mStream->flush());
+!!!608389.cpp!!!	getPresentationPosition(inout frames : uint64_t, inout timestamp : timespec) : status_t
+    if (mStream == 0) return NO_INIT;
+    if (mWriterClient == gettid() && mCommandMQ) {
+        return callWriterThread(
+                WriteCommand::GET_PRESENTATION_POSITION, "getPresentationPosition", nullptr, 0,
+                [&](const WriteStatus& writeStatus) {
+                    *frames = writeStatus.reply.presentationPosition.frames;
+                    timestamp->tv_sec = writeStatus.reply.presentationPosition.timeStamp.tvSec;
+                    timestamp->tv_nsec = writeStatus.reply.presentationPosition.timeStamp.tvNSec;
+                });
+    } else {
+        Result retval;
+        Return<void> ret = mStream->getPresentationPosition(
+                [&](Result r, uint64_t hidlFrames, const TimeSpec& hidlTimeStamp) {
+                    retval = r;
+                    if (retval == Result::OK) {
+                        *frames = hidlFrames;
+                        timestamp->tv_sec = hidlTimeStamp.tvSec;
+                        timestamp->tv_nsec = hidlTimeStamp.tvNSec;
+                    }
+                });
+        return processReturn("getPresentationPosition", ret, retval);
+    }
+!!!608517.cpp!!!	onWriteReady() : void
+    sp<StreamOutHalInterfaceCallback> callback = mCallback.promote();
+    if (callback == 0) return;
+    ALOGV("asyncCallback onWriteReady");
+    callback->onWriteReady();
+!!!608645.cpp!!!	onDrainReady() : void
+    sp<StreamOutHalInterfaceCallback> callback = mCallback.promote();
+    if (callback == 0) return;
+    ALOGV("asyncCallback onDrainReady");
+    callback->onDrainReady();
+!!!608773.cpp!!!	onError() : void
+    sp<StreamOutHalInterfaceCallback> callback = mCallback.promote();
+    if (callback == 0) return;
+    ALOGV("asyncCallback onError");
+    callback->onError();
+!!!609029.cpp!!!	~StreamOutHalHidl()
+    if (mStream != 0) {
+        if (mCallback.unsafe_get()) {
+            processReturn("clearCallback", mStream->clearCallback());
+        }
+        processReturn("close", mStream->close());
+        mStream.clear();
+    }
+    mCallback.clear();
+    hardware::IPCThreadState::self()->flushCommands();
+    if (mEfGroup) {
+        EventFlag::deleteEventFlag(&mEfGroup);
+    }
+!!!609157.cpp!!!	callWriterThread(in cmd : WriteCommand, in cmdName : char, in data : uint8_t, in dataSize : size_t, in callback : StreamOutHalHidl::WriterCallback) : status_t
+    if (!mCommandMQ->write(&cmd)) {
+        ALOGE("command message queue write failed for \"%s\"", cmdName);
+        return -EAGAIN;
+    }
+    if (data != nullptr) {
+        size_t availableToWrite = mDataMQ->availableToWrite();
+        if (dataSize > availableToWrite) {
+            ALOGW("truncating write data from %lld to %lld due to insufficient data queue space",
+                    (long long)dataSize, (long long)availableToWrite);
+            dataSize = availableToWrite;
+        }
+        if (!mDataMQ->write(data, dataSize)) {
+            ALOGE("data message queue write failed for \"%s\"", cmdName);
+        }
+    }
+    mEfGroup->wake(static_cast<uint32_t>(MessageQueueFlagBits::NOT_EMPTY));
+
+    // TODO: Remove manual event flag handling once blocking MQ is implemented. b/33815422
+    uint32_t efState = 0;
+retry:
+    status_t ret = mEfGroup->wait(static_cast<uint32_t>(MessageQueueFlagBits::NOT_FULL), &efState);
+    if (efState & static_cast<uint32_t>(MessageQueueFlagBits::NOT_FULL)) {
+        WriteStatus writeStatus;
+        writeStatus.retval = Result::NOT_INITIALIZED;
+        if (!mStatusMQ->read(&writeStatus)) {
+            ALOGE("status message read failed for \"%s\"", cmdName);
+        }
+        if (writeStatus.retval == Result::OK) {
+            ret = OK;
+            callback(writeStatus);
+        } else {
+            ret = processReturn(cmdName, writeStatus.retval);
+        }
+        return ret;
+    }
+    if (ret == -EAGAIN || ret == -EINTR) {
+        // Spurious wakeup. This normally retries no more than once.
+        goto retry;
+    }
+    return ret;
+!!!609285.cpp!!!	prepareForWriting(in bufferSize : size_t) : status_t
+    std::unique_ptr<CommandMQ> tempCommandMQ;
+    std::unique_ptr<DataMQ> tempDataMQ;
+    std::unique_ptr<StatusMQ> tempStatusMQ;
+    Result retval;
+    pid_t halThreadPid, halThreadTid;
+    Return<void> ret = mStream->prepareForWriting(
+            1, bufferSize,
+            [&](Result r,
+                    const CommandMQ::Descriptor& commandMQ,
+                    const DataMQ::Descriptor& dataMQ,
+                    const StatusMQ::Descriptor& statusMQ,
+                    const ThreadInfo& halThreadInfo) {
+                retval = r;
+                if (retval == Result::OK) {
+                    tempCommandMQ.reset(new CommandMQ(commandMQ));
+                    tempDataMQ.reset(new DataMQ(dataMQ));
+                    tempStatusMQ.reset(new StatusMQ(statusMQ));
+                    if (tempDataMQ->isValid() && tempDataMQ->getEventFlagWord()) {
+                        EventFlag::createEventFlag(tempDataMQ->getEventFlagWord(), &mEfGroup);
+                    }
+                    halThreadPid = halThreadInfo.pid;
+                    halThreadTid = halThreadInfo.tid;
+                }
+            });
+    if (!ret.isOk() || retval != Result::OK) {
+        return processReturn("prepareForWriting", ret, retval);
+    }
+    if (!tempCommandMQ || !tempCommandMQ->isValid() ||
+            !tempDataMQ || !tempDataMQ->isValid() ||
+            !tempStatusMQ || !tempStatusMQ->isValid() ||
+            !mEfGroup) {
+        ALOGE_IF(!tempCommandMQ, "Failed to obtain command message queue for writing");
+        ALOGE_IF(tempCommandMQ && !tempCommandMQ->isValid(),
+                "Command message queue for writing is invalid");
+        ALOGE_IF(!tempDataMQ, "Failed to obtain data message queue for writing");
+        ALOGE_IF(tempDataMQ && !tempDataMQ->isValid(), "Data message queue for writing is invalid");
+        ALOGE_IF(!tempStatusMQ, "Failed to obtain status message queue for writing");
+        ALOGE_IF(tempStatusMQ && !tempStatusMQ->isValid(),
+                "Status message queue for writing is invalid");
+        ALOGE_IF(!mEfGroup, "Event flag creation for writing failed");
+        return NO_INIT;
+    }
+    requestHalThreadPriority(halThreadPid, halThreadTid);
+
+    mCommandMQ = std::move(tempCommandMQ);
+    mDataMQ = std::move(tempDataMQ);
+    mStatusMQ = std::move(tempStatusMQ);
+    mWriterClient = gettid();
+    return OK;

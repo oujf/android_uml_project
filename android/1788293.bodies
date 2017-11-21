@@ -1,0 +1,245 @@
+class PinnedStackController
+!!!12718213.java!!!	PinnedStackController(inout service : WindowManagerService, inout displayContent : DisplayContent)
+        mService = service;
+        mDisplayContent = displayContent;
+        mSnapAlgorithm = new PipSnapAlgorithm(service.mContext);
+        mDisplayInfo.copyFrom(mDisplayContent.getDisplayInfo());
+        reloadResources();
+        // Initialize the aspect ratio to the default aspect ratio.  Don't do this in reload
+        // resources as it would clobber mAspectRatio when entering PiP from fullscreen which
+        // triggers a configuration change and the resources to be reloaded.
+        mAspectRatio = mDefaultAspectRatio;
+!!!12718341.java!!!	onConfigurationChanged() : void
+        reloadResources();
+!!!12718469.java!!!	reloadResources() : void
+        final Resources res = mService.mContext.getResources();
+        mDefaultMinSize = res.getDimensionPixelSize(
+                com.android.internal.R.dimen.default_minimal_size_pip_resizable_task);
+        mCurrentMinSize = mDefaultMinSize;
+        mDefaultAspectRatio = res.getFloat(
+                com.android.internal.R.dimen.config_pictureInPictureDefaultAspectRatio);
+        final String screenEdgeInsetsDpString = res.getString(
+                com.android.internal.R.string.config_defaultPictureInPictureScreenEdgeInsets);
+        final Size screenEdgeInsetsDp = !screenEdgeInsetsDpString.isEmpty()
+                ? Size.parseSize(screenEdgeInsetsDpString)
+                : null;
+        mDefaultStackGravity = res.getInteger(
+                com.android.internal.R.integer.config_defaultPictureInPictureGravity);
+        mDisplayContent.getDisplay().getRealMetrics(mTmpMetrics);
+        mScreenEdgeInsets = screenEdgeInsetsDp == null ? new Point()
+                : new Point(dpToPx(screenEdgeInsetsDp.getWidth(), mTmpMetrics),
+                        dpToPx(screenEdgeInsetsDp.getHeight(), mTmpMetrics));
+        mMinAspectRatio = res.getFloat(
+                com.android.internal.R.dimen.config_pictureInPictureMinAspectRatio);
+        mMaxAspectRatio = res.getFloat(
+                com.android.internal.R.dimen.config_pictureInPictureMaxAspectRatio);
+!!!12718597.java!!!	registerPinnedStackListener(inout listener : IPinnedStackListener) : void
+        try {
+            listener.asBinder().linkToDeath(mPinnedStackListenerDeathHandler, 0);
+            listener.onListenerRegistered(mCallbacks);
+            mPinnedStackListener = listener;
+            notifyImeVisibilityChanged(mIsImeShowing, mImeHeight);
+            // The movement bounds notification needs to be sent before the minimized state, since
+            // SystemUI may use the bounds to retore the minimized position
+            notifyMovementBoundsChanged(false /* fromImeAdjustment */);
+            notifyActionsChanged(mActions);
+            notifyMinimizeChanged(mIsMinimized);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to register pinned stack listener", e);
+        }
+!!!12718725.java!!!	isValidPictureInPictureAspectRatio(in aspectRatio : float) : boolean
+        return Float.compare(mMinAspectRatio, aspectRatio) <= 0 &&
+                Float.compare(aspectRatio, mMaxAspectRatio) <= 0;
+!!!12718853.java!!!	transformBoundsToAspectRatio(inout stackBounds : Rect, in aspectRatio : float, inout useCurrentMinEdgeSize : boolean) : Rect
+        // Save the snap fraction, calculate the aspect ratio based on screen size
+        final float snapFraction = mSnapAlgorithm.getSnapFraction(stackBounds,
+                getMovementBounds(stackBounds));
+
+        final int minEdgeSize = useCurrentMinEdgeSize ? mCurrentMinSize : mDefaultMinSize;
+        final Size size = mSnapAlgorithm.getSizeForAspectRatio(aspectRatio, minEdgeSize,
+                mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight);
+        final int left = (int) (stackBounds.centerX() - size.getWidth() / 2f);
+        final int top = (int) (stackBounds.centerY() - size.getHeight() / 2f);
+        stackBounds.set(left, top, left + size.getWidth(), top + size.getHeight());
+        mSnapAlgorithm.applySnapFraction(stackBounds, getMovementBounds(stackBounds), snapFraction);
+        if (mIsMinimized) {
+            applyMinimizedOffset(stackBounds, getMovementBounds(stackBounds));
+        }
+        return stackBounds;
+!!!12718981.java!!!	getDefaultBounds() : Rect
+        synchronized (mService.mWindowMap) {
+            final Rect insetBounds = new Rect();
+            getInsetBounds(insetBounds);
+
+            final Rect defaultBounds = new Rect();
+            final Size size = mSnapAlgorithm.getSizeForAspectRatio(mDefaultAspectRatio,
+                    mDefaultMinSize, mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight);
+            Gravity.apply(mDefaultStackGravity, size.getWidth(), size.getHeight(), insetBounds,
+                    0, mIsImeShowing ? mImeHeight : 0, defaultBounds);
+            return defaultBounds;
+        }
+!!!12719109.java!!!	onDisplayInfoChanged() : void
+        mDisplayInfo.copyFrom(mDisplayContent.getDisplayInfo());
+        notifyMovementBoundsChanged(false /* fromImeAdjustment */);
+!!!12719237.java!!!	onTaskStackBoundsChanged(inout targetBounds : Rect, inout outBounds : Rect) : boolean
+        synchronized (mService.mWindowMap) {
+            final DisplayInfo displayInfo = mDisplayContent.getDisplayInfo();
+            if (mDisplayInfo.equals(displayInfo)) {
+                // We are already in the right orientation, ignore
+                outBounds.setEmpty();
+                return false;
+            } else if (targetBounds.isEmpty()) {
+                // The stack is null, we are just initializing the stack, so just store the display
+                // info and ignore
+                mDisplayInfo.copyFrom(displayInfo);
+                outBounds.setEmpty();
+                return false;
+            }
+
+            mTmpRect.set(targetBounds);
+            final Rect postChangeStackBounds = mTmpRect;
+
+            // Calculate the snap fraction of the current stack along the old movement bounds
+            final Rect preChangeMovementBounds = getMovementBounds(postChangeStackBounds);
+            final float snapFraction = mSnapAlgorithm.getSnapFraction(postChangeStackBounds,
+                    preChangeMovementBounds);
+            mDisplayInfo.copyFrom(displayInfo);
+
+            // Calculate the stack bounds in the new orientation to the same same fraction along the
+            // rotated movement bounds.
+            final Rect postChangeMovementBounds = getMovementBounds(postChangeStackBounds,
+                    false /* adjustForIme */);
+            mSnapAlgorithm.applySnapFraction(postChangeStackBounds, postChangeMovementBounds,
+                    snapFraction);
+            if (mIsMinimized) {
+                applyMinimizedOffset(postChangeStackBounds, postChangeMovementBounds);
+            }
+
+            notifyMovementBoundsChanged(false /* fromImeAdjustment */);
+
+            outBounds.set(postChangeStackBounds);
+            return true;
+        }
+!!!12719365.java!!!	setAdjustedForIme(inout adjustedForIme : boolean, in imeHeight : int) : void
+        // Return early if there is no state change
+        if (mIsImeShowing == adjustedForIme && mImeHeight == imeHeight) {
+            return;
+        }
+
+        mIsImeShowing = adjustedForIme;
+        mImeHeight = imeHeight;
+        notifyImeVisibilityChanged(adjustedForIme, imeHeight);
+        notifyMovementBoundsChanged(true /* fromImeAdjustment */);
+!!!12719493.java!!!	setAspectRatio(in aspectRatio : float) : void
+        if (Float.compare(mAspectRatio, aspectRatio) != 0) {
+            mAspectRatio = aspectRatio;
+            notifyMovementBoundsChanged(false /* fromImeAdjustment */);
+        }
+!!!12719621.java!!!	getAspectRatio() : float
+        return mAspectRatio;
+!!!12719749.java!!!	setActions(inout actions : List<RemoteAction>) : void
+        mActions.clear();
+        if (actions != null) {
+            mActions.addAll(actions);
+        }
+        notifyActionsChanged(mActions);
+!!!12719877.java!!!	notifyImeVisibilityChanged(inout imeVisible : boolean, in imeHeight : int) : void
+        if (mPinnedStackListener != null) {
+            try {
+                mPinnedStackListener.onImeVisibilityChanged(imeVisible, imeHeight);
+            } catch (RemoteException e) {
+                Slog.e(TAG_WM, "Error delivering bounds changed event.", e);
+            }
+        }
+!!!12720005.java!!!	notifyMinimizeChanged(inout isMinimized : boolean) : void
+        if (mPinnedStackListener != null) {
+            try {
+                mPinnedStackListener.onMinimizedStateChanged(isMinimized);
+            } catch (RemoteException e) {
+                Slog.e(TAG_WM, "Error delivering minimize changed event.", e);
+            }
+        }
+!!!12720133.java!!!	notifyActionsChanged(inout actions : List<RemoteAction>) : void
+        if (mPinnedStackListener != null) {
+            try {
+                mPinnedStackListener.onActionsChanged(new ParceledListSlice(actions));
+            } catch (RemoteException e) {
+                Slog.e(TAG_WM, "Error delivering actions changed event.", e);
+            }
+        }
+!!!12720261.java!!!	notifyMovementBoundsChanged(inout fromImeAdjustement : boolean) : void
+        synchronized (mService.mWindowMap) {
+            if (mPinnedStackListener != null) {
+                try {
+                    final Rect insetBounds = new Rect();
+                    getInsetBounds(insetBounds);
+                    final Rect normalBounds = getDefaultBounds();
+                    if (isValidPictureInPictureAspectRatio(mAspectRatio)) {
+                        transformBoundsToAspectRatio(normalBounds, mAspectRatio,
+                                false /* useCurrentMinEdgeSize */);
+                    }
+                    final Rect animatingBounds = mTmpAnimatingBoundsRect;
+                    final TaskStack pinnedStack = mDisplayContent.getStackById(PINNED_STACK_ID);
+                    if (pinnedStack != null) {
+                        pinnedStack.getAnimationOrCurrentBounds(animatingBounds);
+                    } else {
+                        animatingBounds.set(normalBounds);
+                    }
+                    mPinnedStackListener.onMovementBoundsChanged(insetBounds, normalBounds,
+                            animatingBounds, fromImeAdjustement, mDisplayInfo.rotation);
+                } catch (RemoteException e) {
+                    Slog.e(TAG_WM, "Error delivering actions changed event.", e);
+                }
+            }
+        }
+!!!12720389.java!!!	getInsetBounds(inout outRect : Rect) : void
+        synchronized (mService.mWindowMap) {
+            mService.mPolicy.getStableInsetsLw(mDisplayInfo.rotation, mDisplayInfo.logicalWidth,
+                    mDisplayInfo.logicalHeight, mTmpInsets);
+            outRect.set(mTmpInsets.left + mScreenEdgeInsets.x, mTmpInsets.top + mScreenEdgeInsets.y,
+                    mDisplayInfo.logicalWidth - mTmpInsets.right - mScreenEdgeInsets.x,
+                    mDisplayInfo.logicalHeight - mTmpInsets.bottom - mScreenEdgeInsets.y);
+        }
+!!!12720517.java!!!	getMovementBounds(inout stackBounds : Rect) : Rect
+        synchronized (mService.mWindowMap) {
+            return getMovementBounds(stackBounds, true /* adjustForIme */);
+        }
+!!!12720645.java!!!	getMovementBounds(inout stackBounds : Rect, inout adjustForIme : boolean) : Rect
+        synchronized (mService.mWindowMap) {
+            final Rect movementBounds = new Rect();
+            getInsetBounds(movementBounds);
+
+            // Apply the movement bounds adjustments based on the current state
+            mSnapAlgorithm.getMovementBounds(stackBounds, movementBounds, movementBounds,
+                    (adjustForIme && mIsImeShowing) ? mImeHeight : 0);
+            return movementBounds;
+        }
+!!!12720773.java!!!	applyMinimizedOffset(inout stackBounds : Rect, inout movementBounds : Rect) : void
+        synchronized (mService.mWindowMap) {
+            mTmpDisplaySize.set(mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight);
+            mService.getStableInsetsLocked(mDisplayContent.getDisplayId(), mStableInsets);
+            mSnapAlgorithm.applyMinimizedOffset(stackBounds, movementBounds, mTmpDisplaySize,
+                    mStableInsets);
+        }
+!!!12720901.java!!!	dpToPx(in dpValue : float, inout dm : DisplayMetrics) : int
+        return (int) TypedValue.applyDimension(COMPLEX_UNIT_DIP, dpValue, dm);
+!!!12721029.java!!!	dump(in prefix : String, inout pw : PrintWriter) : void
+        pw.println(prefix + "PinnedStackController");
+        pw.print(prefix + "  defaultBounds="); getDefaultBounds().printShortString(pw);
+        pw.println();
+        mService.getStackBounds(PINNED_STACK_ID, mTmpRect);
+        pw.print(prefix + "  movementBounds="); getMovementBounds(mTmpRect).printShortString(pw);
+        pw.println();
+        pw.println(prefix + "  mIsImeShowing=" + mIsImeShowing);
+        pw.println(prefix + "  mIsMinimized=" + mIsMinimized);
+        if (mActions.isEmpty()) {
+            pw.println(prefix + "  mActions=[]");
+        } else {
+            pw.println(prefix + "  mActions=[");
+            for (int i = 0; i < mActions.size(); i++) {
+                RemoteAction action = mActions.get(i);
+                pw.print(prefix + "    Action[" + i + "]: ");
+                action.dump("", pw);
+            }
+            pw.println(prefix + "  ]");
+        }

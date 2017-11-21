@@ -1,0 +1,106 @@
+class BpMemoryHeap
+!!!14745989.cpp!!!	~BpMemoryHeap()
+    int32_t heapId = mHeapId.load(memory_order_relaxed);
+    if (heapId != -1) {
+        close(heapId);
+        if (mRealHeap) {
+            // by construction we're the last one
+            if (mBase != MAP_FAILED) {
+                sp<IBinder> binder = IInterface::asBinder(this);
+
+                if (VERBOSE) {
+                    ALOGD("UNMAPPING binder=%p, heap=%p, size=%zu, fd=%d",
+                            binder.get(), this, mSize, heapId);
+                    CallStack stack(LOG_TAG);
+                }
+
+                munmap(mBase, mSize);
+            }
+        } else {
+            // remove from list only if it was mapped before
+            sp<IBinder> binder = IInterface::asBinder(this);
+            free_heap(binder);
+        }
+    }
+!!!14746117.cpp!!!	getHeapID() : int
+    assertMapped();
+    // We either stored mHeapId ourselves, or loaded it with acquire semantics.
+    return mHeapId.load(memory_order_relaxed);
+!!!14746245.cpp!!!	getBase() : void
+    assertMapped();
+    return mBase;
+!!!14746373.cpp!!!	getSize() : size_t
+    assertMapped();
+    return mSize;
+!!!14746501.cpp!!!	getFlags() : uint32_t
+    assertMapped();
+    return mFlags;
+!!!14746629.cpp!!!	getOffset() : uint32_t
+    assertMapped();
+    return mOffset;
+!!!14747269.cpp!!!	assertMapped() : void
+    int32_t heapId = mHeapId.load(memory_order_acquire);
+    if (heapId == -1) {
+        sp<IBinder> binder(IInterface::asBinder(const_cast<BpMemoryHeap*>(this)));
+        sp<BpMemoryHeap> heap(static_cast<BpMemoryHeap*>(find_heap(binder).get()));
+        heap->assertReallyMapped();
+        if (heap->mBase != MAP_FAILED) {
+            Mutex::Autolock _l(mLock);
+            if (mHeapId.load(memory_order_relaxed) == -1) {
+                mBase   = heap->mBase;
+                mSize   = heap->mSize;
+                mOffset = heap->mOffset;
+                int fd = fcntl(heap->mHeapId.load(memory_order_relaxed), F_DUPFD_CLOEXEC, 0);
+                ALOGE_IF(fd==-1, "cannot dup fd=%d",
+                        heap->mHeapId.load(memory_order_relaxed));
+                mHeapId.store(fd, memory_order_release);
+            }
+        } else {
+            // something went wrong
+            free_heap(binder);
+        }
+    }
+!!!14747397.cpp!!!	assertReallyMapped() : void
+    int32_t heapId = mHeapId.load(memory_order_acquire);
+    if (heapId == -1) {
+
+        // remote call without mLock held, worse case scenario, we end up
+        // calling transact() from multiple threads, but that's not a problem,
+        // only mmap below must be in the critical section.
+
+        Parcel data, reply;
+        data.writeInterfaceToken(IMemoryHeap::getInterfaceDescriptor());
+        status_t err = remote()->transact(HEAP_ID, data, &reply);
+        int parcel_fd = reply.readFileDescriptor();
+        ssize_t size = reply.readInt32();
+        uint32_t flags = reply.readInt32();
+        uint32_t offset = reply.readInt32();
+
+        ALOGE_IF(err, "binder=%p transaction failed fd=%d, size=%zd, err=%d (%s)",
+                IInterface::asBinder(this).get(),
+                parcel_fd, size, err, strerror(-err));
+
+        Mutex::Autolock _l(mLock);
+        if (mHeapId.load(memory_order_relaxed) == -1) {
+            int fd = fcntl(parcel_fd, F_DUPFD_CLOEXEC, 0);
+            ALOGE_IF(fd==-1, "cannot dup fd=%d, size=%zd, err=%d (%s)",
+                    parcel_fd, size, err, strerror(errno));
+
+            int access = PROT_READ;
+            if (!(flags & READ_ONLY)) {
+                access |= PROT_WRITE;
+            }
+            mRealHeap = true;
+            mBase = mmap(0, size, access, MAP_SHARED, fd, offset);
+            if (mBase == MAP_FAILED) {
+                ALOGE("cannot map BpMemoryHeap (binder=%p), size=%zd, fd=%d (%s)",
+                        IInterface::asBinder(this).get(), size, fd, strerror(errno));
+                close(fd);
+            } else {
+                mSize = size;
+                mFlags = flags;
+                mOffset = offset;
+                mHeapId.store(fd, memory_order_release);
+            }
+        }
+    }

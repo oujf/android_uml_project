@@ -1,0 +1,32 @@
+class KillApplicationHandler
+!!!9999877.java!!!	uncaughtException(inout t : Thread, inout e : Throwable) : void
+            try {
+                // Don't re-enter -- avoid infinite loops if crash-reporting crashes.
+                if (mCrashing) return;
+                mCrashing = true;
+
+                // Try to end profiling. If a profiler is running at this point, and we kill the
+                // process (below), the in-memory buffer will be lost. So try to stop, which will
+                // flush the buffer. (This makes method trace profiling useful to debug crashes.)
+                if (ActivityThread.currentActivityThread() != null) {
+                    ActivityThread.currentActivityThread().stopProfiling();
+                }
+
+                // Bring up crash dialog, wait for it to be dismissed
+                ActivityManager.getService().handleApplicationCrash(
+                        mApplicationObject, new ApplicationErrorReport.ParcelableCrashInfo(e));
+            } catch (Throwable t2) {
+                if (t2 instanceof DeadObjectException) {
+                    // System process is dead; ignore
+                } else {
+                    try {
+                        Clog_e(TAG, "Error reporting crash", t2);
+                    } catch (Throwable t3) {
+                        // Even Clog_e() fails!  Oh well.
+                    }
+                }
+            } finally {
+                // Try everything to make sure this process goes away.
+                Process.killProcess(Process.myPid());
+                System.exit(10);
+            }

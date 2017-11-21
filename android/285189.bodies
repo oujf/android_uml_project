@@ -1,0 +1,91 @@
+class HandleTracker
+!!!707589.cpp!!!	HandleTracker(in maxHandles : uint32_t = 256)
+    assert(maxHandles <= HANDLE_TRACKER_MAX_HANDLES);
+    // Allocate arrays to hold addresses and validation info.
+    mHandleAddresses = (handle_tracker_address_t *)
+            new(std::nothrow) handle_tracker_address_t[maxHandles];
+    if (mHandleAddresses != nullptr) {
+        mHandleHeaders = new(std::nothrow) handle_tracker_header_t[maxHandles];
+
+        if (mHandleHeaders != nullptr) {
+            handle_tracker_header_t initialHeader = buildHeader(0, 1);
+            // Initialize linked list of free nodes. nullptr terminated.
+            for (uint32_t i = 0; i < (maxHandles - 1); i++) {
+                mHandleAddresses[i] = &mHandleAddresses[i + 1]; // point to next node
+                mHandleHeaders[i] = initialHeader;
+            }
+            mNextFreeAddress = &mHandleAddresses[0];
+            mHandleAddresses[maxHandles - 1] = nullptr;
+            mHandleHeaders[maxHandles - 1] = 0;
+        } else {
+            delete[] mHandleAddresses; // so the class appears uninitialized
+            mHandleAddresses = nullptr;
+        }
+    }
+!!!707717.cpp!!!	~HandleTracker()
+    Mutex::Autolock _l(mLock);
+    delete[] mHandleAddresses;
+    delete[] mHandleHeaders;
+    mHandleAddresses = nullptr;
+!!!707845.cpp!!!	isInitialized() : bool
+    return mHandleAddresses != nullptr;
+!!!708101.cpp!!!	get(in type : handle_tracker_type_t, in handle : aaudio_handle_t) : handle_tracker_address_t
+    if (!isInitialized()) {
+        return nullptr;
+    }
+    handle_tracker_slot_t index = handleToIndex(type, handle);
+    if (index >= 0) {
+        // We do not need to synchronize this access to mHandleHeaders because this slot
+        // is allocated and, therefore, not part of the linked list of free slots.
+        return mHandleAddresses[index];
+    } else {
+        return nullptr;
+    }
+!!!708229.cpp!!!	remove(in type : handle_tracker_type_t, in handle : aaudio_handle_t) : handle_tracker_address_t
+    if (!isInitialized()) {
+        return nullptr;
+    }
+
+    Mutex::Autolock _l(mLock);
+
+    handle_tracker_slot_t index = handleToIndex(type,handle);
+    if (index >= 0) {
+        handle_tracker_address_t address = mHandleAddresses[index];
+
+        // Invalidate the header type but preserve the generation count.
+        handle_tracker_generation_t generation = mHandleHeaders[index] & GENERATION_MASK;
+        handle_tracker_header_t inputHeader = buildHeader(
+                (handle_tracker_type_t) HANDLE_INVALID_TYPE, generation);
+        mHandleHeaders[index] = inputHeader;
+
+        // Add this slot to the head of the linked list.
+        mHandleAddresses[index] = mNextFreeAddress;
+        mNextFreeAddress = (handle_tracker_address_t *) &mHandleAddresses[index];
+        return address;
+    } else {
+        return nullptr;
+    }
+!!!708357.cpp!!!	allocateSlot_l() : handle_tracker_slot_t
+    void **allocated = mNextFreeAddress;
+    if (allocated == nullptr) {
+        return SLOT_UNAVAILABLE;
+    }
+    // Remove this slot from the head of the linked list.
+    mNextFreeAddress = (void **) *allocated;
+    return (allocated - mHandleAddresses);
+!!!708485.cpp!!!	nextGeneration_l(in index : handle_tracker_slot_t) : handle_tracker_generation_t
+    handle_tracker_generation_t generation = (mHandleHeaders[index] + 1) & GENERATION_MASK;
+    // Avoid generation zero so that 0x0 is not a valid handle.
+    if (generation == GENERATION_INVALID) {
+        generation++;
+    }
+    return generation;
+!!!708741.cpp!!!	buildHandle(in typeGeneration : handle_tracker_header_t, in index : handle_tracker_slot_t) : aaudio_handle_t
+    return (aaudio_handle_t)((typeGeneration << GENERATION_SHIFT) | (index & INDEX_MASK));
+!!!708869.cpp!!!	buildHeader(in type : handle_tracker_type_t, in generation : handle_tracker_generation_t) : handle_tracker_header_t
+    return (handle_tracker_header_t) (((type & TYPE_MASK) << GENERATION_SIZE)
+        | (generation & GENERATION_MASK));
+!!!708997.cpp!!!	extractIndex(in handle : aaudio_handle_t) : handle_tracker_slot_t
+    return handle & INDEX_MASK;
+!!!709125.cpp!!!	extractGeneration(in handle : aaudio_handle_t) : handle_tracker_generation_t
+    return (handle >> GENERATION_SHIFT) & GENERATION_MASK;

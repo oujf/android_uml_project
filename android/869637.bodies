@@ -1,0 +1,74 @@
+class AsyncInflationTask
+!!!3882757.java!!!	AsyncInflationTask(inout notification : StatusBarNotification, in reInflateFlags : int, inout row : ExpandableNotificationRow, inout isLowPriority : boolean, inout isChildInGroup : boolean, inout usesIncreasedHeight : boolean, inout usesIncreasedHeadsUpHeight : boolean, inout redactAmbient : boolean, inout callback : NotificationInflater::InflationCallback, inout remoteViewClickHandler : RemoteViews.OnClickHandler)
+            mRow = row;
+            mSbn = notification;
+            mReInflateFlags = reInflateFlags;
+            mContext = mRow.getContext();
+            mIsLowPriority = isLowPriority;
+            mIsChildInGroup = isChildInGroup;
+            mUsesIncreasedHeight = usesIncreasedHeight;
+            mUsesIncreasedHeadsUpHeight = usesIncreasedHeadsUpHeight;
+            mRedactAmbient = redactAmbient;
+            mRemoteViewClickHandler = remoteViewClickHandler;
+            mCallback = callback;
+            NotificationData.Entry entry = row.getEntry();
+            entry.setInflationTask(this);
+!!!3882885.java!!!	getReInflateFlags() : int
+            return mReInflateFlags;
+!!!3883013.java!!!	doInBackground(inout  : Void...params) : NotificationInflater::InflationProgress
+            try {
+                final Notification.Builder recoveredBuilder
+                        = Notification.Builder.recoverBuilder(mContext,
+                        mSbn.getNotification());
+                Context packageContext = mSbn.getPackageContext(mContext);
+                Notification notification = mSbn.getNotification();
+                if (mIsLowPriority) {
+                    int backgroundColor = mContext.getColor(
+                            R.color.notification_material_background_low_priority_color);
+                    recoveredBuilder.setBackgroundColorHint(backgroundColor);
+                }
+                if (notification.isMediaNotification()) {
+                    MediaNotificationProcessor processor = new MediaNotificationProcessor(mContext,
+                            packageContext);
+                    processor.setIsLowPriority(mIsLowPriority);
+                    processor.processNotification(notification, recoveredBuilder);
+                }
+                return createRemoteViews(mReInflateFlags,
+                        recoveredBuilder, mIsLowPriority, mIsChildInGroup,
+                        mUsesIncreasedHeight, mUsesIncreasedHeadsUpHeight, mRedactAmbient,
+                        packageContext);
+            } catch (Exception e) {
+                mError = e;
+                return null;
+            }
+!!!3883141.java!!!	onPostExecute(inout result : NotificationInflater::InflationProgress) : void
+            if (mError == null) {
+                mCancellationSignal = apply(result, mReInflateFlags, mRow, mRedactAmbient,
+                        mRemoteViewClickHandler, this);
+            } else {
+                handleError(mError);
+            }
+!!!3883269.java!!!	handleError(inout e : Exception) : void
+            mRow.getEntry().onInflationTaskFinished();
+            StatusBarNotification sbn = mRow.getStatusBarNotification();
+            final String ident = sbn.getPackageName() + "/0x"
+                    + Integer.toHexString(sbn.getId());
+            Log.e(StatusBar.TAG, "couldn't inflate view for notification " + ident, e);
+            mCallback.handleInflationException(sbn,
+                    new InflationException("Couldn't inflate contentViews" + e));
+!!!3883397.java!!!	abort() : void
+            cancel(true /* mayInterruptIfRunning */);
+            if (mCancellationSignal != null) {
+                mCancellationSignal.cancel();
+            }
+!!!3883525.java!!!	supersedeTask(inout task : InflationTask) : void
+            if (task instanceof AsyncInflationTask) {
+                // We want to inflate all flags of the previous task as well
+                mReInflateFlags |= ((AsyncInflationTask) task).mReInflateFlags;
+            }
+!!!3883653.java!!!	handleInflationException(inout notification : StatusBarNotification, inout e : Exception) : void
+            handleError(e);
+!!!3883781.java!!!	onAsyncInflationFinished(inout entry : NotificationData::Entry) : void
+            mRow.getEntry().onInflationTaskFinished();
+            mRow.onNotificationUpdated();
+            mCallback.onAsyncInflationFinished(mRow.getEntry());

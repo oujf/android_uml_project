@@ -1,0 +1,291 @@
+class BufferingMonitor
+!!!1010565.cpp!!!	BufferingMonitor(in notify : sp<AMessage>)
+      getDefaultBufferingSettings(&mSettings);
+!!!1010693.cpp!!!	getDefaultBufferingSettings(inout buffering : BufferingSettings) : void
+    buffering->mInitialBufferingMode = BUFFERING_MODE_TIME_ONLY;
+    buffering->mRebufferingMode = BUFFERING_MODE_TIME_THEN_SIZE;
+    buffering->mInitialWatermarkMs = kHighWaterMarkMs;
+    buffering->mRebufferingWatermarkLowMs = kLowWaterMarkMs;
+    buffering->mRebufferingWatermarkHighMs = kHighWaterMarkRebufferMs;
+    buffering->mRebufferingWatermarkLowKB = kLowWaterMarkKB;
+    buffering->mRebufferingWatermarkHighKB = kHighWaterMarkKB;
+
+    ALOGV("BufferingMonitor::getDefaultBufferingSettings{%s}",
+            buffering->toString().string());
+!!!1010821.cpp!!!	setBufferingSettings(in buffering : BufferingSettings) : status_t
+    ALOGV("BufferingMonitor::setBufferingSettings{%s}",
+            buffering.toString().string());
+
+    Mutex::Autolock _l(mLock);
+    if (buffering.IsSizeBasedBufferingMode(buffering.mInitialBufferingMode)
+            || (buffering.IsTimeBasedBufferingMode(buffering.mRebufferingMode)
+                && buffering.mRebufferingWatermarkLowMs > buffering.mRebufferingWatermarkHighMs)
+            || (buffering.IsSizeBasedBufferingMode(buffering.mRebufferingMode)
+                && buffering.mRebufferingWatermarkLowKB > buffering.mRebufferingWatermarkHighKB)) {
+        return BAD_VALUE;
+    }
+    mSettings = buffering;
+    if (mSettings.mInitialBufferingMode == BUFFERING_MODE_NONE) {
+        mSettings.mInitialWatermarkMs = BufferingSettings::kNoWatermark;
+    }
+    if (!mSettings.IsTimeBasedBufferingMode(mSettings.mRebufferingMode)) {
+        mSettings.mRebufferingWatermarkLowMs = BufferingSettings::kNoWatermark;
+        mSettings.mRebufferingWatermarkHighMs = INT32_MAX;
+    }
+    if (!mSettings.IsSizeBasedBufferingMode(mSettings.mRebufferingMode)) {
+        mSettings.mRebufferingWatermarkLowKB = BufferingSettings::kNoWatermark;
+        mSettings.mRebufferingWatermarkHighKB = INT32_MAX;
+    }
+    return OK;
+!!!1010949.cpp!!!	prepare(in cachedSource : sp<NuCachedSource2>, in durationUs : int64_t, in bitrate : int64_t, in isStreaming : bool) : void
+    Mutex::Autolock _l(mLock);
+    prepare_l(cachedSource, durationUs, bitrate, isStreaming);
+!!!1011077.cpp!!!	stop() : void
+    Mutex::Autolock _l(mLock);
+    prepare_l(NULL /* cachedSource */, -1 /* durationUs */,
+            -1 /* bitrate */, false /* isStreaming */);
+!!!1011205.cpp!!!	cancelPollBuffering() : void
+    Mutex::Autolock _l(mLock);
+    cancelPollBuffering_l();
+!!!1011333.cpp!!!	restartPollBuffering() : void
+    Mutex::Autolock _l(mLock);
+    if (mIsStreaming) {
+        cancelPollBuffering_l();
+        onPollBuffering_l();
+    }
+!!!1011461.cpp!!!	stopBufferingIfNecessary() : void
+    Mutex::Autolock _l(mLock);
+    stopBufferingIfNecessary_l();
+!!!1011589.cpp!!!	ensureCacheIsFetching() : void
+    Mutex::Autolock _l(mLock);
+    ensureCacheIsFetching_l();
+!!!1011717.cpp!!!	updateQueuedTime(in isAudio : bool, in timeUs : int64_t) : void
+    Mutex::Autolock _l(mLock);
+    if (isAudio) {
+        mAudioTimeUs = timeUs;
+    } else {
+        mVideoTimeUs = timeUs;
+    }
+!!!1011845.cpp!!!	setOffloadAudio(in offload : bool) : void
+    Mutex::Autolock _l(mLock);
+    mOffloadAudio = offload;
+!!!1011973.cpp!!!	updateDequeuedBufferTime(in mediaUs : int64_t) : void
+    Mutex::Autolock _l(mLock);
+    if (mediaUs < 0) {
+        mFirstDequeuedBufferRealUs = -1ll;
+        mFirstDequeuedBufferMediaUs = -1ll;
+    } else if (mFirstDequeuedBufferRealUs < 0) {
+        mFirstDequeuedBufferRealUs = ALooper::GetNowUs();
+        mFirstDequeuedBufferMediaUs = mediaUs;
+    }
+    mlastDequeuedBufferMediaUs = mediaUs;
+!!!1012229.cpp!!!	onMessageReceived(in msg : sp<AMessage>) : void
+    switch (msg->what()) {
+      case kWhatPollBuffering:
+      {
+          int32_t generation;
+          CHECK(msg->findInt32("generation", &generation));
+          Mutex::Autolock _l(mLock);
+          if (generation == mPollBufferingGeneration) {
+              onPollBuffering_l();
+          }
+          break;
+      }
+      default:
+          TRESPASS();
+          break;
+    }
+!!!1012357.cpp!!!	prepare_l(in cachedSource : sp<NuCachedSource2>, in durationUs : int64_t, in bitrate : int64_t, in isStreaming : bool) : void
+
+    mCachedSource = cachedSource;
+    mDurationUs = durationUs;
+    mBitrate = bitrate;
+    mIsStreaming = isStreaming;
+    mAudioTimeUs = 0;
+    mVideoTimeUs = 0;
+    mPrepareBuffering = (cachedSource != NULL);
+    cancelPollBuffering_l();
+    mOffloadAudio = false;
+    mFirstDequeuedBufferRealUs = -1ll;
+    mFirstDequeuedBufferMediaUs = -1ll;
+    mlastDequeuedBufferMediaUs = -1ll;
+!!!1012485.cpp!!!	cancelPollBuffering_l() : void
+    mBuffering = false;
+    ++mPollBufferingGeneration;
+    mPrevBufferPercentage = -1;
+!!!1012613.cpp!!!	notifyBufferingUpdate_l(in percentage : int32_t) : void
+    // Buffering percent could go backward as it's estimated from remaining
+    // data and last access time. This could cause the buffering position
+    // drawn on media control to jitter slightly. Remember previously reported
+    // percentage and don't allow it to go backward.
+    if (percentage < mPrevBufferPercentage) {
+        percentage = mPrevBufferPercentage;
+    } else if (percentage > 100) {
+        percentage = 100;
+    }
+
+    mPrevBufferPercentage = percentage;
+
+    ALOGV("notifyBufferingUpdate_l: buffering %d%%", percentage);
+
+    sp<AMessage> msg = mNotify->dup();
+    msg->setInt32("what", kWhatBufferingUpdate);
+    msg->setInt32("percentage", percentage);
+    msg->post();
+!!!1012741.cpp!!!	startBufferingIfNecessary_l() : void
+    if (mPrepareBuffering) {
+        return;
+    }
+
+    if (!mBuffering) {
+        ALOGD("startBufferingIfNecessary_l");
+
+        mBuffering = true;
+
+        ensureCacheIsFetching_l();
+        sendCacheStats_l();
+
+        sp<AMessage> notify = mNotify->dup();
+        notify->setInt32("what", kWhatPauseOnBufferingStart);
+        notify->post();
+    }
+!!!1012869.cpp!!!	stopBufferingIfNecessary_l() : void
+    if (mPrepareBuffering) {
+        ALOGD("stopBufferingIfNecessary_l, mBuffering=%d", mBuffering);
+
+        mPrepareBuffering = false;
+
+        sp<AMessage> notify = mNotify->dup();
+        notify->setInt32("what", kWhatPrepared);
+        notify->setInt32("err", OK);
+        notify->post();
+
+        return;
+    }
+
+    if (mBuffering) {
+        ALOGD("stopBufferingIfNecessary_l");
+        mBuffering = false;
+
+        sendCacheStats_l();
+
+        sp<AMessage> notify = mNotify->dup();
+        notify->setInt32("what", kWhatResumeOnBufferingEnd);
+        notify->post();
+    }
+!!!1012997.cpp!!!	sendCacheStats_l() : void
+    int32_t kbps = 0;
+    status_t err = UNKNOWN_ERROR;
+
+    if (mCachedSource != NULL) {
+        err = mCachedSource->getEstimatedBandwidthKbps(&kbps);
+    }
+
+    if (err == OK) {
+        sp<AMessage> notify = mNotify->dup();
+        notify->setInt32("what", kWhatCacheStats);
+        notify->setInt32("bandwidth", kbps);
+        notify->post();
+    }
+!!!1013125.cpp!!!	ensureCacheIsFetching_l() : void
+    if (mCachedSource != NULL) {
+        mCachedSource->resumeFetchingIfNecessary();
+    }
+!!!1013253.cpp!!!	getLastReadPosition_l() : int64_t
+    if (mAudioTimeUs > 0) {
+        return mAudioTimeUs;
+    } else if (mVideoTimeUs > 0) {
+        return mVideoTimeUs;
+    } else {
+        return 0;
+    }
+!!!1013381.cpp!!!	onPollBuffering_l() : void
+    status_t finalStatus = UNKNOWN_ERROR;
+    int64_t cachedDurationUs = -1ll;
+    ssize_t cachedDataRemaining = -1;
+
+    if (mCachedSource != NULL) {
+        cachedDataRemaining =
+                mCachedSource->approxDataRemaining(&finalStatus);
+
+        if (finalStatus == OK) {
+            off64_t size;
+            int64_t bitrate = 0ll;
+            if (mDurationUs > 0 && mCachedSource->getSize(&size) == OK) {
+                // |bitrate| uses bits/second unit, while size is number of bytes.
+                bitrate = size * 8000000ll / mDurationUs;
+            } else if (mBitrate > 0) {
+                bitrate = mBitrate;
+            }
+            if (bitrate > 0) {
+                cachedDurationUs = cachedDataRemaining * 8000000ll / bitrate;
+            }
+        }
+    }
+
+    if (finalStatus != OK) {
+        ALOGV("onPollBuffering_l: EOS (finalStatus = %d)", finalStatus);
+
+        if (finalStatus == ERROR_END_OF_STREAM) {
+            notifyBufferingUpdate_l(100);
+        }
+
+        stopBufferingIfNecessary_l();
+        return;
+    }
+
+    if (cachedDurationUs >= 0ll) {
+        if (mDurationUs > 0ll) {
+            int64_t cachedPosUs = getLastReadPosition_l() + cachedDurationUs;
+            int percentage = 100.0 * cachedPosUs / mDurationUs;
+            if (percentage > 100) {
+                percentage = 100;
+            }
+
+            notifyBufferingUpdate_l(percentage);
+        }
+
+        ALOGV("onPollBuffering_l: cachedDurationUs %.1f sec", cachedDurationUs / 1000000.0f);
+
+        if (mPrepareBuffering) {
+            if (cachedDurationUs > mSettings.mInitialWatermarkMs * 1000) {
+                stopBufferingIfNecessary_l();
+            }
+        } else if (mSettings.IsTimeBasedBufferingMode(mSettings.mRebufferingMode)) {
+            if (cachedDurationUs < mSettings.mRebufferingWatermarkLowMs * 1000) {
+                // Take into account the data cached in downstream components to try to avoid
+                // unnecessary pause.
+                if (mOffloadAudio && mFirstDequeuedBufferRealUs >= 0) {
+                    int64_t downStreamCacheUs =
+                        mlastDequeuedBufferMediaUs - mFirstDequeuedBufferMediaUs
+                            - (ALooper::GetNowUs() - mFirstDequeuedBufferRealUs);
+                    if (downStreamCacheUs > 0) {
+                        cachedDurationUs += downStreamCacheUs;
+                    }
+                }
+
+                if (cachedDurationUs < mSettings.mRebufferingWatermarkLowMs * 1000) {
+                    startBufferingIfNecessary_l();
+                }
+            } else if (cachedDurationUs > mSettings.mRebufferingWatermarkHighMs * 1000) {
+                stopBufferingIfNecessary_l();
+            }
+        }
+    } else if (cachedDataRemaining >= 0
+            && mSettings.IsSizeBasedBufferingMode(mSettings.mRebufferingMode)) {
+        ALOGV("onPollBuffering_l: cachedDataRemaining %zd bytes",
+                cachedDataRemaining);
+
+        if (cachedDataRemaining < (mSettings.mRebufferingWatermarkLowKB << 10)) {
+            startBufferingIfNecessary_l();
+        } else if (cachedDataRemaining > (mSettings.mRebufferingWatermarkHighKB << 10)) {
+            stopBufferingIfNecessary_l();
+        }
+    }
+
+    schedulePollBuffering_l();
+!!!1013509.cpp!!!	schedulePollBuffering_l() : void
+    sp<AMessage> msg = new AMessage(kWhatPollBuffering, this);
+    msg->setInt32("generation", mPollBufferingGeneration);
+    // Enquires buffering status every second.
+    msg->post(1000000ll);

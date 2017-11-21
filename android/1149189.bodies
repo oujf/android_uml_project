@@ -1,0 +1,306 @@
+class LauncherApps
+!!!6256773.java!!!	LauncherApps(inout context : Context, inout service : ILauncherApps)
+        mContext = context;
+        mService = service;
+        mPm = context.getPackageManager();
+        mUserManager = context.getSystemService(UserManager.class);
+!!!6256901.java!!!	LauncherApps(inout context : Context)
+        this(context, ILauncherApps.Stub.asInterface(
+                ServiceManager.getService(Context.LAUNCHER_APPS_SERVICE)));
+!!!6257029.java!!!	logErrorForInvalidProfileAccess(inout target : UserHandle) : void
+        if (UserHandle.myUserId() != target.getIdentifier() && mUserManager.isManagedProfile()) {
+            Log.w(TAG, "Accessing other profiles/users from managed profile is no longer allowed.");
+        }
+!!!6257157.java!!!	getProfiles() : UserHandle
+        if (mUserManager.isManagedProfile()) {
+            // If it's a managed profile, only return the current profile.
+            final List result =  new ArrayList(1);
+            result.add(android.os.Process.myUserHandle());
+            return result;
+        } else {
+            return mUserManager.getUserProfiles();
+        }
+!!!6257285.java!!!	getActivityList(in packageName : String, inout user : UserHandle) : LauncherActivityInfo
+        logErrorForInvalidProfileAccess(user);
+        try {
+            return convertToActivityList(mService.getLauncherActivities(mContext.getPackageName(),
+                    packageName, user), user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6257413.java!!!	resolveActivity(inout intent : Intent, inout user : UserHandle) : LauncherActivityInfo
+        logErrorForInvalidProfileAccess(user);
+        try {
+            ActivityInfo ai = mService.resolveActivity(mContext.getPackageName(),
+                    intent.getComponent(), user);
+            if (ai != null) {
+                LauncherActivityInfo info = new LauncherActivityInfo(mContext, ai, user);
+                return info;
+            }
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+        return null;
+!!!6257541.java!!!	startMainActivity(inout component : ComponentName, inout user : UserHandle, inout sourceBounds : Rect, inout opts : Bundle) : void
+        logErrorForInvalidProfileAccess(user);
+        if (DEBUG) {
+            Log.i(TAG, "StartMainActivity " + component + " " + user.getIdentifier());
+        }
+        try {
+            mService.startActivityAsUser(mContext.getPackageName(),
+                    component, sourceBounds, opts, user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6257669.java!!!	startAppDetailsActivity(inout component : ComponentName, inout user : UserHandle, inout sourceBounds : Rect, inout opts : Bundle) : void
+        logErrorForInvalidProfileAccess(user);
+        try {
+            mService.showAppDetailsAsUser(mContext.getPackageName(),
+                    component, sourceBounds, opts, user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6257797.java!!!	getShortcutConfigActivityList(in packageName : String, inout user : UserHandle) : LauncherActivityInfo
+        logErrorForInvalidProfileAccess(user);
+        try {
+            return convertToActivityList(mService.getShortcutConfigActivities(
+                    mContext.getPackageName(), packageName, user),
+                    user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6257925.java!!!	convertToActivityList(inout activities : ParceledListSlice, inout user : UserHandle) : LauncherActivityInfo
+        if (activities == null) {
+            return Collections.EMPTY_LIST;
+        }
+        ArrayList<LauncherActivityInfo> lais = new ArrayList<>();
+        for (ResolveInfo ri : activities.getList()) {
+            LauncherActivityInfo lai = new LauncherActivityInfo(mContext, ri.activityInfo, user);
+            if (DEBUG) {
+                Log.v(TAG, "Returning activity for profile " + user + " : "
+                        + lai.getComponentName());
+            }
+            lais.add(lai);
+        }
+        return lais;
+!!!6258053.java!!!	getShortcutConfigActivityIntent(inout info : LauncherActivityInfo) : IntentSender
+        try {
+            return mService.getShortcutConfigActivityIntent(
+                    mContext.getPackageName(), info.getComponentName(), info.getUser());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6258181.java!!!	isPackageEnabled(in packageName : String, inout user : UserHandle) : boolean
+        logErrorForInvalidProfileAccess(user);
+        try {
+            return mService.isPackageEnabled(mContext.getPackageName(), packageName, user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6258309.java!!!	getApplicationInfo(in packageName : String, in flags : int, inout user : UserHandle) : ApplicationInfo
+        Preconditions.checkNotNull(packageName, "packageName");
+        Preconditions.checkNotNull(packageName, "user");
+        logErrorForInvalidProfileAccess(user);
+        try {
+            final ApplicationInfo ai = mService
+                    .getApplicationInfo(mContext.getPackageName(), packageName, flags, user);
+            if (ai == null) {
+                throw new NameNotFoundException("Package " + packageName + " not found for user "
+                        + user.getIdentifier());
+            }
+            return ai;
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6258437.java!!!	isActivityEnabled(inout component : ComponentName, inout user : UserHandle) : boolean
+        logErrorForInvalidProfileAccess(user);
+        try {
+            return mService.isActivityEnabled(mContext.getPackageName(), component, user);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6258565.java!!!	hasShortcutHostPermission() : boolean
+        try {
+            return mService.hasShortcutHostPermission(mContext.getPackageName());
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+!!!6258693.java!!!	getShortcuts(inout query : LauncherApps::ShortcutQuery, inout user : UserHandle) : ShortcutInfo
+        logErrorForInvalidProfileAccess(user);
+        try {
+            return mService.getShortcuts(mContext.getPackageName(),
+                    query.mChangedSince, query.mPackage, query.mShortcutIds, query.mActivity,
+                    query.mQueryFlags, user)
+                    .getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6258821.java!!!	getShortcutInfo(in packageName : String, inout ids : List<String>, inout user : UserHandle) : ShortcutInfo
+        final ShortcutQuery q = new ShortcutQuery();
+        q.setPackage(packageName);
+        q.setShortcutIds(ids);
+        q.setQueryFlags(ShortcutQuery.FLAG_GET_ALL_KINDS);
+        return getShortcuts(q, user);
+!!!6258949.java!!!	pinShortcuts(in packageName : String, inout shortcutIds : List<String>, inout user : UserHandle) : void
+        logErrorForInvalidProfileAccess(user);
+        try {
+            mService.pinShortcuts(mContext.getPackageName(), packageName, shortcutIds, user);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6259077.java!!!	getShortcutIconResId(inout shortcut : ShortcutInfo) : int
+        return shortcut.getIconResourceId();
+!!!6259205.java!!!	getShortcutIconResId(in packageName : String, in shortcutId : String, inout user : UserHandle) : int
+        final ShortcutQuery q = new ShortcutQuery();
+        q.setPackage(packageName);
+        q.setShortcutIds(Arrays.asList(shortcutId));
+        q.setQueryFlags(ShortcutQuery.FLAG_GET_ALL_KINDS);
+        final List<ShortcutInfo> shortcuts = getShortcuts(q, user);
+
+        return shortcuts.size() > 0 ? shortcuts.get(0).getIconResourceId() : 0;
+!!!6259333.java!!!	getShortcutIconFd(inout shortcut : ShortcutInfo) : ParcelFileDescriptor
+        return getShortcutIconFd(shortcut.getPackage(), shortcut.getId(),
+                shortcut.getUserId());
+!!!6259461.java!!!	getShortcutIconFd(in packageName : String, in shortcutId : String, inout user : UserHandle) : ParcelFileDescriptor
+        return getShortcutIconFd(packageName, shortcutId, user.getIdentifier());
+!!!6259589.java!!!	getShortcutIconFd(in packageName : String, in shortcutId : String, in userId : int) : ParcelFileDescriptor
+        try {
+            return mService.getShortcutIconFd(mContext.getPackageName(),
+                    packageName, shortcutId, userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6259717.java!!!	getShortcutIconDrawable(inout shortcut : ShortcutInfo, in density : int) : Drawable
+        if (shortcut.hasIconFile()) {
+            final ParcelFileDescriptor pfd = getShortcutIconFd(shortcut);
+            if (pfd == null) {
+                return null;
+            }
+            try {
+                final Bitmap bmp = BitmapFactory.decodeFileDescriptor(pfd.getFileDescriptor());
+                if (bmp != null) {
+                    BitmapDrawable dr = new BitmapDrawable(mContext.getResources(), bmp);
+                    if (shortcut.hasAdaptiveBitmap()) {
+                        return new AdaptiveIconDrawable(null, dr);
+                    } else {
+                        return dr;
+                    }
+                }
+                return null;
+            } finally {
+                try {
+                    pfd.close();
+                } catch (IOException ignore) {
+                }
+            }
+        } else if (shortcut.hasIconResource()) {
+            return loadDrawableResourceFromPackage(shortcut.getPackage(),
+                    shortcut.getIconResourceId(), shortcut.getUserHandle(), density);
+        } else if (shortcut.getIcon() != null) {
+            // This happens if a shortcut is pending-approval.
+            final Icon icon = shortcut.getIcon();
+            switch (icon.getType()) {
+                case Icon.TYPE_RESOURCE: {
+                    return loadDrawableResourceFromPackage(shortcut.getPackage(),
+                            icon.getResId(), shortcut.getUserHandle(), density);
+                }
+                case Icon.TYPE_BITMAP:
+                case Icon.TYPE_ADAPTIVE_BITMAP: {
+                    return icon.loadDrawable(mContext);
+                }
+                default:
+                    return null; // Shouldn't happen though.
+            }
+        } else {
+            return null; // Has no icon.
+        }
+!!!6259845.java!!!	loadDrawableResourceFromPackage(in packageName : String, in resId : int, inout user : UserHandle, in density : int) : Drawable
+        try {
+            if (resId == 0) {
+                return null; // Shouldn't happen but just in case.
+            }
+            final ApplicationInfo ai = getApplicationInfo(packageName, /* flags =*/ 0, user);
+            final Resources res = mContext.getPackageManager().getResourcesForApplication(ai);
+            return res.getDrawableForDensity(resId, density);
+        } catch (NameNotFoundException | Resources.NotFoundException e) {
+            return null;
+        }
+!!!6259973.java!!!	getShortcutBadgedIconDrawable(inout shortcut : ShortcutInfo, in density : int) : Drawable
+        final Drawable originalIcon = getShortcutIconDrawable(shortcut, density);
+
+        return (originalIcon == null) ? null : mContext.getPackageManager().getUserBadgedIcon(
+                originalIcon, shortcut.getUserHandle());
+!!!6260101.java!!!	startShortcut(in packageName : String, in shortcutId : String, inout sourceBounds : Rect, inout startActivityOptions : Bundle, inout user : UserHandle) : void
+        logErrorForInvalidProfileAccess(user);
+
+        startShortcut(packageName, shortcutId, sourceBounds, startActivityOptions,
+                user.getIdentifier());
+!!!6260229.java!!!	startShortcut(inout shortcut : ShortcutInfo, inout sourceBounds : Rect, inout startActivityOptions : Bundle) : void
+        startShortcut(shortcut.getPackage(), shortcut.getId(),
+                sourceBounds, startActivityOptions,
+                shortcut.getUserId());
+!!!6260357.java!!!	startShortcut(in packageName : String, in shortcutId : String, inout sourceBounds : Rect, inout startActivityOptions : Bundle, in userId : int) : void
+        try {
+            final boolean success =
+                    mService.startShortcut(mContext.getPackageName(), packageName, shortcutId,
+                    sourceBounds, startActivityOptions, userId);
+            if (!success) {
+                throw new ActivityNotFoundException("Shortcut could not be started");
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6260485.java!!!	registerCallback(inout callback : LauncherApps::Callback) : void
+        registerCallback(callback, null);
+!!!6260613.java!!!	registerCallback(inout callback : LauncherApps::Callback, inout handler : Handler) : void
+        synchronized (this) {
+            if (callback != null && findCallbackLocked(callback) < 0) {
+                boolean addedFirstCallback = mCallbacks.size() == 0;
+                addCallbackLocked(callback, handler);
+                if (addedFirstCallback) {
+                    try {
+                        mService.addOnAppsChangedListener(mContext.getPackageName(),
+                                mAppsChangedListener);
+                    } catch (RemoteException re) {
+                        throw re.rethrowFromSystemServer();
+                    }
+                }
+            }
+        }
+!!!6260741.java!!!	unregisterCallback(inout callback : LauncherApps::Callback) : void
+        synchronized (this) {
+            removeCallbackLocked(callback);
+            if (mCallbacks.size() == 0) {
+                try {
+                    mService.removeOnAppsChangedListener(mAppsChangedListener);
+                } catch (RemoteException re) {
+                    throw re.rethrowFromSystemServer();
+                }
+            }
+        }
+!!!6260869.java!!!	findCallbackLocked(inout callback : LauncherApps::Callback) : int
+        if (callback == null) {
+            throw new IllegalArgumentException("Callback cannot be null");
+        }
+        final int size = mCallbacks.size();
+        for (int i = 0; i < size; ++i) {
+            if (mCallbacks.get(i).mCallback == callback) {
+                return i;
+            }
+        }
+        return -1;
+!!!6260997.java!!!	removeCallbackLocked(inout callback : LauncherApps::Callback) : void
+        int pos = findCallbackLocked(callback);
+        if (pos >= 0) {
+            mCallbacks.remove(pos);
+        }
+!!!6261125.java!!!	addCallbackLocked(inout callback : LauncherApps::Callback, inout handler : Handler) : void
+        // Remove if already present.
+        removeCallbackLocked(callback);
+        if (handler == null) {
+            handler = new Handler();
+        }
+        CallbackMessageHandler toAdd = new CallbackMessageHandler(handler.getLooper(), callback);
+        mCallbacks.add(toAdd);
+!!!6262533.java!!!	getPinItemRequest(inout intent : Intent) : LauncherApps::PinItemRequest
+        return intent.getParcelableExtra(EXTRA_PIN_ITEM_REQUEST);

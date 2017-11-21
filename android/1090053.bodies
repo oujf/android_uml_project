@@ -1,0 +1,331 @@
+class NotificationManager
+!!!5637381.java!!!	getService() : INotificationManager
+        if (sService != null) {
+            return sService;
+        }
+        IBinder b = ServiceManager.getService("notification");
+        sService = INotificationManager.Stub.asInterface(b);
+        return sService;
+!!!5637509.java!!!	NotificationManager(inout context : Context, inout handler : Handler)
+        mContext = context;
+!!!5637637.java!!!	from(inout context : Context) : NotificationManager
+        return (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+!!!5637765.java!!!	notify(in id : int, inout notification : Notification) : void
+        notify(null, id, notification);
+!!!5637893.java!!!	notify(in tag : String, in id : int, inout notification : Notification) : void
+        notifyAsUser(tag, id, notification, new UserHandle(UserHandle.myUserId()));
+!!!5638021.java!!!	notifyAsUser(in tag : String, in id : int, inout notification : Notification, inout user : UserHandle) : void
+        INotificationManager service = getService();
+        String pkg = mContext.getPackageName();
+        // Fix the notification as best we can.
+        Notification.addFieldsFromContext(mContext, notification);
+        if (notification.sound != null) {
+            notification.sound = notification.sound.getCanonicalUri();
+            if (StrictMode.vmFileUriExposureEnabled()) {
+                notification.sound.checkFileUriExposed("Notification.sound");
+            }
+        }
+        fixLegacySmallIcon(notification, pkg);
+        if (mContext.getApplicationInfo().targetSdkVersion > Build.VERSION_CODES.LOLLIPOP_MR1) {
+            if (notification.getSmallIcon() == null) {
+                throw new IllegalArgumentException("Invalid notification (no valid small icon): "
+                        + notification);
+            }
+        }
+        if (localLOGV) Log.v(TAG, pkg + ": notify(" + id + ", " + notification + ")");
+        final Notification copy = Builder.maybeCloneStrippedForDelivery(notification);
+        try {
+            service.enqueueNotificationWithTag(pkg, mContext.getOpPackageName(), tag, id,
+                    copy, user.getIdentifier());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5638149.java!!!	fixLegacySmallIcon(inout n : Notification, in pkg : String) : void
+        if (n.getSmallIcon() == null && n.icon != 0) {
+            n.setSmallIcon(Icon.createWithResource(pkg, n.icon));
+        }
+!!!5638277.java!!!	cancel(in id : int) : void
+        cancel(null, id);
+!!!5638405.java!!!	cancel(in tag : String, in id : int) : void
+        cancelAsUser(tag, id, new UserHandle(UserHandle.myUserId()));
+!!!5638533.java!!!	cancelAsUser(in tag : String, in id : int, inout user : UserHandle) : void
+        INotificationManager service = getService();
+        String pkg = mContext.getPackageName();
+        if (localLOGV) Log.v(TAG, pkg + ": cancel(" + id + ")");
+        try {
+            service.cancelNotificationWithTag(pkg, tag, id, user.getIdentifier());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5638661.java!!!	cancelAll() : void
+        INotificationManager service = getService();
+        String pkg = mContext.getPackageName();
+        if (localLOGV) Log.v(TAG, pkg + ": cancelAll()");
+        try {
+            service.cancelAllNotifications(pkg, UserHandle.myUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5638789.java!!!	createNotificationChannelGroup(inout group : NotificationChannelGroup) : void
+        createNotificationChannelGroups(Arrays.asList(group));
+!!!5638917.java!!!	createNotificationChannelGroups(inout groups : List<NotificationChannelGroup>) : void
+        INotificationManager service = getService();
+        try {
+            service.createNotificationChannelGroups(mContext.getPackageName(),
+                    new ParceledListSlice(groups));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639045.java!!!	createNotificationChannel(inout channel : NotificationChannel) : void
+        createNotificationChannels(Arrays.asList(channel));
+!!!5639173.java!!!	createNotificationChannels(inout channels : List<NotificationChannel>) : void
+        INotificationManager service = getService();
+        try {
+            service.createNotificationChannels(mContext.getPackageName(),
+                    new ParceledListSlice(channels));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639301.java!!!	getNotificationChannel(in channelId : String) : NotificationChannel
+        INotificationManager service = getService();
+        try {
+            return service.getNotificationChannel(mContext.getPackageName(), channelId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639429.java!!!	getNotificationChannels() : NotificationChannel
+        INotificationManager service = getService();
+        try {
+            return service.getNotificationChannels(mContext.getPackageName()).getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639557.java!!!	deleteNotificationChannel(in channelId : String) : void
+        INotificationManager service = getService();
+        try {
+            service.deleteNotificationChannel(mContext.getPackageName(), channelId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639685.java!!!	getNotificationChannelGroups() : NotificationChannelGroup
+        INotificationManager service = getService();
+        try {
+            return service.getNotificationChannelGroups(mContext.getPackageName()).getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639813.java!!!	deleteNotificationChannelGroup(in groupId : String) : void
+        INotificationManager service = getService();
+        try {
+            service.deleteNotificationChannelGroup(mContext.getPackageName(), groupId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5639941.java!!!	getEffectsSuppressor() : ComponentName
+        INotificationManager service = getService();
+        try {
+            return service.getEffectsSuppressor();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640069.java!!!	matchesCallFilter(inout extras : Bundle) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.matchesCallFilter(extras);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640197.java!!!	isSystemConditionProviderEnabled(in path : String) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.isSystemConditionProviderEnabled(path);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640325.java!!!	setZenMode(in mode : int, inout conditionId : Uri, in reason : String) : void
+        INotificationManager service = getService();
+        try {
+            service.setZenMode(mode, conditionId, reason);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640453.java!!!	getZenMode() : int
+        INotificationManager service = getService();
+        try {
+            return service.getZenMode();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640581.java!!!	getZenModeConfig() : ZenModeConfig
+        INotificationManager service = getService();
+        try {
+            return service.getZenModeConfig();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640709.java!!!	getRuleInstanceCount(inout owner : ComponentName) : int
+        INotificationManager service = getService();
+        try {
+            return service.getRuleInstanceCount(owner);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640837.java!!!	getAutomaticZenRules() : AutomaticZenRule
+        INotificationManager service = getService();
+        try {
+            List<ZenModeConfig.ZenRule> rules = service.getZenRules();
+            Map<String, AutomaticZenRule> ruleMap = new HashMap<>();
+            for (ZenModeConfig.ZenRule rule : rules) {
+                ruleMap.put(rule.id, new AutomaticZenRule(rule.name, rule.component,
+                        rule.conditionId, zenModeToInterruptionFilter(rule.zenMode), rule.enabled,
+                        rule.creationTime));
+            }
+            return ruleMap;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5640965.java!!!	getAutomaticZenRule(in id : String) : AutomaticZenRule
+        INotificationManager service = getService();
+        try {
+            return service.getAutomaticZenRule(id);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641093.java!!!	addAutomaticZenRule(inout automaticZenRule : AutomaticZenRule) : String
+        INotificationManager service = getService();
+        try {
+            return service.addAutomaticZenRule(automaticZenRule);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641221.java!!!	updateAutomaticZenRule(in id : String, inout automaticZenRule : AutomaticZenRule) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.updateAutomaticZenRule(id, automaticZenRule);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641349.java!!!	removeAutomaticZenRule(in id : String) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.removeAutomaticZenRule(id);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641477.java!!!	removeAutomaticZenRules(in packageName : String) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.removeAutomaticZenRules(packageName);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641605.java!!!	getImportance() : int
+        INotificationManager service = getService();
+        try {
+            return service.getPackageImportance(mContext.getPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641733.java!!!	areNotificationsEnabled() : boolean
+        INotificationManager service = getService();
+        try {
+            return service.areNotificationsEnabled(mContext.getPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641861.java!!!	isNotificationPolicyAccessGranted() : boolean
+        INotificationManager service = getService();
+        try {
+            return service.isNotificationPolicyAccessGranted(mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5641989.java!!!	isNotificationPolicyAccessGrantedForPackage(in pkg : String) : boolean
+        INotificationManager service = getService();
+        try {
+            return service.isNotificationPolicyAccessGrantedForPackage(pkg);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5642117.java!!!	getNotificationPolicy() : NotificationManager::Policy
+        INotificationManager service = getService();
+        try {
+            return service.getNotificationPolicy(mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5642245.java!!!	setNotificationPolicy(inout policy : NotificationManager::Policy) : void
+        checkRequired("policy", policy);
+        INotificationManager service = getService();
+        try {
+            service.setNotificationPolicy(mContext.getOpPackageName(), policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5642373.java!!!	setNotificationPolicyAccessGranted(in pkg : String, inout granted : boolean) : void
+        INotificationManager service = getService();
+        try {
+            service.setNotificationPolicyAccessGranted(pkg, granted);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5642501.java!!!	getPackagesRequestingNotificationPolicyAccess() : ArraySet
+        INotificationManager service = getService();
+        try {
+            final String[] pkgs = service.getPackagesRequestingNotificationPolicyAccess();
+            if (pkgs != null && pkgs.length > 0) {
+                final ArraySet<String> rt = new ArraySet<>(pkgs.length);
+                for (int i = 0; i < pkgs.length; i++) {
+                    rt.add(pkgs[i]);
+                }
+                return rt;
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        return new ArraySet<>();
+!!!5642629.java!!!	checkRequired(in name : String, inout value : Object) : void
+        if (value == null) {
+            throw new IllegalArgumentException(name + " is required");
+        }
+!!!5644421.java!!!	getActiveNotifications() : StatusBarNotification
+        final INotificationManager service = getService();
+        final String pkg = mContext.getPackageName();
+        try {
+            final ParceledListSlice<StatusBarNotification> parceledList
+                    = service.getAppActiveNotifications(pkg, UserHandle.myUserId());
+            final List<StatusBarNotification> list = parceledList.getList();
+            return list.toArray(new StatusBarNotification[list.size()]);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5644549.java!!!	getCurrentInterruptionFilter() : int
+        final INotificationManager service = getService();
+        try {
+            return zenModeToInterruptionFilter(service.getZenMode());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5644677.java!!!	setInterruptionFilter(in interruptionFilter : int) : void
+        final INotificationManager service = getService();
+        try {
+            service.setInterruptionFilter(mContext.getOpPackageName(), interruptionFilter);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!5644805.java!!!	zenModeToInterruptionFilter(in zen : int) : int
+        switch (zen) {
+            case Global.ZEN_MODE_OFF: return INTERRUPTION_FILTER_ALL;
+            case Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS: return INTERRUPTION_FILTER_PRIORITY;
+            case Global.ZEN_MODE_ALARMS: return INTERRUPTION_FILTER_ALARMS;
+            case Global.ZEN_MODE_NO_INTERRUPTIONS: return INTERRUPTION_FILTER_NONE;
+            default: return INTERRUPTION_FILTER_UNKNOWN;
+        }
+!!!5644933.java!!!	zenModeFromInterruptionFilter(in interruptionFilter : int, in defValue : int) : int
+        switch (interruptionFilter) {
+            case INTERRUPTION_FILTER_ALL: return Global.ZEN_MODE_OFF;
+            case INTERRUPTION_FILTER_PRIORITY: return Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS;
+            case INTERRUPTION_FILTER_ALARMS: return Global.ZEN_MODE_ALARMS;
+            case INTERRUPTION_FILTER_NONE:  return Global.ZEN_MODE_NO_INTERRUPTIONS;
+            default: return defValue;
+        }

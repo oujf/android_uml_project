@@ -1,0 +1,108 @@
+class DragEvent
+!!!8702085.java!!!	init(in action : int, in x : float, in y : float, inout description : ClipDescription, inout data : ClipData, inout dragAndDropPermissions : IDragAndDropPermissions, inout localState : Object, inout result : boolean) : void
+        mAction = action;
+        mX = x;
+        mY = y;
+        mClipDescription = description;
+        mClipData = data;
+        this.mDragAndDropPermissions = dragAndDropPermissions;
+        mLocalState = localState;
+        mDragResult = result;
+!!!8702213.java!!!	obtain() : DragEvent
+        return DragEvent.obtain(0, 0f, 0f, null, null, null, null, false);
+!!!8702341.java!!!	obtain(in action : int, in x : float, in y : float, inout localState : Object, inout description : ClipDescription, inout data : ClipData, inout dragAndDropPermissions : IDragAndDropPermissions, inout result : boolean) : DragEvent
+        final DragEvent ev;
+        synchronized (gRecyclerLock) {
+            if (gRecyclerTop == null) {
+                ev = new DragEvent();
+                ev.init(action, x, y, description, data, dragAndDropPermissions, localState,
+                        result);
+                return ev;
+            }
+            ev = gRecyclerTop;
+            gRecyclerTop = ev.mNext;
+            gRecyclerUsed -= 1;
+        }
+        ev.mRecycledLocation = null;
+        ev.mRecycled = false;
+        ev.mNext = null;
+
+        ev.init(action, x, y, description, data, dragAndDropPermissions, localState, result);
+
+        return ev;
+!!!8702469.java!!!	obtain(inout source : DragEvent) : DragEvent
+        return obtain(source.mAction, source.mX, source.mY, source.mLocalState,
+                source.mClipDescription, source.mClipData, source.mDragAndDropPermissions,
+                source.mDragResult);
+!!!8702597.java!!!	getAction() : int
+        return mAction;
+!!!8702725.java!!!	getX() : float
+        return mX;
+!!!8702853.java!!!	getY() : float
+        return mY;
+!!!8702981.java!!!	getClipData() : ClipData
+        return mClipData;
+!!!8703109.java!!!	getClipDescription() : ClipDescription
+        return mClipDescription;
+!!!8703237.java!!!	getDragAndDropPermissions() : IDragAndDropPermissions
+        return mDragAndDropPermissions;
+!!!8703365.java!!!	getLocalState() : Object
+        return mLocalState;
+!!!8703493.java!!!	getResult() : boolean
+        return mDragResult;
+!!!8703621.java!!!	recycle() : void
+        // Ensure recycle is only called once!
+        if (TRACK_RECYCLED_LOCATION) {
+            if (mRecycledLocation != null) {
+                throw new RuntimeException(toString() + " recycled twice!", mRecycledLocation);
+            }
+            mRecycledLocation = new RuntimeException("Last recycled here");
+        } else {
+            if (mRecycled) {
+                throw new RuntimeException(toString() + " recycled twice!");
+            }
+            mRecycled = true;
+        }
+
+        mClipData = null;
+        mClipDescription = null;
+        mLocalState = null;
+        mEventHandlerWasCalled = false;
+
+        synchronized (gRecyclerLock) {
+            if (gRecyclerUsed < MAX_RECYCLED) {
+                gRecyclerUsed++;
+                mNext = gRecyclerTop;
+                gRecyclerTop = this;
+            }
+        }
+!!!8703749.java!!!	toString() : String
+        return "DragEvent{" + Integer.toHexString(System.identityHashCode(this))
+        + " action=" + mAction + " @ (" + mX + ", " + mY + ") desc=" + mClipDescription
+        + " data=" + mClipData + " local=" + mLocalState + " result=" + mDragResult
+        + "}";
+!!!8703877.java!!!	describeContents() : int
+        return 0;
+!!!8704005.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        dest.writeInt(mAction);
+        dest.writeFloat(mX);
+        dest.writeFloat(mY);
+        dest.writeInt(mDragResult ? 1 : 0);
+        if (mClipData == null) {
+            dest.writeInt(0);
+        } else {
+            dest.writeInt(1);
+            mClipData.writeToParcel(dest, flags);
+        }
+        if (mClipDescription == null) {
+            dest.writeInt(0);
+        } else {
+            dest.writeInt(1);
+            mClipDescription.writeToParcel(dest, flags);
+        }
+        if (mDragAndDropPermissions == null) {
+            dest.writeInt(0);
+        } else {
+            dest.writeInt(1);
+            dest.writeStrongBinder(mDragAndDropPermissions.asBinder());
+        }

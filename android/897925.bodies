@@ -1,0 +1,116 @@
+class TunerServiceImpl
+!!!4240389.java!!!	TunerServiceImpl(inout context : Context)
+        mContext = context;
+        mContentResolver = mContext.getContentResolver();
+
+        for (UserInfo user : UserManager.get(mContext).getUsers()) {
+            mCurrentUser = user.getUserHandle().getIdentifier();
+            if (getValue(TUNER_VERSION, 0) != CURRENT_TUNER_VERSION) {
+                upgradeTuner(getValue(TUNER_VERSION, 0), CURRENT_TUNER_VERSION);
+            }
+        }
+
+        mCurrentUser = ActivityManager.getCurrentUser();
+        mUserTracker = new CurrentUserTracker(mContext) {
+            @Override
+            public void onUserSwitched(int newUserId) {
+                mCurrentUser = newUserId;
+                reloadAll();
+                reregisterAll();
+            }
+        };
+        mUserTracker.startTracking();
+!!!4240517.java!!!	destroy() : void
+        mUserTracker.stopTracking();
+!!!4240645.java!!!	upgradeTuner(in oldVersion : int, in newVersion : int) : void
+        if (oldVersion < 1) {
+            String blacklistStr = getValue(StatusBarIconController.ICON_BLACKLIST);
+            if (blacklistStr != null) {
+                ArraySet<String> iconBlacklist =
+                        StatusBarIconController.getIconBlacklist(blacklistStr);
+
+                iconBlacklist.add("rotate");
+                iconBlacklist.add("headset");
+
+                Settings.Secure.putStringForUser(mContentResolver,
+                        StatusBarIconController.ICON_BLACKLIST,
+                        TextUtils.join(",", iconBlacklist), mCurrentUser);
+            }
+        }
+        setValue(TUNER_VERSION, newVersion);
+!!!4240773.java!!!	getValue(in setting : String) : String
+        return Settings.Secure.getStringForUser(mContentResolver, setting, mCurrentUser);
+!!!4240901.java!!!	setValue(in setting : String, in value : String) : void
+         Settings.Secure.putStringForUser(mContentResolver, setting, value, mCurrentUser);
+!!!4241029.java!!!	getValue(in setting : String, in def : int) : int
+        return Settings.Secure.getIntForUser(mContentResolver, setting, def, mCurrentUser);
+!!!4241157.java!!!	getValue(in setting : String, in def : String) : String
+        String ret = Secure.getStringForUser(mContentResolver, setting, mCurrentUser);
+        if (ret == null) return def;
+        return ret;
+!!!4241285.java!!!	setValue(in setting : String, in value : int) : void
+         Settings.Secure.putIntForUser(mContentResolver, setting, value, mCurrentUser);
+!!!4241413.java!!!	addTunable(inout tunable : TunerService::Tunable, inout  : String...keys) : void
+        for (String key : keys) {
+            addTunable(tunable, key);
+        }
+!!!4241541.java!!!	addTunable(inout tunable : TunerService::Tunable, in key : String) : void
+        if (!mTunableLookup.containsKey(key)) {
+            mTunableLookup.put(key, new ArraySet<Tunable>());
+        }
+        mTunableLookup.get(key).add(tunable);
+        if (LeakDetector.ENABLED) {
+            mTunables.add(tunable);
+            Dependency.get(LeakDetector.class).trackCollection(mTunables, "TunerService.mTunables");
+        }
+        Uri uri = Settings.Secure.getUriFor(key);
+        if (!mListeningUris.containsKey(uri)) {
+            mListeningUris.put(uri, key);
+            mContentResolver.registerContentObserver(uri, false, mObserver, mCurrentUser);
+        }
+        // Send the first state.
+        String value = Settings.Secure.getStringForUser(mContentResolver, key, mCurrentUser);
+        tunable.onTuningChanged(key, value);
+!!!4241669.java!!!	removeTunable(inout tunable : TunerService::Tunable) : void
+        for (Set<Tunable> list : mTunableLookup.values()) {
+            list.remove(tunable);
+        }
+        if (LeakDetector.ENABLED) {
+            mTunables.remove(tunable);
+        }
+!!!4241797.java!!!	reregisterAll() : void
+        if (mListeningUris.size() == 0) {
+            return;
+        }
+        mContentResolver.unregisterContentObserver(mObserver);
+        for (Uri uri : mListeningUris.keySet()) {
+            mContentResolver.registerContentObserver(uri, false, mObserver, mCurrentUser);
+        }
+!!!4241925.java!!!	reloadSetting(inout uri : Uri) : void
+        String key = mListeningUris.get(uri);
+        Set<Tunable> tunables = mTunableLookup.get(key);
+        if (tunables == null) {
+            return;
+        }
+        String value = Settings.Secure.getStringForUser(mContentResolver, key, mCurrentUser);
+        for (Tunable tunable : tunables) {
+            tunable.onTuningChanged(key, value);
+        }
+!!!4242053.java!!!	reloadAll() : void
+        for (String key : mTunableLookup.keySet()) {
+            String value = Settings.Secure.getStringForUser(mContentResolver, key,
+                    mCurrentUser);
+            for (Tunable tunable : mTunableLookup.get(key)) {
+                tunable.onTuningChanged(key, value);
+            }
+        }
+!!!4242181.java!!!	clearAll() : void
+        // A couple special cases.
+        Settings.Global.putString(mContentResolver, DemoMode.DEMO_MODE_ALLOWED, null);
+        Intent intent = new Intent(DemoMode.ACTION_DEMO);
+        intent.putExtra(DemoMode.EXTRA_COMMAND, DemoMode.COMMAND_EXIT);
+        mContext.sendBroadcast(intent);
+
+        for (String key : mTunableLookup.keySet()) {
+            Settings.Secure.putString(mContentResolver, key, null);
+        }

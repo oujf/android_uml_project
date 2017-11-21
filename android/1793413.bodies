@@ -1,0 +1,218 @@
+class TaskSnapshotSurface
+!!!12760453.java!!!	create(inout service : WindowManagerService, inout token : AppWindowToken, inout snapshot : ActivityManager::TaskSnapshot) : TaskSnapshotSurface
+
+        final WindowManager.LayoutParams layoutParams = new WindowManager.LayoutParams();
+        final Window window = new Window();
+        final IWindowSession session = WindowManagerGlobal.getWindowSession();
+        window.setSession(session);
+        final Surface surface = new Surface();
+        final Rect tmpRect = new Rect();
+        final Rect tmpFrame = new Rect();
+        final Rect taskBounds;
+        final Rect tmpContentInsets = new Rect();
+        final Rect tmpStableInsets = new Rect();
+        final MergedConfiguration tmpMergedConfiguration = new MergedConfiguration();
+        int backgroundColor = WHITE;
+        int statusBarColor = 0;
+        int navigationBarColor = 0;
+        final int sysUiVis;
+        final int windowFlags;
+        final int windowPrivateFlags;
+        final int currentOrientation;
+        synchronized (service.mWindowMap) {
+            final WindowState mainWindow = token.findMainWindow();
+            if (mainWindow == null) {
+                Slog.w(TAG, "TaskSnapshotSurface.create: Failed to find main window for token="
+                        + token);
+                return null;
+            }
+            sysUiVis = mainWindow.getSystemUiVisibility();
+            windowFlags = mainWindow.getAttrs().flags;
+            windowPrivateFlags = mainWindow.getAttrs().privateFlags;
+
+            layoutParams.type = TYPE_APPLICATION_STARTING;
+            layoutParams.format = snapshot.getSnapshot().getFormat();
+            layoutParams.flags = (windowFlags & ~FLAG_INHERIT_EXCLUDES)
+                    | FLAG_NOT_FOCUSABLE
+                    | FLAG_NOT_TOUCHABLE;
+            layoutParams.privateFlags = PRIVATE_FLAG_TASK_SNAPSHOT
+                    | (windowPrivateFlags & PRIVATE_FLAG_INHERITS);
+            layoutParams.token = token.token;
+            layoutParams.width = LayoutParams.MATCH_PARENT;
+            layoutParams.height = LayoutParams.MATCH_PARENT;
+            layoutParams.systemUiVisibility = sysUiVis;
+            final Task task = token.getTask();
+            if (task != null) {
+                layoutParams.setTitle(String.format(TITLE_FORMAT, task.mTaskId));
+
+                final TaskDescription taskDescription = task.getTaskDescription();
+                if (taskDescription != null) {
+                    backgroundColor = taskDescription.getBackgroundColor();
+                    statusBarColor = taskDescription.getStatusBarColor();
+                    navigationBarColor = taskDescription.getNavigationBarColor();
+                }
+                taskBounds = new Rect();
+                task.getBounds(taskBounds);
+            } else {
+                taskBounds = null;
+            }
+            currentOrientation = mainWindow.getConfiguration().orientation;
+        }
+        try {
+            final int res = session.addToDisplay(window, window.mSeq, layoutParams,
+                    View.VISIBLE, token.getDisplayContent().getDisplayId(), tmpRect, tmpRect,
+                    tmpRect, null);
+            if (res < 0) {
+                Slog.w(TAG, "Failed to add snapshot starting window res=" + res);
+                return null;
+            }
+        } catch (RemoteException e) {
+            // Local call.
+        }
+        final TaskSnapshotSurface snapshotSurface = new TaskSnapshotSurface(service, window,
+                surface, snapshot, layoutParams.getTitle(), backgroundColor, statusBarColor,
+                navigationBarColor, sysUiVis, windowFlags, windowPrivateFlags, taskBounds,
+                currentOrientation);
+        window.setOuter(snapshotSurface);
+        try {
+            session.relayout(window, window.mSeq, layoutParams, -1, -1, View.VISIBLE, 0, tmpFrame,
+                    tmpRect, tmpContentInsets, tmpRect, tmpStableInsets, tmpRect, tmpRect,
+                    tmpMergedConfiguration, surface);
+        } catch (RemoteException e) {
+            // Local call.
+        }
+        snapshotSurface.setFrames(tmpFrame, tmpContentInsets, tmpStableInsets);
+        snapshotSurface.drawSnapshot();
+        return snapshotSurface;
+!!!12760581.java!!!	TaskSnapshotSurface(inout service : WindowManagerService, inout window : TaskSnapshotSurface::Window, inout surface : Surface, inout snapshot : ActivityManager::TaskSnapshot, inout title : CharSequence, in backgroundColor : int, in statusBarColor : int, in navigationBarColor : int, in sysUiVis : int, in windowFlags : int, in windowPrivateFlags : int, inout taskBounds : Rect, in currentOrientation : int)
+        mService = service;
+        mHandler = new Handler(mService.mH.getLooper());
+        mSession = WindowManagerGlobal.getWindowSession();
+        mWindow = window;
+        mSurface = surface;
+        mSnapshot = snapshot;
+        mTitle = title;
+        mBackgroundPaint.setColor(backgroundColor != 0 ? backgroundColor : WHITE);
+        mTaskBounds = taskBounds;
+        mSystemBarBackgroundPainter = new SystemBarBackgroundPainter(windowFlags,
+                windowPrivateFlags, sysUiVis, statusBarColor, navigationBarColor);
+        mStatusBarColor = statusBarColor;
+        mOrientationOnCreation = currentOrientation;
+!!!12760709.java!!!	remove() : void
+        synchronized (mService.mWindowMap) {
+            final long now = SystemClock.uptimeMillis();
+            if (mSizeMismatch && now - mShownTime < SIZE_MISMATCH_MINIMUM_TIME_MS) {
+                mHandler.postAtTime(this::remove, mShownTime + SIZE_MISMATCH_MINIMUM_TIME_MS);
+                if (DEBUG_STARTING_WINDOW) {
+                    Slog.v(TAG, "Defer removing snapshot surface in "  + (now - mShownTime) + "ms");
+                }
+                return;
+            }
+        }
+        try {
+            if (DEBUG_STARTING_WINDOW) Slog.v(TAG, "Removing snapshot surface");
+            mSession.remove(mWindow);
+        } catch (RemoteException e) {
+            // Local call.
+        }
+!!!12760837.java!!!	setFrames(inout frame : Rect, inout contentInsets : Rect, inout stableInsets : Rect) : void
+        mFrame.set(frame);
+        mContentInsets.set(contentInsets);
+        mStableInsets.set(stableInsets);
+        mSizeMismatch = (mFrame.width() != mSnapshot.getSnapshot().getWidth()
+                || mFrame.height() != mSnapshot.getSnapshot().getHeight());
+        mSystemBarBackgroundPainter.setInsets(contentInsets, stableInsets);
+!!!12760965.java!!!	drawSnapshot() : void
+        final GraphicBuffer buffer = mSnapshot.getSnapshot();
+        if (DEBUG_STARTING_WINDOW) Slog.v(TAG, "Drawing snapshot surface sizeMismatch="
+                + mSizeMismatch);
+        if (mSizeMismatch) {
+            // The dimensions of the buffer and the window don't match, so attaching the buffer
+            // will fail. Better create a child window with the exact dimensions and fill the parent
+            // window with the background color!
+            drawSizeMismatchSnapshot(buffer);
+        } else {
+            drawSizeMatchSnapshot(buffer);
+        }
+        synchronized (mService.mWindowMap) {
+            mShownTime = SystemClock.uptimeMillis();
+            mHasDrawn = true;
+        }
+        reportDrawn();
+
+        // In case window manager leaks us, make sure we don't retain the snapshot.
+        mSnapshot = null;
+!!!12761093.java!!!	drawSizeMatchSnapshot(inout buffer : GraphicBuffer) : void
+        mSurface.attachAndQueueBuffer(buffer);
+        mSurface.release();
+!!!12761221.java!!!	drawSizeMismatchSnapshot(inout buffer : GraphicBuffer) : void
+        final SurfaceSession session = new SurfaceSession(mSurface);
+
+        // Keep a reference to it such that it doesn't get destroyed when finalized.
+        mChildSurfaceControl = new SurfaceControl(session,
+                mTitle + " - task-snapshot-surface",
+                buffer.getWidth(), buffer.getHeight(), buffer.getFormat(), HIDDEN);
+        Surface surface = new Surface();
+        surface.copyFrom(mChildSurfaceControl);
+
+        // Clip off ugly navigation bar.
+        final Rect crop = calculateSnapshotCrop();
+        final Rect frame = calculateSnapshotFrame(crop);
+        SurfaceControl.openTransaction();
+        try {
+            // We can just show the surface here as it will still be hidden as the parent is
+            // still hidden.
+            mChildSurfaceControl.show();
+            mChildSurfaceControl.setWindowCrop(crop);
+            mChildSurfaceControl.setPosition(frame.left, frame.top);
+        } finally {
+            SurfaceControl.closeTransaction();
+        }
+        surface.attachAndQueueBuffer(buffer);
+        surface.release();
+
+        final Canvas c = mSurface.lockCanvas(null);
+        drawBackgroundAndBars(c, frame);
+        mSurface.unlockCanvasAndPost(c);
+        mSurface.release();
+!!!12761349.java!!!	calculateSnapshotCrop() : Rect
+        final Rect rect = new Rect();
+        rect.set(0, 0, mSnapshot.getSnapshot().getWidth(), mSnapshot.getSnapshot().getHeight());
+        final Rect insets = mSnapshot.getContentInsets();
+
+        // Let's remove all system decorations except the status bar, but only if the task is at the
+        // very top of the screen.
+        rect.inset(insets.left, mTaskBounds.top != 0 ? insets.top : 0, insets.right, insets.bottom);
+        return rect;
+!!!12761477.java!!!	calculateSnapshotFrame(inout crop : Rect) : Rect
+        final Rect frame = new Rect(crop);
+
+        // By default, offset it to to top/left corner
+        frame.offsetTo(-crop.left, -crop.top);
+
+        // However, we also need to make space for the navigation bar on the left side.
+        final int colorViewLeftInset = getColorViewLeftInset(mStableInsets.left,
+                mContentInsets.left);
+        frame.offset(colorViewLeftInset, 0);
+        return frame;
+!!!12761605.java!!!	drawBackgroundAndBars(inout c : Canvas, inout frame : Rect) : void
+        final int statusBarHeight = mSystemBarBackgroundPainter.getStatusBarColorViewHeight();
+        final boolean fillHorizontally = c.getWidth() > frame.right;
+        final boolean fillVertically = c.getHeight() > frame.bottom;
+        if (fillHorizontally) {
+            c.drawRect(frame.right, alpha(mStatusBarColor) == 0xFF ? statusBarHeight : 0,
+                    c.getWidth(), fillVertically
+                            ? frame.bottom
+                            : c.getHeight(),
+                    mBackgroundPaint);
+        }
+        if (fillVertically) {
+            c.drawRect(0, frame.bottom, c.getWidth(), c.getHeight(), mBackgroundPaint);
+        }
+        mSystemBarBackgroundPainter.drawDecors(c, frame);
+!!!12761733.java!!!	reportDrawn() : void
+        try {
+            mSession.finishDrawing(mWindow);
+        } catch (RemoteException e) {
+            // Local call.
+        }

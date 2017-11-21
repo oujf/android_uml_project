@@ -1,0 +1,278 @@
+class Binder
+!!!5545349.java!!!	enableTracing() : void
+        sTracingEnabled = true;
+!!!5545477.java!!!	disableTracing() : void
+        sTracingEnabled = false;
+!!!5545605.java!!!	isTracingEnabled() : boolean
+        return sTracingEnabled;
+!!!5545733.java!!!	getTransactionTracker() : TransactionTracker
+        if (sTransactionTracker == null)
+            sTransactionTracker = new TransactionTracker();
+        return sTransactionTracker;
+!!!5545861.java!!!	setWarnOnBlocking(inout warnOnBlocking : boolean) : void
+        sWarnOnBlocking = warnOnBlocking;
+!!!5545989.java!!!	allowBlocking(inout binder : IBinder) : IBinder
+        try {
+            if (binder instanceof BinderProxy) {
+                ((BinderProxy) binder).mWarnOnBlocking = false;
+            } else if (binder != null
+                    && binder.queryLocalInterface(binder.getInterfaceDescriptor()) == null) {
+                Log.w(TAG, "Unable to allow blocking on interface " + binder);
+            }
+        } catch (RemoteException ignored) {
+        }
+        return binder;
+!!!5546117.java!!!	copyAllowBlocking(inout fromBinder : IBinder, inout toBinder : IBinder) : void
+        if (fromBinder instanceof BinderProxy && toBinder instanceof BinderProxy) {
+            ((BinderProxy) toBinder).mWarnOnBlocking = ((BinderProxy) fromBinder).mWarnOnBlocking;
+        }
+!!!5546501.java!!!	getCallingUserHandle() : UserHandle
+        return UserHandle.of(UserHandle.getUserId(getCallingUid()));
+!!!5546885.java!!!	withCleanCallingIdentity(inout action : FunctionalUtils::ThrowingRunnable) : void
+        long callingIdentity = clearCallingIdentity();
+        Throwable throwableToPropagate = null;
+        try {
+            action.run();
+        } catch (Throwable throwable) {
+            throwableToPropagate = throwable;
+        } finally {
+            restoreCallingIdentity(callingIdentity);
+            if (throwableToPropagate != null) {
+                throw ExceptionUtils.propagate(throwableToPropagate);
+            }
+        }
+!!!5547013.java!!!	withCleanCallingIdentity(inout action : FunctionalUtils::ThrowingSupplier) : T
+        long callingIdentity = clearCallingIdentity();
+        Throwable throwableToPropagate = null;
+        try {
+            return action.get();
+        } catch (Throwable throwable) {
+            throwableToPropagate = throwable;
+            return null; // overridden by throwing in finally block
+        } finally {
+            restoreCallingIdentity(callingIdentity);
+            if (throwableToPropagate != null) {
+                throw ExceptionUtils.propagate(throwableToPropagate);
+            }
+        }
+!!!5547653.java!!!	isProxy(inout iface : IInterface) : boolean
+        return iface.asBinder() != iface;
+!!!5547909.java!!!	Binder()
+        init();
+
+        if (FIND_POTENTIAL_LEAKS) {
+            final Class<? extends Binder> klass = getClass();
+            if ((klass.isAnonymousClass() || klass.isMemberClass() || klass.isLocalClass()) &&
+                    (klass.getModifiers() & Modifier.STATIC) == 0) {
+                Log.w(TAG, "The following Binder class should be static or leaks might occur: " +
+                    klass.getCanonicalName());
+            }
+        }
+!!!5548037.java!!!	attachInterface(inout owner : IInterface, in descriptor : String) : void
+        mOwner = owner;
+        mDescriptor = descriptor;
+!!!5548165.java!!!	getInterfaceDescriptor() : String
+        return mDescriptor;
+!!!5548293.java!!!	pingBinder() : boolean
+        return true;
+!!!5548421.java!!!	isBinderAlive() : boolean
+        return true;
+!!!5548549.java!!!	queryLocalInterface(in descriptor : String) : IInterface
+        if (mDescriptor.equals(descriptor)) {
+            return mOwner;
+        }
+        return null;
+!!!5548677.java!!!	setDumpDisabled(in msg : String) : void
+        sDumpDisabled = msg;
+!!!5548805.java!!!	onTransact(in code : int, inout data : Parcel, inout reply : Parcel, in flags : int) : boolean
+        if (code == INTERFACE_TRANSACTION) {
+            reply.writeString(getInterfaceDescriptor());
+            return true;
+        } else if (code == DUMP_TRANSACTION) {
+            ParcelFileDescriptor fd = data.readFileDescriptor();
+            String[] args = data.readStringArray();
+            if (fd != null) {
+                try {
+                    dump(fd.getFileDescriptor(), args);
+                } finally {
+                    IoUtils.closeQuietly(fd);
+                }
+            }
+            // Write the StrictMode header.
+            if (reply != null) {
+                reply.writeNoException();
+            } else {
+                StrictMode.clearGatheredViolations();
+            }
+            return true;
+        } else if (code == SHELL_COMMAND_TRANSACTION) {
+            ParcelFileDescriptor in = data.readFileDescriptor();
+            ParcelFileDescriptor out = data.readFileDescriptor();
+            ParcelFileDescriptor err = data.readFileDescriptor();
+            String[] args = data.readStringArray();
+            ShellCallback shellCallback = ShellCallback.CREATOR.createFromParcel(data);
+            ResultReceiver resultReceiver = ResultReceiver.CREATOR.createFromParcel(data);
+            try {
+                if (out != null) {
+                    shellCommand(in != null ? in.getFileDescriptor() : null,
+                            out.getFileDescriptor(),
+                            err != null ? err.getFileDescriptor() : out.getFileDescriptor(),
+                            args, shellCallback, resultReceiver);
+                }
+            } finally {
+                IoUtils.closeQuietly(in);
+                IoUtils.closeQuietly(out);
+                IoUtils.closeQuietly(err);
+                // Write the StrictMode header.
+                if (reply != null) {
+                    reply.writeNoException();
+                } else {
+                    StrictMode.clearGatheredViolations();
+                }
+            }
+            return true;
+        }
+        return false;
+!!!5548933.java!!!	dump(inout fd : FileDescriptor, inout args : String [[]]) : void
+        FileOutputStream fout = new FileOutputStream(fd);
+        PrintWriter pw = new FastPrintWriter(fout);
+        try {
+            doDump(fd, pw, args);
+        } finally {
+            pw.flush();
+        }
+!!!5549061.java!!!	doDump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        final String disabled = sDumpDisabled;
+        if (disabled == null) {
+            try {
+                dump(fd, pw, args);
+            } catch (SecurityException e) {
+                pw.println("Security exception: " + e.getMessage());
+                throw e;
+            } catch (Throwable e) {
+                // Unlike usual calls, in this case if an exception gets thrown
+                // back to us we want to print it back in to the dump data, since
+                // that is where the caller expects all interesting information to
+                // go.
+                pw.println();
+                pw.println("Exception occurred while dumping:");
+                e.printStackTrace(pw);
+            }
+        } else {
+            pw.println(sDumpDisabled);
+        }
+!!!5549189.java!!!	dumpAsync(in fd : FileDescriptor, in args : String [[]]) : void
+        final FileOutputStream fout = new FileOutputStream(fd);
+        final PrintWriter pw = new FastPrintWriter(fout);
+        Thread thr = new Thread("Binder.dumpAsync") {
+            public void run() {
+                try {
+                    dump(fd, pw, args);
+                } finally {
+                    pw.flush();
+                }
+            }
+        };
+        thr.start();
+!!!5549445.java!!!	shellCommand(inout in : FileDescriptor, inout out : FileDescriptor, inout err : FileDescriptor, inout args : String [[]], inout callback : ShellCallback, inout resultReceiver : ResultReceiver) : void
+        onShellCommand(in, out, err, args, callback, resultReceiver);
+!!!5549573.java!!!	onShellCommand(inout in : FileDescriptor, inout out : FileDescriptor, inout err : FileDescriptor, inout args : String [[]], inout callback : ShellCallback, inout resultReceiver : ResultReceiver) : void
+        FileOutputStream fout = new FileOutputStream(err != null ? err : out);
+        PrintWriter pw = new FastPrintWriter(fout);
+        pw.println("No shell command implementation.");
+        pw.flush();
+        resultReceiver.send(0, null);
+!!!5549701.java!!!	transact(in code : int, inout data : Parcel, inout reply : Parcel, in flags : int) : boolean
+        if (false) Log.v("Binder", "Transact: " + code + " to " + this);
+
+        if (data != null) {
+            data.setDataPosition(0);
+        }
+        boolean r = onTransact(code, data, reply, flags);
+        if (reply != null) {
+            reply.setDataPosition(0);
+        }
+        return r;
+!!!5549957.java!!!	unlinkToDeath(inout recipient : IBinder::DeathRecipient, in flags : int) : boolean
+        return true;
+!!!5550085.java!!!	finalize() : void
+        try {
+            destroy();
+        } finally {
+            super.finalize();
+        }
+!!!5550213.java!!!	checkParcel(inout obj : IBinder, in code : int, inout parcel : Parcel, in msg : String) : void
+        if (CHECK_PARCEL_SIZE && parcel.dataSize() >= 800*1024) {
+            // Trying to send > 800k, this is way too much
+            StringBuilder sb = new StringBuilder();
+            sb.append(msg);
+            sb.append(": on ");
+            sb.append(obj);
+            sb.append(" calling ");
+            sb.append(code);
+            sb.append(" size ");
+            sb.append(parcel.dataSize());
+            sb.append(" (data: ");
+            parcel.setDataPosition(0);
+            sb.append(parcel.readInt());
+            sb.append(", ");
+            sb.append(parcel.readInt());
+            sb.append(", ");
+            sb.append(parcel.readInt());
+            sb.append(")");
+            Slog.wtfStack(TAG, sb.toString());
+        }
+!!!5550597.java!!!	execTransact(in code : int, in dataObj : long, in replyObj : long, in flags : int) : boolean
+        Parcel data = Parcel.obtain(dataObj);
+        Parcel reply = Parcel.obtain(replyObj);
+        // theoretically, we should call transact, which will call onTransact,
+        // but all that does is rewind it, and we just got these from an IPC,
+        // so we'll just call it directly.
+        boolean res;
+        // Log any exceptions as warnings, don't silently suppress them.
+        // If the call was FLAG_ONEWAY then these exceptions disappear into the ether.
+        final boolean tracingEnabled = Binder.isTracingEnabled();
+        try {
+            if (tracingEnabled) {
+                Trace.traceBegin(Trace.TRACE_TAG_ALWAYS, getClass().getName() + ":" + code);
+            }
+            res = onTransact(code, data, reply, flags);
+        } catch (RemoteException|RuntimeException e) {
+            if (LOG_RUNTIME_EXCEPTION) {
+                Log.w(TAG, "Caught a RuntimeException from the binder stub implementation.", e);
+            }
+            if ((flags & FLAG_ONEWAY) != 0) {
+                if (e instanceof RemoteException) {
+                    Log.w(TAG, "Binder call failed.", e);
+                } else {
+                    Log.w(TAG, "Caught a RuntimeException from the binder stub implementation.", e);
+                }
+            } else {
+                reply.setDataPosition(0);
+                reply.writeException(e);
+            }
+            res = true;
+        } catch (OutOfMemoryError e) {
+            // Unconditionally log this, since this is generally unrecoverable.
+            Log.e(TAG, "Caught an OutOfMemoryError from the binder stub implementation.", e);
+            RuntimeException re = new RuntimeException("Out of memory", e);
+            reply.setDataPosition(0);
+            reply.writeException(re);
+            res = true;
+        } finally {
+            if (tracingEnabled) {
+                Trace.traceEnd(Trace.TRACE_TAG_ALWAYS);
+            }
+        }
+        checkParcel(this, code, reply, "Unreasonably large binder reply buffer");
+        reply.recycle();
+        data.recycle();
+
+        // Just in case -- we are done with the IPC, so there should be no more strict
+        // mode violations that have gathered for this thread.  Either they have been
+        // parceled and are now in transport off to the caller, or we are returning back
+        // to the main transaction loop to wait for another incoming transaction.  Either
+        // way, strict mode begone!
+        StrictMode.clearGatheredViolations();
+
+        return res;

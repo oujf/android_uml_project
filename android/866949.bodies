@@ -1,0 +1,142 @@
+class ConnectedDeviceSignalController
+!!!3852421.java!!!	ConnectedDeviceSignalController(inout context : Context, inout signalsView : View)
+        mContext = context;
+        mController = Dependency.get(BluetoothController.class);
+
+        mSignalsView = signalsView;
+        mNetworkSignalView = (ImageView)
+                mSignalsView.findViewById(R.id.connected_device_network_signal);
+
+        TypedValue typedValue = new TypedValue();
+        context.getResources().getValue(R.dimen.status_bar_icon_scale_factor, typedValue, true);
+        mIconScaleFactor = typedValue.getFloat();
+        mSignalDrawable = new SignalDrawable(mNetworkSignalView.getContext());
+        mNetworkSignalView.setImageDrawable(
+                new ScalingDrawableWrapper(mSignalDrawable, mIconScaleFactor));
+
+        if (mAdapter == null) {
+          return;
+        }
+
+        mAdapter.getProfileProxy(context.getApplicationContext(), mHfpServiceListener,
+                BluetoothProfile.HEADSET_CLIENT);
+!!!3852549.java!!!	startListening() : void
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(BluetoothHeadsetClient.ACTION_CONNECTION_STATE_CHANGED);
+        filter.addAction(BluetoothHeadsetClient.ACTION_AG_EVENT);
+        mContext.registerReceiver(this, filter);
+
+        mController.addCallback(this);
+!!!3852677.java!!!	stopListening() : void
+        mContext.unregisterReceiver(this);
+        mController.removeCallback(this);
+!!!3852805.java!!!	onBluetoothDevicesChanged() : void
+        // Nothing to do here because this Controller is not displaying a list of possible
+        // bluetooth devices.
+!!!3852933.java!!!	onBluetoothStateChange(inout enabled : boolean) : void
+        if (DEBUG) {
+            Log.d(TAG, "onBluetoothStateChange(). enabled: " + enabled);
+        }
+
+        // Only need to handle the case if bluetooth has been disabled, in which case the
+        // signal indicators are hidden. If bluetooth has been enabled, then this class should
+        // receive updates to the connection state via onReceive().
+        if (!enabled) {
+            mNetworkSignalView.setVisibility(View.GONE);
+            mSignalsView.setVisibility(View.GONE);
+        }
+!!!3853061.java!!!	onReceive(inout context : Context, inout intent : Intent) : void
+        String action = intent.getAction();
+
+        if (DEBUG) {
+            Log.d(TAG, "onReceive(). action: " + action);
+        }
+
+        if (BluetoothHeadsetClient.ACTION_AG_EVENT.equals(action)) {
+            if (DEBUG) {
+                Log.d(TAG, "Received ACTION_AG_EVENT");
+            }
+
+            processActionAgEvent(intent);
+        } else if (BluetoothHeadsetClient.ACTION_CONNECTION_STATE_CHANGED.equals(action)) {
+            int newState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1);
+
+            if (DEBUG) {
+                int oldState = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1);
+                Log.d(TAG, "ACTION_CONNECTION_STATE_CHANGED event: "
+                        + oldState + " -> " + newState);
+            }
+            BluetoothDevice device =
+                    (BluetoothDevice) intent.getExtra(BluetoothDevice.EXTRA_DEVICE);
+            updateViewVisibility(device, newState);
+        }
+!!!3853189.java!!!	processActionAgEvent(inout intent : Intent) : void
+        int networkStatus = intent.getIntExtra(BluetoothHeadsetClient.EXTRA_NETWORK_STATUS,
+                INVALID_SIGNAL);
+        if (networkStatus != INVALID_SIGNAL) {
+            if (DEBUG) {
+                Log.d(TAG, "EXTRA_NETWORK_STATUS: " + " " + networkStatus);
+            }
+
+            if (networkStatus == NETWORK_UNAVAILABLE) {
+                setNetworkSignalIcon(NETWORK_UNAVAILABLE_ICON_ID);
+            }
+        }
+
+        int signalStrength = intent.getIntExtra(
+                BluetoothHeadsetClient.EXTRA_NETWORK_SIGNAL_STRENGTH, INVALID_SIGNAL);
+        if (signalStrength != INVALID_SIGNAL) {
+            if (DEBUG) {
+                Log.d(TAG, "EXTRA_NETWORK_SIGNAL_STRENGTH: " + signalStrength);
+            }
+
+            setNetworkSignalIcon(SIGNAL_STRENGTH_ICONS[signalStrength]);
+        }
+
+        int roamingStatus = intent.getIntExtra(BluetoothHeadsetClient.EXTRA_NETWORK_ROAMING,
+                INVALID_SIGNAL);
+        if (roamingStatus != INVALID_SIGNAL) {
+            if (DEBUG) {
+                Log.d(TAG, "EXTRA_NETWORK_ROAMING: " + roamingStatus);
+            }
+        }
+!!!3853317.java!!!	setNetworkSignalIcon(in level : int) : void
+        // Setting the icon on a child view of mSignalView, so toggle this container visible.
+        mSignalsView.setVisibility(View.VISIBLE);
+
+        mSignalDrawable.setLevel(SignalDrawable.getState(level,
+                SignalStrength.NUM_SIGNAL_STRENGTH_BINS, false));
+        mNetworkSignalView.setVisibility(View.VISIBLE);
+!!!3853445.java!!!	updateViewVisibility(inout device : BluetoothDevice, in newState : int) : void
+        if (newState == BluetoothProfile.STATE_CONNECTED) {
+            if (DEBUG) {
+                Log.d(TAG, "Device connected");
+            }
+
+            if (mBluetoothHeadsetClient == null || device == null) {
+                return;
+            }
+
+            // Check if battery information is available and immediately update.
+            Bundle featuresBundle = mBluetoothHeadsetClient.getCurrentAgEvents(device);
+            if (featuresBundle == null) {
+                return;
+            }
+
+            int signalStrength = featuresBundle.getInt(
+                    BluetoothHeadsetClient.EXTRA_NETWORK_SIGNAL_STRENGTH, INVALID_SIGNAL);
+            if (signalStrength != INVALID_SIGNAL) {
+                if (DEBUG) {
+                    Log.d(TAG, "EXTRA_NETWORK_SIGNAL_STRENGTH: " + signalStrength);
+                }
+
+                setNetworkSignalIcon(SIGNAL_STRENGTH_ICONS[signalStrength]);
+            }
+        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            if (DEBUG) {
+                Log.d(TAG, "Device disconnected");
+            }
+
+            mNetworkSignalView.setVisibility(View.GONE);
+            mSignalsView.setVisibility(View.GONE);
+        }

@@ -1,0 +1,352 @@
+class PackageDexUsage
+!!!12338693.java!!!	PackageDexUsage()
+        super("package-dex-usage.list", "PackageDexUsage_DiskWriter", /*lock*/ false);
+        mPackageUseInfoMap = new HashMap<>();
+!!!12338821.java!!!	record(in owningPackageName : String, in dexPath : String, in ownerUserId : int, in loaderIsa : String, inout isUsedByOtherApps : boolean, inout primaryOrSplit : boolean) : boolean
+        if (!PackageManagerServiceUtils.checkISA(loaderIsa)) {
+            throw new IllegalArgumentException("loaderIsa " + loaderIsa + " is unsupported");
+        }
+        synchronized (mPackageUseInfoMap) {
+            PackageUseInfo packageUseInfo = mPackageUseInfoMap.get(owningPackageName);
+            if (packageUseInfo == null) {
+                // This is the first time we see the package.
+                packageUseInfo = new PackageUseInfo();
+                if (primaryOrSplit) {
+                    // If we have a primary or a split apk, set isUsedByOtherApps.
+                    // We do not need to record the loaderIsa or the owner because we compile
+                    // primaries for all users and all ISAs.
+                    packageUseInfo.mIsUsedByOtherApps = isUsedByOtherApps;
+                } else {
+                    // For secondary dex files record the loaderISA and the owner. We'll need
+                    // to know under which user to compile and for what ISA.
+                    packageUseInfo.mDexUseInfoMap.put(
+                            dexPath, new DexUseInfo(isUsedByOtherApps, ownerUserId, loaderIsa));
+                }
+                mPackageUseInfoMap.put(owningPackageName, packageUseInfo);
+                return true;
+            } else {
+                // We already have data on this package. Amend it.
+                if (primaryOrSplit) {
+                    // We have a possible update on the primary apk usage. Merge
+                    // isUsedByOtherApps information and return if there was an update.
+                    return packageUseInfo.merge(isUsedByOtherApps);
+                } else {
+                    DexUseInfo newData = new DexUseInfo(
+                            isUsedByOtherApps, ownerUserId, loaderIsa);
+                    DexUseInfo existingData = packageUseInfo.mDexUseInfoMap.get(dexPath);
+                    if (existingData == null) {
+                        // It's the first time we see this dex file.
+                        packageUseInfo.mDexUseInfoMap.put(dexPath, newData);
+                        return true;
+                    } else {
+                        if (ownerUserId != existingData.mOwnerUserId) {
+                            // Oups, this should never happen, the DexManager who calls this should
+                            // do the proper checks and not call record if the user does not own the
+                            // dex path.
+                            // Secondary dex files are stored in the app user directory. A change in
+                            // owningUser for the same path means that something went wrong at some
+                            // higher level, and the loaderUser was allowed to cross
+                            // user-boundaries and access data from what we know to be the owner
+                            // user.
+                            throw new IllegalArgumentException("Trying to change ownerUserId for "
+                                    + " dex path " + dexPath + " from " + existingData.mOwnerUserId
+                                    + " to " + ownerUserId);
+                        }
+                        // Merge the information into the existing data.
+                        // Returns true if there was an update.
+                        return existingData.merge(newData);
+                    }
+                }
+            }
+        }
+!!!12338949.java!!!	read() : void
+      read((Void) null);
+!!!12339077.java!!!	maybeWriteAsync() : void
+      maybeWriteAsync((Void) null);
+!!!12339205.java!!!	writeInternal(inout data : Void) : void
+        AtomicFile file = getFile();
+        FileOutputStream f = null;
+
+        try {
+            f = file.startWrite();
+            OutputStreamWriter osw = new OutputStreamWriter(f);
+            write(osw);
+            osw.flush();
+            file.finishWrite(f);
+        } catch (IOException e) {
+            if (f != null) {
+                file.failWrite(f);
+            }
+            Slog.e(TAG, "Failed to write usage for dex files", e);
+        }
+!!!12339333.java!!!	write(inout out : Writer) : void
+        // Make a clone to avoid locking while writing to disk.
+        Map<String, PackageUseInfo> packageUseInfoMapClone = clonePackageUseInfoMap();
+
+        FastPrintWriter fpw = new FastPrintWriter(out);
+
+        // Write the header.
+        fpw.print(PACKAGE_DEX_USAGE_VERSION_HEADER);
+        fpw.println(PACKAGE_DEX_USAGE_VERSION);
+
+        for (Map.Entry<String, PackageUseInfo> pEntry : packageUseInfoMapClone.entrySet()) {
+            // Write the package line.
+            String packageName = pEntry.getKey();
+            PackageUseInfo packageUseInfo = pEntry.getValue();
+
+            fpw.println(String.join(SPLIT_CHAR, packageName,
+                    writeBoolean(packageUseInfo.mIsUsedByOtherApps)));
+
+            // Write dex file lines.
+            for (Map.Entry<String, DexUseInfo> dEntry : packageUseInfo.mDexUseInfoMap.entrySet()) {
+                String dexPath = dEntry.getKey();
+                DexUseInfo dexUseInfo = dEntry.getValue();
+                fpw.println(DEX_LINE_CHAR + dexPath);
+                fpw.print(String.join(SPLIT_CHAR, Integer.toString(dexUseInfo.mOwnerUserId),
+                        writeBoolean(dexUseInfo.mIsUsedByOtherApps)));
+                for (String isa : dexUseInfo.mLoaderIsas) {
+                    fpw.print(SPLIT_CHAR + isa);
+                }
+                fpw.println();
+            }
+        }
+        fpw.flush();
+!!!12339461.java!!!	readInternal(inout data : Void) : void
+        AtomicFile file = getFile();
+        BufferedReader in = null;
+        try {
+            in = new BufferedReader(new InputStreamReader(file.openRead()));
+            read(in);
+        } catch (FileNotFoundException expected) {
+            // The file may not be there. E.g. When we first take the OTA with this feature.
+        } catch (IOException e) {
+            Slog.w(TAG, "Failed to parse package dex usage.", e);
+        } finally {
+            IoUtils.closeQuietly(in);
+        }
+!!!12339589.java!!!	read(inout reader : Reader) : void
+        Map<String, PackageUseInfo> data = new HashMap<>();
+        BufferedReader in = new BufferedReader(reader);
+        // Read header, do version check.
+        String versionLine = in.readLine();
+        if (versionLine == null) {
+            throw new IllegalStateException("No version line found.");
+        } else {
+            if (!versionLine.startsWith(PACKAGE_DEX_USAGE_VERSION_HEADER)) {
+                // TODO(calin): the caller is responsible to clear the file.
+                throw new IllegalStateException("Invalid version line: " + versionLine);
+            }
+            int version = Integer.parseInt(
+                    versionLine.substring(PACKAGE_DEX_USAGE_VERSION_HEADER.length()));
+            if (version != PACKAGE_DEX_USAGE_VERSION) {
+                throw new IllegalStateException("Unexpected version: " + version);
+            }
+        }
+
+        String s = null;
+        String currentPakage = null;
+        PackageUseInfo currentPakageData = null;
+
+        Set<String> supportedIsas = new HashSet<>();
+        for (String abi : Build.SUPPORTED_ABIS) {
+            supportedIsas.add(VMRuntime.getInstructionSet(abi));
+        }
+        while ((s = in.readLine()) != null) {
+            if (s.startsWith(DEX_LINE_CHAR)) {
+                // This is the start of the the dex lines.
+                // We expect two lines for each dex entry:
+                // #dexPaths
+                // onwerUserId,isUsedByOtherApps,isa1,isa2
+                if (currentPakage == null) {
+                    throw new IllegalStateException(
+                        "Malformed PackageDexUsage file. Expected package line before dex line.");
+                }
+
+                // First line is the dex path.
+                String dexPath = s.substring(DEX_LINE_CHAR.length());
+                // Next line is the dex data.
+                s = in.readLine();
+                if (s == null) {
+                    throw new IllegalStateException("Could not fine dexUseInfo for line: " + s);
+                }
+
+                // We expect at least 3 elements (isUsedByOtherApps, userId, isa).
+                String[] elems = s.split(SPLIT_CHAR);
+                if (elems.length < 3) {
+                    throw new IllegalStateException("Invalid PackageDexUsage line: " + s);
+                }
+                int ownerUserId = Integer.parseInt(elems[0]);
+                boolean isUsedByOtherApps = readBoolean(elems[1]);
+                DexUseInfo dexUseInfo = new DexUseInfo(isUsedByOtherApps, ownerUserId);
+                for (int i = 2; i < elems.length; i++) {
+                    String isa = elems[i];
+                    if (supportedIsas.contains(isa)) {
+                        dexUseInfo.mLoaderIsas.add(elems[i]);
+                    } else {
+                        // Should never happen unless someone crafts the file manually.
+                        // In theory it could if we drop a supported ISA after an OTA but we don't
+                        // do that.
+                        Slog.wtf(TAG, "Unsupported ISA when parsing PackageDexUsage: " + isa);
+                    }
+                }
+                if (supportedIsas.isEmpty()) {
+                    Slog.wtf(TAG, "Ignore dexPath when parsing PackageDexUsage because of " +
+                            "unsupported isas. dexPath=" + dexPath);
+                    continue;
+                }
+                currentPakageData.mDexUseInfoMap.put(dexPath, dexUseInfo);
+            } else {
+                // This is a package line.
+                // We expect it to be: `packageName,isUsedByOtherApps`.
+                String[] elems = s.split(SPLIT_CHAR);
+                if (elems.length != 2) {
+                    throw new IllegalStateException("Invalid PackageDexUsage line: " + s);
+                }
+                currentPakage = elems[0];
+                currentPakageData = new PackageUseInfo();
+                currentPakageData.mIsUsedByOtherApps = readBoolean(elems[1]);
+                data.put(currentPakage, currentPakageData);
+            }
+        }
+
+        synchronized (mPackageUseInfoMap) {
+            mPackageUseInfoMap.clear();
+            mPackageUseInfoMap.putAll(data);
+        }
+!!!12339717.java!!!	syncData(inout packageToUsersMap : Map<String, Set<Integer>>) : void
+        synchronized (mPackageUseInfoMap) {
+            Iterator<Map.Entry<String, PackageUseInfo>> pIt =
+                    mPackageUseInfoMap.entrySet().iterator();
+            while (pIt.hasNext()) {
+                Map.Entry<String, PackageUseInfo> pEntry = pIt.next();
+                String packageName = pEntry.getKey();
+                PackageUseInfo packageUseInfo = pEntry.getValue();
+                Set<Integer> users = packageToUsersMap.get(packageName);
+                if (users == null) {
+                    // The package doesn't exist anymore, remove the record.
+                    pIt.remove();
+                } else {
+                    // The package exists but we can prune the entries associated with non existing
+                    // users.
+                    Iterator<Map.Entry<String, DexUseInfo>> dIt =
+                            packageUseInfo.mDexUseInfoMap.entrySet().iterator();
+                    while (dIt.hasNext()) {
+                        DexUseInfo dexUseInfo = dIt.next().getValue();
+                        if (!users.contains(dexUseInfo.mOwnerUserId)) {
+                            // User was probably removed. Delete its dex usage info.
+                            dIt.remove();
+                        }
+                    }
+                    if (!packageUseInfo.mIsUsedByOtherApps
+                            && packageUseInfo.mDexUseInfoMap.isEmpty()) {
+                        // The package is not used by other apps and we removed all its dex files
+                        // records. Remove the entire package record as well.
+                        pIt.remove();
+                    }
+                }
+            }
+        }
+!!!12339845.java!!!	clearUsedByOtherApps(in packageName : String) : boolean
+        synchronized (mPackageUseInfoMap) {
+            PackageUseInfo packageUseInfo = mPackageUseInfoMap.get(packageName);
+            if (packageUseInfo == null || !packageUseInfo.mIsUsedByOtherApps) {
+                return false;
+            }
+            packageUseInfo.mIsUsedByOtherApps = false;
+            return true;
+        }
+!!!12339973.java!!!	removePackage(in packageName : String) : boolean
+        synchronized (mPackageUseInfoMap) {
+            return mPackageUseInfoMap.remove(packageName) != null;
+        }
+!!!12340101.java!!!	removeUserPackage(in packageName : String, in userId : int) : boolean
+        synchronized (mPackageUseInfoMap) {
+            PackageUseInfo packageUseInfo = mPackageUseInfoMap.get(packageName);
+            if (packageUseInfo == null) {
+                return false;
+            }
+            boolean updated = false;
+            Iterator<Map.Entry<String, DexUseInfo>> dIt =
+                            packageUseInfo.mDexUseInfoMap.entrySet().iterator();
+            while (dIt.hasNext()) {
+                DexUseInfo dexUseInfo = dIt.next().getValue();
+                if (dexUseInfo.mOwnerUserId == userId) {
+                    dIt.remove();
+                    updated = true;
+                }
+            }
+            // If no secondary dex info is left and the package is not used by other apps
+            // remove the data since it is now useless.
+            if (packageUseInfo.mDexUseInfoMap.isEmpty() && !packageUseInfo.mIsUsedByOtherApps) {
+                mPackageUseInfoMap.remove(packageName);
+                updated = true;
+            }
+            return updated;
+        }
+!!!12340229.java!!!	removeDexFile(in packageName : String, in dexFile : String, in userId : int) : boolean
+        synchronized (mPackageUseInfoMap) {
+            PackageUseInfo packageUseInfo = mPackageUseInfoMap.get(packageName);
+            if (packageUseInfo == null) {
+                return false;
+            }
+            return removeDexFile(packageUseInfo, dexFile, userId);
+        }
+!!!12340357.java!!!	removeDexFile(inout packageUseInfo : PackageDexUsage::PackageUseInfo, in dexFile : String, in userId : int) : boolean
+        DexUseInfo dexUseInfo = packageUseInfo.mDexUseInfoMap.get(dexFile);
+        if (dexUseInfo == null) {
+            return false;
+        }
+        if (dexUseInfo.mOwnerUserId == userId) {
+            packageUseInfo.mDexUseInfoMap.remove(dexFile);
+            return true;
+        }
+        return false;
+!!!12340485.java!!!	getPackageUseInfo(in packageName : String) : PackageDexUsage::PackageUseInfo
+        synchronized (mPackageUseInfoMap) {
+            PackageUseInfo useInfo = mPackageUseInfoMap.get(packageName);
+            // The useInfo contains a map for secondary dex files which could be modified
+            // concurrently after this method returns and thus outside the locking we do here.
+            // (i.e. the map is updated when new class loaders are created, which can happen anytime
+            // after this method returns)
+            // Make a defensive copy to be sure we don't get concurrent modifications.
+            return useInfo == null ? null : new PackageUseInfo(useInfo);
+        }
+!!!12340613.java!!!	getAllPackagesWithSecondaryDexFiles() : Set<String>
+        Set<String> packages = new HashSet<>();
+        synchronized (mPackageUseInfoMap) {
+            for (Map.Entry<String, PackageUseInfo> entry : mPackageUseInfoMap.entrySet()) {
+                if (!entry.getValue().mDexUseInfoMap.isEmpty()) {
+                    packages.add(entry.getKey());
+                }
+            }
+        }
+        return packages;
+!!!12340741.java!!!	clear() : void
+        synchronized (mPackageUseInfoMap) {
+            mPackageUseInfoMap.clear();
+        }
+!!!12340869.java!!!	clonePackageUseInfoMap() : PackageDexUsage::PackageUseInfo
+        Map<String, PackageUseInfo> clone = new HashMap<>();
+        synchronized (mPackageUseInfoMap) {
+            for (Map.Entry<String, PackageUseInfo> e : mPackageUseInfoMap.entrySet()) {
+                clone.put(e.getKey(), new PackageUseInfo(e.getValue()));
+            }
+        }
+        return clone;
+!!!12340997.java!!!	writeBoolean(inout bool : boolean) : String
+        return bool ? "1" : "0";
+!!!12341125.java!!!	readBoolean(in bool : String) : boolean
+        if ("0".equals(bool)) return false;
+        if ("1".equals(bool)) return true;
+        throw new IllegalArgumentException("Unknown bool encoding: " + bool);
+!!!12341253.java!!!	contains(inout array : int [[]], in elem : int) : boolean
+        for (int i = 0; i < array.length; i++) {
+            if (elem == array[i]) {
+                return true;
+            }
+        }
+        return false;
+!!!12341381.java!!!	dump() : String
+        StringWriter sw = new StringWriter();
+        write(sw);
+        return sw.toString();

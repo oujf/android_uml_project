@@ -1,0 +1,364 @@
+class BluetoothA2dp
+!!!5927685.java!!!	BluetoothA2dp(inout context : Context, inout l : BluetoothProfile::ServiceListener)
+        mContext = context;
+        mServiceListener = l;
+        mAdapter = BluetoothAdapter.getDefaultAdapter();
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG,"",e);
+            }
+        }
+
+        doBind();
+!!!5927813.java!!!	doBind() : boolean
+        Intent intent = new Intent(IBluetoothA2dp.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth A2DP Service with " + intent);
+            return false;
+        }
+        return true;
+!!!5927941.java!!!	close() : void
+        mServiceListener = null;
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (Exception e) {
+                Log.e(TAG,"",e);
+            }
+        }
+
+        try {
+            mServiceLock.writeLock().lock();
+            if (mService != null) {
+                mService = null;
+                mContext.unbindService(mConnection);
+            }
+        } catch (Exception re) {
+            Log.e(TAG, "", re);
+        } finally {
+            mServiceLock.writeLock().unlock();
+        }
+!!!5928069.java!!!	finalize() : void
+        // The empty finalize needs to be kept or the
+        // cts signature tests would fail.
+!!!5928197.java!!!	connect(inout device : BluetoothDevice) : boolean
+        if (DBG) log("connect(" + device + ")");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+                return mService.connect(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return false;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return false;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928325.java!!!	disconnect(inout device : BluetoothDevice) : boolean
+        if (DBG) log("disconnect(" + device + ")");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+                return mService.disconnect(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return false;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return false;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928453.java!!!	getConnectedDevices() : BluetoothDevice
+        if (VDBG) log("getConnectedDevices()");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                return mService.getConnectedDevices();
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return new ArrayList<BluetoothDevice>();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return new ArrayList<BluetoothDevice>();
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928581.java!!!	getDevicesMatchingConnectionStates(inout states : int [[]]) : BluetoothDevice
+        if (VDBG) log("getDevicesMatchingStates()");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                return mService.getDevicesMatchingConnectionStates(states);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return new ArrayList<BluetoothDevice>();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return new ArrayList<BluetoothDevice>();
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928709.java!!!	getConnectionState(inout device : BluetoothDevice) : int
+        if (VDBG) log("getState(" + device + ")");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()
+                && isValidDevice(device)) {
+                return mService.getConnectionState(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return BluetoothProfile.STATE_DISCONNECTED;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return BluetoothProfile.STATE_DISCONNECTED;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928837.java!!!	setPriority(inout device : BluetoothDevice, in priority : int) : boolean
+        if (DBG) log("setPriority(" + device + ", " + priority + ")");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()
+                && isValidDevice(device)) {
+                if (priority != BluetoothProfile.PRIORITY_OFF &&
+                    priority != BluetoothProfile.PRIORITY_ON) {
+                    return false;
+                }
+                return mService.setPriority(device, priority);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return false;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return false;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5928965.java!!!	getPriority(inout device : BluetoothDevice) : int
+        if (VDBG) log("getPriority(" + device + ")");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()
+                && isValidDevice(device)) {
+                return mService.getPriority(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return BluetoothProfile.PRIORITY_OFF;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return BluetoothProfile.PRIORITY_OFF;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929093.java!!!	isAvrcpAbsoluteVolumeSupported() : boolean
+        if (DBG) Log.d(TAG, "isAvrcpAbsoluteVolumeSupported");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                return mService.isAvrcpAbsoluteVolumeSupported();
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return false;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in isAvrcpAbsoluteVolumeSupported()", e);
+            return false;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929221.java!!!	adjustAvrcpAbsoluteVolume(in direction : int) : void
+        if (DBG) Log.d(TAG, "adjustAvrcpAbsoluteVolume");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                mService.adjustAvrcpAbsoluteVolume(direction);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in adjustAvrcpAbsoluteVolume()", e);
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929349.java!!!	setAvrcpAbsoluteVolume(in volume : int) : void
+        if (DBG) Log.d(TAG, "setAvrcpAbsoluteVolume");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                mService.setAvrcpAbsoluteVolume(volume);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in setAvrcpAbsoluteVolume()", e);
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929477.java!!!	isA2dpPlaying(inout device : BluetoothDevice) : boolean
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()
+                && isValidDevice(device)) {
+                return mService.isA2dpPlaying(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return false;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return false;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929605.java!!!	shouldSendVolumeKeys(inout device : BluetoothDevice) : boolean
+        if (isEnabled() && isValidDevice(device)) {
+            ParcelUuid[] uuids = device.getUuids();
+            if (uuids == null) return false;
+
+            for (ParcelUuid uuid: uuids) {
+                if (BluetoothUuid.isAvrcpTarget(uuid)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!5929733.java!!!	getCodecStatus() : BluetoothCodecStatus
+        if (DBG) Log.d(TAG, "getCodecStatus");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                return mService.getCodecStatus();
+            }
+            if (mService == null) {
+                Log.w(TAG, "Proxy not attached to service");
+            }
+            return null;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in getCodecStatus()", e);
+            return null;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929861.java!!!	setCodecConfigPreference(inout codecConfig : BluetoothCodecConfig) : void
+        if (DBG) Log.d(TAG, "setCodecConfigPreference");
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                mService.setCodecConfigPreference(codecConfig);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in setCodecConfigPreference()", e);
+            return;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5929989.java!!!	enableOptionalCodecs() : void
+        if (DBG) Log.d(TAG, "enableOptionalCodecs");
+        enableDisableOptionalCodecs(true);
+!!!5930117.java!!!	disableOptionalCodecs() : void
+        if (DBG) Log.d(TAG, "disableOptionalCodecs");
+        enableDisableOptionalCodecs(false);
+!!!5930245.java!!!	enableDisableOptionalCodecs(inout enable : boolean) : void
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()) {
+                if (enable) {
+                    mService.enableOptionalCodecs();
+                } else {
+                    mService.disableOptionalCodecs();
+                }
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in enableDisableOptionalCodecs()", e);
+            return;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5930373.java!!!	supportsOptionalCodecs(inout device : BluetoothDevice) : int
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled() && isValidDevice(device)) {
+                return mService.supportsOptionalCodecs(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return OPTIONAL_CODECS_SUPPORT_UNKNOWN;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in getSupportsOptionalCodecs()", e);
+            return OPTIONAL_CODECS_SUPPORT_UNKNOWN;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5930501.java!!!	getOptionalCodecsEnabled(inout device : BluetoothDevice) : int
+        try {
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled() && isValidDevice(device)) {
+                return mService.getOptionalCodecsEnabled(device);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return OPTIONAL_CODECS_PREF_UNKNOWN;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error talking to BT service in getSupportsOptionalCodecs()", e);
+            return OPTIONAL_CODECS_PREF_UNKNOWN;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5930629.java!!!	setOptionalCodecsEnabled(inout device : BluetoothDevice, in value : int) : void
+        try {
+            if (value != BluetoothA2dp.OPTIONAL_CODECS_PREF_UNKNOWN &&
+                    value != BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED &&
+                    value != BluetoothA2dp.OPTIONAL_CODECS_PREF_ENABLED) {
+                Log.e(TAG, "Invalid value passed to setOptionalCodecsEnabled: " + value);
+                return;
+            }
+            mServiceLock.readLock().lock();
+            if (mService != null && isEnabled()
+                    && isValidDevice(device)) {
+                mService.setOptionalCodecsEnabled(device, value);
+            }
+            if (mService == null) Log.w(TAG, "Proxy not attached to service");
+            return;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            return;
+        } finally {
+            mServiceLock.readLock().unlock();
+        }
+!!!5930757.java!!!	stateToString(in state : int) : String
+        switch (state) {
+        case STATE_DISCONNECTED:
+            return "disconnected";
+        case STATE_CONNECTING:
+            return "connecting";
+        case STATE_CONNECTED:
+            return "connected";
+        case STATE_DISCONNECTING:
+            return "disconnecting";
+        case STATE_PLAYING:
+            return "playing";
+        case STATE_NOT_PLAYING:
+          return "not playing";
+        default:
+            return "<unknown state " + state + ">";
+        }
+!!!5930885.java!!!	isEnabled() : boolean
+       if (mAdapter.getState() == BluetoothAdapter.STATE_ON) return true;
+       return false;
+!!!5931013.java!!!	isValidDevice(inout device : BluetoothDevice) : boolean
+       if (device == null) return false;
+
+       if (BluetoothAdapter.checkBluetoothAddress(device.getAddress())) return true;
+       return false;
+!!!5931141.java!!!	log(in msg : String) : void
+      Log.d(TAG, msg);

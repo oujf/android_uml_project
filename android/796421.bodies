@@ -1,0 +1,191 @@
+class TileServices
+!!!3414661.java!!!	TileServices(inout host : QSTileHost, inout looper : Looper)
+        mHost = host;
+        mContext = mHost.getContext();
+        mContext.registerReceiver(mRequestListeningReceiver,
+                new IntentFilter(TileService.ACTION_REQUEST_LISTENING));
+        mHandler = new Handler(looper);
+        mMainHandler = new Handler(Looper.getMainLooper());
+!!!3414789.java!!!	getContext() : Context
+        return mContext;
+!!!3414917.java!!!	getHost() : QSTileHost
+        return mHost;
+!!!3415045.java!!!	getTileWrapper(inout tile : CustomTile) : TileServiceManager
+        ComponentName component = tile.getComponent();
+        TileServiceManager service = onCreateTileService(component, tile.getQsTile());
+        synchronized (mServices) {
+            mServices.put(tile, service);
+            mTiles.put(component, tile);
+            mTokenMap.put(service.getToken(), tile);
+        }
+        return service;
+!!!3415173.java!!!	onCreateTileService(inout component : ComponentName, inout tile : Tile) : TileServiceManager
+        return new TileServiceManager(this, mHandler, component, tile);
+!!!3415301.java!!!	freeService(inout tile : CustomTile, inout service : TileServiceManager) : void
+        synchronized (mServices) {
+            service.setBindAllowed(false);
+            service.handleDestroy();
+            mServices.remove(tile);
+            mTokenMap.remove(service.getToken());
+            mTiles.remove(tile.getComponent());
+            final String slot = tile.getComponent().getClassName();
+            mMainHandler.post(() -> mHost.getIconController().removeIcon(slot));
+        }
+!!!3415429.java!!!	setMemoryPressure(inout memoryPressure : boolean) : void
+        mMaxBound = memoryPressure ? REDUCED_MAX_BOUND : DEFAULT_MAX_BOUND;
+        recalculateBindAllowance();
+!!!3415557.java!!!	recalculateBindAllowance() : void
+        final ArrayList<TileServiceManager> services;
+        synchronized (mServices) {
+            services = new ArrayList<>(mServices.values());
+        }
+        final int N = services.size();
+        if (N > mMaxBound) {
+            long currentTime = System.currentTimeMillis();
+            // Precalculate the priority of services for binding.
+            for (int i = 0; i < N; i++) {
+                services.get(i).calculateBindPriority(currentTime);
+            }
+            // Sort them so we can bind the most important first.
+            Collections.sort(services, SERVICE_SORT);
+        }
+        int i;
+        // Allow mMaxBound items to bind.
+        for (i = 0; i < mMaxBound && i < N; i++) {
+            services.get(i).setBindAllowed(true);
+        }
+        // The rest aren't allowed to bind for now.
+        while (i < N) {
+            services.get(i).setBindAllowed(false);
+            i++;
+        }
+!!!3415685.java!!!	verifyCaller(inout tile : CustomTile) : void
+        try {
+            String packageName = tile.getComponent().getPackageName();
+            int uid = mContext.getPackageManager().getPackageUidAsUser(packageName,
+                    Binder.getCallingUserHandle().getIdentifier());
+            if (Binder.getCallingUid() != uid) {
+                throw new SecurityException("Component outside caller's uid");
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            throw new SecurityException(e);
+        }
+!!!3415813.java!!!	requestListening(inout component : ComponentName) : void
+        synchronized (mServices) {
+            CustomTile customTile = getTileForComponent(component);
+            if (customTile == null) {
+                Log.d("TileServices", "Couldn't find tile for " + component);
+                return;
+            }
+            TileServiceManager service = mServices.get(customTile);
+            if (!service.isActiveTile()) {
+                return;
+            }
+            service.setBindRequested(true);
+            try {
+                service.getTileService().onStartListening();
+            } catch (RemoteException e) {
+            }
+        }
+!!!3415941.java!!!	updateQsTile(inout tile : Tile, inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            synchronized (mServices) {
+                final TileServiceManager tileServiceManager = mServices.get(customTile);
+                tileServiceManager.clearPendingBind();
+                tileServiceManager.setLastUpdate(System.currentTimeMillis());
+            }
+            customTile.updateState(tile);
+            customTile.refreshState();
+        }
+!!!3416069.java!!!	onStartSuccessful(inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            synchronized (mServices) {
+                final TileServiceManager tileServiceManager = mServices.get(customTile);
+                tileServiceManager.clearPendingBind();
+            }
+            customTile.refreshState();
+        }
+!!!3416197.java!!!	onShowDialog(inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            customTile.onDialogShown();
+            mHost.forceCollapsePanels();
+            mServices.get(customTile).setShowingDialog(true);
+        }
+!!!3416325.java!!!	onDialogHidden(inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            mServices.get(customTile).setShowingDialog(false);
+            customTile.onDialogHidden();
+        }
+!!!3416453.java!!!	onStartActivity(inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            mHost.forceCollapsePanels();
+        }
+!!!3416581.java!!!	updateStatusIcon(inout token : IBinder, inout icon : Icon, in contentDescription : String) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            try {
+                ComponentName componentName = customTile.getComponent();
+                String packageName = componentName.getPackageName();
+                UserHandle userHandle = getCallingUserHandle();
+                PackageInfo info = mContext.getPackageManager().getPackageInfoAsUser(packageName, 0,
+                        userHandle.getIdentifier());
+                if (info.applicationInfo.isSystemApp()) {
+                    final StatusBarIcon statusIcon = icon != null
+                            ? new StatusBarIcon(userHandle, packageName, icon, 0, 0,
+                                    contentDescription)
+                            : null;
+                    mMainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            StatusBarIconController iconController = mHost.getIconController();
+                            iconController.setIcon(componentName.getClassName(), statusIcon);
+                            iconController.setExternalIcon(componentName.getClassName());
+                        }
+                    });
+                }
+            } catch (PackageManager.NameNotFoundException e) {
+            }
+        }
+!!!3416709.java!!!	getTile(inout token : IBinder) : Tile
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            return customTile.getQsTile();
+        }
+        return null;
+!!!3416837.java!!!	startUnlockAndRun(inout token : IBinder) : void
+        CustomTile customTile = getTileForToken(token);
+        if (customTile != null) {
+            verifyCaller(customTile);
+            customTile.startUnlockAndRun();
+        }
+!!!3416965.java!!!	isLocked() : boolean
+        KeyguardMonitor keyguardMonitor = Dependency.get(KeyguardMonitor.class);
+        return keyguardMonitor.isShowing();
+!!!3417093.java!!!	isSecure() : boolean
+        KeyguardMonitor keyguardMonitor = Dependency.get(KeyguardMonitor.class);
+        return keyguardMonitor.isSecure() && keyguardMonitor.isShowing();
+!!!3417221.java!!!	getTileForToken(inout token : IBinder) : CustomTile
+        synchronized (mServices) {
+            return mTokenMap.get(token);
+        }
+!!!3417349.java!!!	getTileForComponent(inout component : ComponentName) : CustomTile
+        synchronized (mServices) {
+            return mTiles.get(component);
+        }
+!!!3417477.java!!!	destroy() : void
+        synchronized (mServices) {
+            mServices.values().forEach(service -> service.handleDestroy());
+            mContext.unregisterReceiver(mRequestListeningReceiver);
+        }

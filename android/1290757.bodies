@@ -1,0 +1,195 @@
+class FuseAppLoop
+!!!9986693.java!!!	FuseAppLoop(in mountPointId : int, inout fd : ParcelFileDescriptor, inout factory : ThreadFactory)
+        mMountPointId = mountPointId;
+        if (factory == null) {
+            factory = sDefaultThreadFactory;
+        }
+        mInstance = native_new(fd.detachFd());
+        mThread = factory.newThread(() -> {
+            native_start(mInstance);
+            synchronized (mLock) {
+                native_delete(mInstance);
+                mInstance = 0;
+                mBytesMap.clear();
+            }
+        });
+        mThread.start();
+!!!9986821.java!!!	registerCallback(inout callback : ProxyFileDescriptorCallback, inout handler : Handler) : int
+        synchronized (mLock) {
+            Preconditions.checkNotNull(callback);
+            Preconditions.checkNotNull(handler);
+            Preconditions.checkState(
+                    mCallbackMap.size() < Integer.MAX_VALUE - MIN_INODE, "Too many opened files.");
+            Preconditions.checkArgument(
+                    Thread.currentThread().getId() != handler.getLooper().getThread().getId(),
+                    "Handler must be different from the current thread");
+            if (mInstance == 0) {
+                throw new FuseUnavailableMountException(mMountPointId);
+            }
+            int id;
+            while (true) {
+                id = mNextInode;
+                mNextInode++;
+                if (mNextInode < 0) {
+                    mNextInode = MIN_INODE;
+                }
+                if (mCallbackMap.get(id) == null) {
+                    break;
+                }
+            }
+            mCallbackMap.put(id, new CallbackEntry(
+                    callback, new Handler(handler.getLooper(), this)));
+            return id;
+        }
+!!!9986949.java!!!	unregisterCallback(in id : int) : void
+        synchronized (mLock) {
+            mCallbackMap.remove(id);
+        }
+!!!9987077.java!!!	getMountPointId() : int
+        return mMountPointId;
+!!!9987205.java!!!	handleMessage(inout msg : Message) : boolean
+        final Args args = (Args) msg.obj;
+        final CallbackEntry entry = args.entry;
+        final long inode = args.inode;
+        final long unique = args.unique;
+        final int size = args.size;
+        final long offset = args.offset;
+        final byte[] data = args.data;
+
+        try {
+            switch (msg.what) {
+                case FUSE_LOOKUP: {
+                    final long fileSize = entry.callback.onGetSize();
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replyLookup(mInstance, unique, inode, fileSize);
+                        }
+                        recycleLocked(args);
+                    }
+                    break;
+                }
+                case FUSE_GETATTR: {
+                    final long fileSize = entry.callback.onGetSize();
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replyGetAttr(mInstance, unique, inode, fileSize);
+                        }
+                        recycleLocked(args);
+                    }
+                    break;
+                }
+                case FUSE_READ:
+                    final int readSize = entry.callback.onRead(
+                            offset, size, data);
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replyRead(mInstance, unique, readSize, data);
+                        }
+                        recycleLocked(args);
+                    }
+                    break;
+                case FUSE_WRITE:
+                    final int writeSize = entry.callback.onWrite(offset, size, data);
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replyWrite(mInstance, unique, writeSize);
+                        }
+                        recycleLocked(args);
+                    }
+                    break;
+                case FUSE_FSYNC:
+                    entry.callback.onFsync();
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replySimple(mInstance, unique, FUSE_OK);
+                        }
+                        recycleLocked(args);
+                    }
+                    break;
+                case FUSE_RELEASE:
+                    entry.callback.onRelease();
+                    synchronized (mLock) {
+                        if (mInstance != 0) {
+                            native_replySimple(mInstance, unique, FUSE_OK);
+                        }
+                        mBytesMap.stopUsing(entry.getThreadId());
+                        recycleLocked(args);
+                    }
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unknown FUSE command: " + msg.what);
+            }
+        } catch (Exception error) {
+            synchronized (mLock) {
+                Log.e(TAG, "", error);
+                replySimpleLocked(unique, getError(error));
+                recycleLocked(args);
+            }
+        }
+
+        return true;
+!!!9987333.java!!!	onCommand(in command : int, in unique : long, in inode : long, in offset : long, in size : int, inout data : byte [[]]) : void
+        synchronized (mLock) {
+            try {
+                final Args args;
+                if (mArgsPool.size() == 0) {
+                    args = new Args();
+                } else {
+                    args = mArgsPool.pop();
+                }
+                args.unique = unique;
+                args.inode = inode;
+                args.offset = offset;
+                args.size = size;
+                args.data = data;
+                args.entry = getCallbackEntryOrThrowLocked(inode);
+                if (!args.entry.handler.sendMessage(
+                        Message.obtain(args.entry.handler, command, 0, 0, args))) {
+                    throw new ErrnoException("onCommand", OsConstants.EBADF);
+                }
+            } catch (Exception error) {
+                replySimpleLocked(unique, getError(error));
+            }
+        }
+!!!9987461.java!!!	onOpen(in unique : long, in inode : long) : byte
+        synchronized (mLock) {
+            try {
+                final CallbackEntry entry = getCallbackEntryOrThrowLocked(inode);
+                if (entry.opened) {
+                    throw new ErrnoException("onOpen", OsConstants.EMFILE);
+                }
+                if (mInstance != 0) {
+                    native_replyOpen(mInstance, unique, /* fh */ inode);
+                    entry.opened = true;
+                    return mBytesMap.startUsing(entry.getThreadId());
+                }
+            } catch (ErrnoException error) {
+                replySimpleLocked(unique, getError(error));
+            }
+            return null;
+        }
+!!!9987589.java!!!	getError(inout error : Exception) : int
+        if (error instanceof ErrnoException) {
+            final int errno = ((ErrnoException) error).errno;
+            if (errno != OsConstants.ENOSYS) {
+                return -errno;
+            }
+        }
+        return -OsConstants.EBADF;
+!!!9987717.java!!!	getCallbackEntryOrThrowLocked(in inode : long) : FuseAppLoop::CallbackEntry
+        final CallbackEntry entry = mCallbackMap.get(checkInode(inode));
+        if (entry == null) {
+            throw new ErrnoException("getCallbackEntryOrThrowLocked", OsConstants.ENOENT);
+        }
+        return entry;
+!!!9987845.java!!!	recycleLocked(inout args : FuseAppLoop::Args) : void
+        if (mArgsPool.size() < ARGS_POOL_SIZE) {
+            mArgsPool.add(args);
+        }
+!!!9987973.java!!!	replySimpleLocked(in unique : long, in result : int) : void
+        if (mInstance != 0) {
+            native_replySimple(mInstance, unique, result);
+        }
+!!!9989253.java!!!	checkInode(in inode : long) : int
+        Preconditions.checkArgumentInRange(inode, MIN_INODE, Integer.MAX_VALUE, "checkInode");
+        return (int) inode;

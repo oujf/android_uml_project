@@ -1,0 +1,98 @@
+class NetworkSecurityTrustManager
+!!!7958533.java!!!	NetworkSecurityTrustManager(inout config : NetworkSecurityConfig)
+        if (config == null) {
+            throw new NullPointerException("config must not be null");
+        }
+        mNetworkSecurityConfig = config;
+        try {
+            TrustedCertificateStoreAdapter certStore = new TrustedCertificateStoreAdapter(config);
+            // Provide an empty KeyStore since TrustManagerImpl doesn't support null KeyStores.
+            // TrustManagerImpl will use certStore to lookup certificates.
+            KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
+            store.load(null);
+            mDelegate = new TrustManagerImpl(store, null, certStore);
+        } catch (GeneralSecurityException | IOException e) {
+            throw new RuntimeException(e);
+        }
+!!!7958661.java!!!	checkClientTrusted(inout chain : X509Certificate [[]], in authType : String) : void
+        mDelegate.checkClientTrusted(chain, authType);
+!!!7958789.java!!!	checkClientTrusted(inout certs : X509Certificate [[]], in authType : String, inout socket : Socket) : void
+        mDelegate.checkClientTrusted(certs, authType, socket);
+!!!7958917.java!!!	checkClientTrusted(inout certs : X509Certificate [[]], in authType : String, inout engine : SSLEngine) : void
+        mDelegate.checkClientTrusted(certs, authType, engine);
+!!!7959045.java!!!	checkServerTrusted(inout certs : X509Certificate [[]], in authType : String) : void
+        checkServerTrusted(certs, authType, (String) null);
+!!!7959173.java!!!	checkServerTrusted(inout certs : X509Certificate [[]], in authType : String, inout socket : Socket) : void
+        List<X509Certificate> trustedChain =
+                mDelegate.getTrustedChainForServer(certs, authType, socket);
+        checkPins(trustedChain);
+!!!7959301.java!!!	checkServerTrusted(inout certs : X509Certificate [[]], in authType : String, inout engine : SSLEngine) : void
+        List<X509Certificate> trustedChain =
+                mDelegate.getTrustedChainForServer(certs, authType, engine);
+        checkPins(trustedChain);
+!!!7959429.java!!!	checkServerTrusted(inout certs : X509Certificate [[]], in authType : String, in host : String) : List<X509Certificate>
+        List<X509Certificate> trustedChain = mDelegate.checkServerTrusted(certs, authType, host);
+        checkPins(trustedChain);
+        return trustedChain;
+!!!7959557.java!!!	checkPins(inout chain : List<X509Certificate>) : void
+        PinSet pinSet = mNetworkSecurityConfig.getPins();
+        if (pinSet.pins.isEmpty()
+                || System.currentTimeMillis() > pinSet.expirationTime
+                || !isPinningEnforced(chain)) {
+            return;
+        }
+        Set<String> pinAlgorithms = pinSet.getPinAlgorithms();
+        Map<String, MessageDigest> digestMap = new ArrayMap<String, MessageDigest>(
+                pinAlgorithms.size());
+        for (int i = chain.size() - 1; i >= 0 ; i--) {
+            X509Certificate cert = chain.get(i);
+            byte[] encodedSPKI = cert.getPublicKey().getEncoded();
+            for (String algorithm : pinAlgorithms) {
+                MessageDigest md = digestMap.get(algorithm);
+                if (md == null) {
+                    try {
+                        md = MessageDigest.getInstance(algorithm);
+                    } catch (GeneralSecurityException e) {
+                        throw new RuntimeException(e);
+                    }
+                    digestMap.put(algorithm, md);
+                }
+                if (pinSet.pins.contains(new Pin(algorithm, md.digest(encodedSPKI)))) {
+                    return;
+                }
+            }
+        }
+
+        // TODO: Throw a subclass of CertificateException which indicates a pinning failure.
+        throw new CertificateException("Pin verification failed");
+!!!7959685.java!!!	isPinningEnforced(inout chain : List<X509Certificate>) : boolean
+        if (chain.isEmpty()) {
+            return false;
+        }
+        X509Certificate anchorCert = chain.get(chain.size() - 1);
+        TrustAnchor chainAnchor =
+                mNetworkSecurityConfig.findTrustAnchorBySubjectAndPublicKey(anchorCert);
+        if (chainAnchor == null) {
+            throw new CertificateException("Trusted chain does not end in a TrustAnchor");
+        }
+        return !chainAnchor.overridesPins;
+!!!7959813.java!!!	getAcceptedIssuers() : X509Certificate
+        // TrustManagerImpl only looks at the provided KeyStore and not the TrustedCertificateStore
+        // for getAcceptedIssuers, so implement it here instead of delegating.
+        synchronized (mIssuersLock) {
+            if (mIssuers == null) {
+                Set<TrustAnchor> anchors = mNetworkSecurityConfig.getTrustAnchors();
+                X509Certificate[] issuers = new X509Certificate[anchors.size()];
+                int i = 0;
+                for (TrustAnchor anchor : anchors) {
+                    issuers[i++] = anchor.certificate;
+                }
+                mIssuers = issuers;
+            }
+            return mIssuers.clone();
+        }
+!!!7959941.java!!!	handleTrustStorageUpdate() : void
+        synchronized (mIssuersLock) {
+            mIssuers = null;
+            mDelegate.handleTrustStorageUpdate();
+        }

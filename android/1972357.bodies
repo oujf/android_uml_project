@@ -1,0 +1,167 @@
+class FileDescriptorTable
+!!!14159621.cpp!!!	Create(in fds_to_ignore : std::vector<int>) : FileDescriptorTable
+  DIR* d = opendir(kFdPath);
+  if (d == NULL) {
+    PLOG(ERROR) << "Unable to open directory " << std::string(kFdPath);
+    return NULL;
+  }
+  int dir_fd = dirfd(d);
+  dirent* e;
+
+  std::unordered_map<int, FileDescriptorInfo*> open_fd_map;
+  while ((e = readdir(d)) != NULL) {
+    const int fd = ParseFd(e, dir_fd);
+    if (fd == -1) {
+      continue;
+    }
+    if (std::find(fds_to_ignore.begin(), fds_to_ignore.end(), fd) != fds_to_ignore.end()) {
+      LOG(INFO) << "Ignoring open file descriptor " << fd;
+      continue;
+    }
+
+    FileDescriptorInfo* info = FileDescriptorInfo::CreateFromFd(fd);
+    if (info == NULL) {
+      if (closedir(d) == -1) {
+        PLOG(ERROR) << "Unable to close directory";
+      }
+      return NULL;
+    }
+    open_fd_map[fd] = info;
+  }
+
+  if (closedir(d) == -1) {
+    PLOG(ERROR) << "Unable to close directory";
+    return NULL;
+  }
+  return new FileDescriptorTable(open_fd_map);
+!!!14159749.cpp!!!	Restat(in fds_to_ignore : std::vector<int>) : bool
+  std::set<int> open_fds;
+
+  // First get the list of open descriptors.
+  DIR* d = opendir(kFdPath);
+  if (d == NULL) {
+    PLOG(ERROR) << "Unable to open directory " << std::string(kFdPath);
+    return false;
+  }
+
+  int dir_fd = dirfd(d);
+  dirent* e;
+  while ((e = readdir(d)) != NULL) {
+    const int fd = ParseFd(e, dir_fd);
+    if (fd == -1) {
+      continue;
+    }
+    if (std::find(fds_to_ignore.begin(), fds_to_ignore.end(), fd) != fds_to_ignore.end()) {
+      LOG(INFO) << "Ignoring open file descriptor " << fd;
+      continue;
+    }
+
+    open_fds.insert(fd);
+  }
+
+  if (closedir(d) == -1) {
+    PLOG(ERROR) << "Unable to close directory";
+    return false;
+  }
+
+  return RestatInternal(open_fds);
+!!!14159877.cpp!!!	ReopenOrDetach() : bool
+  std::unordered_map<int, FileDescriptorInfo*>::const_iterator it;
+  for (it = open_fd_map_.begin(); it != open_fd_map_.end(); ++it) {
+    const FileDescriptorInfo* info = it->second;
+    if (info == NULL || !info->ReopenOrDetach()) {
+      return false;
+    }
+  }
+
+  return true;
+!!!14160133.cpp!!!	RestatInternal(inout open_fds : std::set<int>) : bool
+  bool error = false;
+
+  // Iterate through the list of file descriptors we've already recorded
+  // and check whether :
+  //
+  // (a) they continue to be open.
+  // (b) they refer to the same file.
+  std::unordered_map<int, FileDescriptorInfo*>::iterator it = open_fd_map_.begin();
+  while (it != open_fd_map_.end()) {
+    std::set<int>::const_iterator element = open_fds.find(it->first);
+    if (element == open_fds.end()) {
+      // The entry from the file descriptor table is no longer in the list
+      // of open files. We warn about this condition and remove it from
+      // the list of FDs under consideration.
+      //
+      // TODO(narayan): This will be an error in a future android release.
+      // error = true;
+      // ALOGW("Zygote closed file descriptor %d.", it->first);
+      it = open_fd_map_.erase(it);
+    } else {
+      // The entry from the file descriptor table is still open. Restat
+      // it and check whether it refers to the same file.
+      const bool same_file = it->second->Restat();
+      if (!same_file) {
+        // The file descriptor refers to a different description. We must
+        // update our entry in the table.
+        delete it->second;
+        it->second = FileDescriptorInfo::CreateFromFd(*element);
+        if (it->second == NULL) {
+          // The descriptor no longer no longer refers to a whitelisted file.
+          // We flag an error and remove it from the list of files we're
+          // tracking.
+          error = true;
+          it = open_fd_map_.erase(it);
+        } else {
+          // Successfully restatted the file, move on to the next open FD.
+          ++it;
+        }
+      } else {
+        // It's the same file. Nothing to do here. Move on to the next open
+        // FD.
+        ++it;
+      }
+
+      // Finally, remove the FD from the set of open_fds. We do this last because
+      // |element| will not remain valid after a call to erase.
+      open_fds.erase(element);
+    }
+  }
+
+  if (open_fds.size() > 0) {
+    // The zygote has opened new file descriptors since our last inspection.
+    // We warn about this condition and add them to our table.
+    //
+    // TODO(narayan): This will be an error in a future android release.
+    // error = true;
+    // ALOGW("Zygote opened %zd new file descriptor(s).", open_fds.size());
+
+    // TODO(narayan): This code will be removed in a future android release.
+    std::set<int>::const_iterator it;
+    for (it = open_fds.begin(); it != open_fds.end(); ++it) {
+      const int fd = (*it);
+      FileDescriptorInfo* info = FileDescriptorInfo::CreateFromFd(fd);
+      if (info == NULL) {
+        // A newly opened file is not on the whitelist. Flag an error and
+        // continue.
+        error = true;
+      } else {
+        // Track the newly opened file.
+        open_fd_map_[fd] = info;
+      }
+    }
+  }
+
+  return !error;
+!!!14160261.cpp!!!	ParseFd(inout e : dirent, in dir_fd : int) : int
+  char* end;
+  const int fd = strtol(e->d_name, &end, 10);
+  if ((*end) != '\0') {
+    return -1;
+  }
+
+  // Don't bother with the standard input/output/error, they're handled
+  // specially post-fork anyway.
+  if (fd <= STDERR_FILENO || fd == dir_fd) {
+    return -1;
+  }
+
+  return fd;

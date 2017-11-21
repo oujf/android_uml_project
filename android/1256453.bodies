@@ -1,0 +1,60 @@
+class ConnectStats
+!!!7290501.java!!!	ConnectStats(in netId : int, in transports : long, inout tb : TokenBucket, in maxLatencyRecords : int)
+        this.netId = netId;
+        this.transports = transports;
+        mLatencyTb = tb;
+        mMaxLatencyRecords = maxLatencyRecords;
+!!!7290629.java!!!	addEvent(in errno : int, in latencyMs : int, in ipAddr : String) : void
+        if (isSuccess(errno)) {
+            countConnect(errno, ipAddr);
+            countLatency(errno, latencyMs);
+        } else {
+            countError(errno);
+        }
+!!!7290757.java!!!	countConnect(in errno : int, in ipAddr : String) : void
+        connectCount++;
+        if (!isNonBlocking(errno)) {
+            connectBlockingCount++;
+        }
+        if (isIPv6(ipAddr)) {
+            ipv6ConnectCount++;
+        }
+!!!7290885.java!!!	countLatency(in errno : int, in ms : int) : void
+        if (isNonBlocking(errno)) {
+            // Ignore connect() on non-blocking sockets
+            return;
+        }
+        if (!mLatencyTb.get()) {
+            // Rate limited
+            return;
+        }
+        if (latencies.size() >= mMaxLatencyRecords) {
+            // Hard limit the total number of latency measurements.
+            return;
+        }
+        latencies.add(ms);
+!!!7291013.java!!!	countError(in errno : int) : void
+        final int newcount = errnos.get(errno, 0) + 1;
+        errnos.put(errno, newcount);
+!!!7291141.java!!!	isSuccess(in errno : int) : boolean
+        return (errno == 0) || isNonBlocking(errno);
+!!!7291269.java!!!	isNonBlocking(in errno : int) : boolean
+        // On non-blocking TCP sockets, connect() immediately returns EINPROGRESS.
+        // On non-blocking TCP sockets that are connecting, connect() immediately returns EALREADY.
+        return (errno == EINPROGRESS) || (errno == EALREADY);
+!!!7291397.java!!!	isIPv6(in ipAddr : String) : boolean
+        return ipAddr.contains(":");
+!!!7291525.java!!!	toString() : String
+        StringBuilder builder = new StringBuilder("ConnectStats(").append(netId).append(", ");
+        for (int t : BitUtils.unpackBits(transports)) {
+            builder.append(NetworkCapabilities.transportNameOf(t)).append(", ");
+        }
+        builder.append(String.format("%d success, ", connectCount));
+        builder.append(String.format("%d blocking, ", connectBlockingCount));
+        builder.append(String.format("%d IPv6 dst", ipv6ConnectCount));
+        for (int i = 0; i < errnos.size(); i++) {
+            String errno = OsConstants.errnoName(errnos.keyAt(i));
+            int count = errnos.valueAt(i);
+            builder.append(String.format(", %s: %d", errno, count));
+        }
+        return builder.append(")").toString();

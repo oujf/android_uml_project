@@ -1,0 +1,27 @@
+class MergeThread
+!!!1094149.cpp!!!	~MergeThread()
+    // set exit flag, set timeout to 0 to force threadLoop to exit and wait for the thread to join
+    requestExit();
+    setTimeoutUs(0);
+    join();
+!!!1094277.cpp!!!	wakeup() : void
+    setTimeoutUs(kThreadWakeupPeriodUs);
+!!!1094405.cpp!!!	setTimeoutUs(in time : int) : void
+    AutoMutex _l(mMutex);
+    mTimeoutUs = time;
+    mCond.signal();
+!!!1094533.cpp!!!	threadLoop() : bool
+    bool doMerge;
+    {
+        AutoMutex _l(mMutex);
+        // If mTimeoutUs is negative, wait on the condition variable until it's positive.
+        // If it's positive, wait kThreadSleepPeriodUs and then merge
+        nsecs_t waitTime = mTimeoutUs > 0 ? kThreadSleepPeriodUs * 1000 : LLONG_MAX;
+        mCond.waitRelative(mMutex, waitTime);
+        doMerge = mTimeoutUs > 0;
+        mTimeoutUs -= kThreadSleepPeriodUs;
+    }
+    if (doMerge) {
+        mMerger.merge();
+    }
+    return true;

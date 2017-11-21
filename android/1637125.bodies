@@ -1,0 +1,279 @@
+class PendingIntentRecord
+!!!11221381.java!!!	PendingIntentRecord(inout _owner : ActivityManagerService, inout _k : PendingIntentRecord::Key, in _u : int)
+        owner = _owner;
+        key = _k;
+        uid = _u;
+        ref = new WeakReference<PendingIntentRecord>(this);
+!!!11221509.java!!!	setWhitelistDurationLocked(inout whitelistToken : IBinder, in duration : long) : void
+        if (duration > 0) {
+            if (whitelistDuration == null) {
+                whitelistDuration = new ArrayMap<>();
+            }
+            whitelistDuration.put(whitelistToken, duration);
+        } else if (whitelistDuration != null) {
+            whitelistDuration.remove(whitelistToken);
+            if (whitelistDuration.size() <= 0) {
+                whitelistDuration = null;
+            }
+
+        }
+        this.stringName = null;
+!!!11221637.java!!!	registerCancelListenerLocked(inout receiver : IResultReceiver) : void
+        if (mCancelCallbacks == null) {
+            mCancelCallbacks = new RemoteCallbackList<>();
+        }
+        mCancelCallbacks.register(receiver);
+!!!11221765.java!!!	unregisterCancelListenerLocked(inout receiver : IResultReceiver) : void
+        mCancelCallbacks.unregister(receiver);
+        if (mCancelCallbacks.getRegisteredCallbackCount() <= 0) {
+            mCancelCallbacks = null;
+        }
+!!!11221893.java!!!	detachCancelListenersLocked() : RemoteCallbackList
+        RemoteCallbackList<IResultReceiver> listeners = mCancelCallbacks;
+        mCancelCallbacks = null;
+        return listeners;
+!!!11222021.java!!!	send(in code : int, inout intent : Intent, in resolvedType : String, inout whitelistToken : IBinder, inout finishedReceiver : IIntentReceiver, in requiredPermission : String, inout options : Bundle) : void
+        sendInner(code, intent, resolvedType, whitelistToken, finishedReceiver,
+                requiredPermission, null, null, 0, 0, 0, options, null);
+!!!11222149.java!!!	sendWithResult(in code : int, inout intent : Intent, in resolvedType : String, inout whitelistToken : IBinder, inout finishedReceiver : IIntentReceiver, in requiredPermission : String, inout options : Bundle) : int
+        return sendInner(code, intent, resolvedType, whitelistToken, finishedReceiver,
+                requiredPermission, null, null, 0, 0, 0, options, null);
+!!!11222277.java!!!	sendInner(in code : int, inout intent : Intent, in resolvedType : String, inout whitelistToken : IBinder, inout finishedReceiver : IIntentReceiver, in requiredPermission : String, inout resultTo : IBinder, in resultWho : String, in requestCode : int, in flagsMask : int, in flagsValues : int, inout options : Bundle, inout container : IActivityContainer) : int
+        if (intent != null) intent.setDefusable(true);
+        if (options != null) options.setDefusable(true);
+
+        synchronized (owner) {
+            final ActivityContainer activityContainer = (ActivityContainer)container;
+            if (activityContainer != null && activityContainer.mParentActivity != null &&
+                    activityContainer.mParentActivity.state
+                            != ActivityStack.ActivityState.RESUMED) {
+                // Cannot start a child activity if the parent is not resumed.
+                return ActivityManager.START_CANCELED;
+            }
+            if (!canceled) {
+                sent = true;
+                if ((key.flags&PendingIntent.FLAG_ONE_SHOT) != 0) {
+                    owner.cancelIntentSenderLocked(this, true);
+                }
+
+                Intent finalIntent = key.requestIntent != null
+                        ? new Intent(key.requestIntent) : new Intent();
+
+                final boolean immutable = (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0;
+                if (!immutable) {
+                    if (intent != null) {
+                        int changes = finalIntent.fillIn(intent, key.flags);
+                        if ((changes & Intent.FILL_IN_DATA) == 0) {
+                            resolvedType = key.requestResolvedType;
+                        }
+                    } else {
+                        resolvedType = key.requestResolvedType;
+                    }
+                    flagsMask &= ~Intent.IMMUTABLE_FLAGS;
+                    flagsValues &= flagsMask;
+                    finalIntent.setFlags((finalIntent.getFlags() & ~flagsMask) | flagsValues);
+                } else {
+                    resolvedType = key.requestResolvedType;
+                }
+
+                final int callingUid = Binder.getCallingUid();
+                final int callingPid = Binder.getCallingPid();
+
+                final long origId = Binder.clearCallingIdentity();
+
+                if (whitelistDuration != null) {
+                    Long duration = whitelistDuration.get(whitelistToken);
+                    if (duration != null) {
+                        int procState = owner.getUidState(callingUid);
+                        if (!ActivityManager.isProcStateBackground(procState)) {
+                            StringBuilder tag = new StringBuilder(64);
+                            tag.append("pendingintent:");
+                            UserHandle.formatUid(tag, callingUid);
+                            tag.append(":");
+                            if (finalIntent.getAction() != null) {
+                                tag.append(finalIntent.getAction());
+                            } else if (finalIntent.getComponent() != null) {
+                                finalIntent.getComponent().appendShortString(tag);
+                            } else if (finalIntent.getData() != null) {
+                                tag.append(finalIntent.getData());
+                            }
+                            owner.tempWhitelistForPendingIntentLocked(callingPid,
+                                    callingUid, uid, duration, tag.toString());
+                        } else {
+                            Slog.w(TAG, "Not doing whitelist " + this + ": caller state="
+                                    + procState);
+                        }
+                    }
+                }
+
+                boolean sendFinish = finishedReceiver != null;
+                int userId = key.userId;
+                if (userId == UserHandle.USER_CURRENT) {
+                    userId = owner.mUserController.getCurrentOrTargetUserIdLocked();
+                }
+                int res = 0;
+                switch (key.type) {
+                    case ActivityManager.INTENT_SENDER_ACTIVITY:
+                        if (options == null) {
+                            options = key.options;
+                        } else if (key.options != null) {
+                            Bundle opts = new Bundle(key.options);
+                            opts.putAll(options);
+                            options = opts;
+                        }
+                        try {
+                            if (key.allIntents != null && key.allIntents.length > 1) {
+                                Intent[] allIntents = new Intent[key.allIntents.length];
+                                String[] allResolvedTypes = new String[key.allIntents.length];
+                                System.arraycopy(key.allIntents, 0, allIntents, 0,
+                                        key.allIntents.length);
+                                if (key.allResolvedTypes != null) {
+                                    System.arraycopy(key.allResolvedTypes, 0, allResolvedTypes, 0,
+                                            key.allResolvedTypes.length);
+                                }
+                                allIntents[allIntents.length-1] = finalIntent;
+                                allResolvedTypes[allResolvedTypes.length-1] = resolvedType;
+                                owner.startActivitiesInPackage(uid, key.packageName, allIntents,
+                                        allResolvedTypes, resultTo, options, userId);
+                            } else {
+                                owner.startActivityInPackage(uid, key.packageName, finalIntent,
+                                        resolvedType, resultTo, resultWho, requestCode, 0,
+                                        options, userId, container, null, "PendingIntentRecord");
+                            }
+                        } catch (RuntimeException e) {
+                            Slog.w(TAG, "Unable to send startActivity intent", e);
+                        }
+                        break;
+                    case ActivityManager.INTENT_SENDER_ACTIVITY_RESULT:
+                        final ActivityStack stack = key.activity.getStack();
+                        if (stack != null) {
+                            stack.sendActivityResultLocked(-1, key.activity, key.who,
+                                    key.requestCode, code, finalIntent);
+                        }
+                        break;
+                    case ActivityManager.INTENT_SENDER_BROADCAST:
+                        try {
+                            // If a completion callback has been requested, require
+                            // that the broadcast be delivered synchronously
+                            int sent = owner.broadcastIntentInPackage(key.packageName, uid,
+                                    finalIntent, resolvedType, finishedReceiver, code, null, null,
+                                    requiredPermission, options, (finishedReceiver != null),
+                                    false, userId);
+                            if (sent == ActivityManager.BROADCAST_SUCCESS) {
+                                sendFinish = false;
+                            }
+                        } catch (RuntimeException e) {
+                            Slog.w(TAG, "Unable to send startActivity intent", e);
+                        }
+                        break;
+                    case ActivityManager.INTENT_SENDER_SERVICE:
+                    case ActivityManager.INTENT_SENDER_FOREGROUND_SERVICE:
+                        try {
+                            owner.startServiceInPackage(uid, finalIntent, resolvedType,
+                                    key.type == ActivityManager.INTENT_SENDER_FOREGROUND_SERVICE,
+                                    key.packageName, userId);
+                        } catch (RuntimeException e) {
+                            Slog.w(TAG, "Unable to send startService intent", e);
+                        } catch (TransactionTooLargeException e) {
+                            res = ActivityManager.START_CANCELED;
+                        }
+                        break;
+                }
+
+                if (sendFinish && res != ActivityManager.START_CANCELED) {
+                    try {
+                        finishedReceiver.performReceive(new Intent(finalIntent), 0,
+                                null, null, false, false, key.userId);
+                    } catch (RemoteException e) {
+                    }
+                }
+
+                Binder.restoreCallingIdentity(origId);
+
+                return res;
+            }
+        }
+        return ActivityManager.START_CANCELED;
+!!!11222405.java!!!	finalize() : void
+        try {
+            if (!canceled) {
+                owner.mHandler.sendMessage(owner.mHandler.obtainMessage(
+                        ActivityManagerService.FINALIZE_PENDING_INTENT_MSG, this));
+            }
+        } finally {
+            super.finalize();
+        }
+!!!11222533.java!!!	completeFinalize() : void
+        synchronized(owner) {
+            WeakReference<PendingIntentRecord> current =
+                    owner.mIntentSenderRecords.get(key);
+            if (current == ref) {
+                owner.mIntentSenderRecords.remove(key);
+            }
+        }
+!!!11222661.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.print(prefix); pw.print("uid="); pw.print(uid);
+                pw.print(" packageName="); pw.print(key.packageName);
+                pw.print(" type="); pw.print(key.typeName());
+                pw.print(" flags=0x"); pw.println(Integer.toHexString(key.flags));
+        if (key.activity != null || key.who != null) {
+            pw.print(prefix); pw.print("activity="); pw.print(key.activity);
+                    pw.print(" who="); pw.println(key.who);
+        }
+        if (key.requestCode != 0 || key.requestResolvedType != null) {
+            pw.print(prefix); pw.print("requestCode="); pw.print(key.requestCode);
+                    pw.print(" requestResolvedType="); pw.println(key.requestResolvedType);
+        }
+        if (key.requestIntent != null) {
+            pw.print(prefix); pw.print("requestIntent=");
+                    pw.println(key.requestIntent.toShortString(false, true, true, true));
+        }
+        if (sent || canceled) {
+            pw.print(prefix); pw.print("sent="); pw.print(sent);
+                    pw.print(" canceled="); pw.println(canceled);
+        }
+        if (whitelistDuration != null) {
+            pw.print(prefix);
+            pw.print("whitelistDuration=");
+            for (int i = 0; i < whitelistDuration.size(); i++) {
+                if (i != 0) {
+                    pw.print(", ");
+                }
+                pw.print(Integer.toHexString(System.identityHashCode(whitelistDuration.keyAt(i))));
+                pw.print(":");
+                TimeUtils.formatDuration(whitelistDuration.valueAt(i), pw);
+            }
+            pw.println();
+        }
+        if (mCancelCallbacks != null) {
+            pw.print(prefix); pw.println("mCancelCallbacks:");
+            for (int i = 0; i < mCancelCallbacks.getRegisteredCallbackCount(); i++) {
+                pw.print(prefix); pw.print("  #"); pw.print(i); pw.print(": ");
+                pw.println(mCancelCallbacks.getRegisteredCallbackItem(i));
+            }
+        }
+!!!11222789.java!!!	toString() : String
+        if (stringName != null) {
+            return stringName;
+        }
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("PendingIntentRecord{");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(' ');
+        sb.append(key.packageName);
+        sb.append(' ');
+        sb.append(key.typeName());
+        if (whitelistDuration != null) {
+            sb.append( " (whitelist: ");
+            for (int i = 0; i < whitelistDuration.size(); i++) {
+                if (i != 0) {
+                    sb.append(",");
+                }
+                sb.append(Integer.toHexString(System.identityHashCode(whitelistDuration.keyAt(i))));
+                sb.append(":");
+                TimeUtils.formatDuration(whitelistDuration.valueAt(i), sb);
+            }
+            sb.append(")");
+        }
+        sb.append('}');
+        return stringName = sb.toString();

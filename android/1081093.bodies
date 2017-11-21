@@ -1,0 +1,120 @@
+class ServiceDispatcher
+!!!5529733.java!!!	ServiceDispatcher(inout conn : ServiceConnection, inout context : Context, inout activityThread : Handler, in flags : int)
+            mIServiceConnection = new InnerConnection(this);
+            mConnection = conn;
+            mContext = context;
+            mActivityThread = activityThread;
+            mLocation = new ServiceConnectionLeaked(null);
+            mLocation.fillInStackTrace();
+            mFlags = flags;
+!!!5529861.java!!!	validate(inout context : Context, inout activityThread : Handler) : void
+            if (mContext != context) {
+                throw new RuntimeException(
+                    "ServiceConnection " + mConnection +
+                    " registered with differing Context (was " +
+                    mContext + " now " + context + ")");
+            }
+            if (mActivityThread != activityThread) {
+                throw new RuntimeException(
+                    "ServiceConnection " + mConnection +
+                    " registered with differing handler (was " +
+                    mActivityThread + " now " + activityThread + ")");
+            }
+!!!5529989.java!!!	doForget() : void
+            synchronized(this) {
+                for (int i=0; i<mActiveConnections.size(); i++) {
+                    ServiceDispatcher.ConnectionInfo ci = mActiveConnections.valueAt(i);
+                    ci.binder.unlinkToDeath(ci.deathMonitor, 0);
+                }
+                mActiveConnections.clear();
+                mForgotten = true;
+            }
+!!!5530117.java!!!	getLocation() : ServiceConnectionLeaked
+            return mLocation;
+!!!5530245.java!!!	getServiceConnection() : ServiceConnection
+            return mConnection;
+!!!5530373.java!!!	getIServiceConnection() : IServiceConnection
+            return mIServiceConnection;
+!!!5530501.java!!!	getFlags() : int
+            return mFlags;
+!!!5530629.java!!!	setUnbindLocation(inout ex : RuntimeException) : void
+            mUnbindLocation = ex;
+!!!5530757.java!!!	getUnbindLocation() : RuntimeException
+            return mUnbindLocation;
+!!!5530885.java!!!	connected(inout name : ComponentName, inout service : IBinder, inout dead : boolean) : void
+            if (mActivityThread != null) {
+                mActivityThread.post(new RunConnection(name, service, 0, dead));
+            } else {
+                doConnected(name, service, dead);
+            }
+!!!5531013.java!!!	death(inout name : ComponentName, inout service : IBinder) : void
+            if (mActivityThread != null) {
+                mActivityThread.post(new RunConnection(name, service, 1, false));
+            } else {
+                doDeath(name, service);
+            }
+!!!5531141.java!!!	doConnected(inout name : ComponentName, inout service : IBinder, inout dead : boolean) : void
+            ServiceDispatcher.ConnectionInfo old;
+            ServiceDispatcher.ConnectionInfo info;
+
+            synchronized (this) {
+                if (mForgotten) {
+                    // We unbound before receiving the connection; ignore
+                    // any connection received.
+                    return;
+                }
+                old = mActiveConnections.get(name);
+                if (old != null && old.binder == service) {
+                    // Huh, already have this one.  Oh well!
+                    return;
+                }
+
+                if (service != null) {
+                    // A new service is being connected... set it all up.
+                    info = new ConnectionInfo();
+                    info.binder = service;
+                    info.deathMonitor = new DeathMonitor(name, service);
+                    try {
+                        service.linkToDeath(info.deathMonitor, 0);
+                        mActiveConnections.put(name, info);
+                    } catch (RemoteException e) {
+                        // This service was dead before we got it...  just
+                        // don't do anything with it.
+                        mActiveConnections.remove(name);
+                        return;
+                    }
+
+                } else {
+                    // The named service is being disconnected... clean up.
+                    mActiveConnections.remove(name);
+                }
+
+                if (old != null) {
+                    old.binder.unlinkToDeath(old.deathMonitor, 0);
+                }
+            }
+
+            // If there was an old service, it is now disconnected.
+            if (old != null) {
+                mConnection.onServiceDisconnected(name);
+            }
+            if (dead) {
+                mConnection.onBindingDied(name);
+            }
+            // If there is a new service, it is now connected.
+            if (service != null) {
+                mConnection.onServiceConnected(name, service);
+            }
+!!!5531269.java!!!	doDeath(inout name : ComponentName, inout service : IBinder) : void
+            synchronized (this) {
+                ConnectionInfo old = mActiveConnections.get(name);
+                if (old == null || old.binder != service) {
+                    // Death for someone different than who we last
+                    // reported...  just ignore it.
+                    return;
+                }
+                mActiveConnections.remove(name);
+                old.binder.unlinkToDeath(old.deathMonitor, 0);
+            }
+
+            mConnection.onServiceDisconnected(name);

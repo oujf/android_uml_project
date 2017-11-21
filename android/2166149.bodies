@@ -1,0 +1,23 @@
+class BpRefBase
+!!!14651525.cpp!!!	BpRefBase(in o : sp<IBinder>)
+    extendObjectLifetime(OBJECT_LIFETIME_WEAK);
+
+    if (mRemote) {
+        mRemote->incStrong(this);           // Removed on first IncStrong().
+        mRefs = mRemote->createWeak(this);  // Held for our entire lifetime.
+    }
+!!!14651653.cpp!!!	~BpRefBase()
+    if (mRemote) {
+        if (!(mState.load(std::memory_order_relaxed)&kRemoteAcquired)) {
+            mRemote->decStrong(this);
+        }
+        mRefs->decWeak(this);
+    }
+!!!14651781.cpp!!!	onFirstRef() : void
+    mState.fetch_or(kRemoteAcquired, std::memory_order_relaxed);
+!!!14651909.cpp!!!	onLastStrongRef(in id : void) : void
+    if (mRemote) {
+        mRemote->decStrong(this);
+    }
+!!!14652037.cpp!!!	onIncStrongAttempted(in flags : uint32_t, in id : void) : bool
+    return mRemote ? mRefs->attemptIncStrong(this) : false;

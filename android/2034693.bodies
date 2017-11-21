@@ -1,0 +1,170 @@
+class SurfaceComposerClient
+!!!14319877.cpp!!!	~SurfaceComposerClient()
+    dispose();
+!!!14320005.cpp!!!	initCheck() : status_t
+    return mStatus;
+!!!14320133.cpp!!!	connection() : sp<IBinder>
+    return IInterface::asBinder(mClient);
+!!!14320261.cpp!!!	dispose() : void
+    // this can be called more than once.
+    sp<ISurfaceComposerClient> client;
+    Mutex::Autolock _lm(mLock);
+    if (mClient != 0) {
+        client = mClient; // hold ref while lock is held
+        mClient.clear();
+    }
+    mStatus = NO_INIT;
+!!!14320389.cpp!!!	linkToComposerDeath(in recipient : sp<IBinder::DeathRecipient>, inout cookie : void = NULL, in flags : uint32_t = 0) : status_t
+    sp<ISurfaceComposer> sm(ComposerService::getComposerService());
+    return IInterface::asBinder(sm)->linkToDeath(recipient, cookie, flags);
+!!!14320517.cpp!!!	getDisplayConfigs(in display : sp<IBinder>, inout configs : Vector<DisplayInfo>) : status_t
+    return ComposerService::getComposerService()->getDisplayConfigs(display, configs);
+!!!14320645.cpp!!!	getDisplayInfo(in display : sp<IBinder>, inout info : DisplayInfo) : status_t
+    Vector<DisplayInfo> configs;
+    status_t result = getDisplayConfigs(display, &configs);
+    if (result != NO_ERROR) {
+        return result;
+    }
+
+    int activeId = getActiveConfig(display);
+    if (activeId < 0) {
+        ALOGE("No active configuration found");
+        return NAME_NOT_FOUND;
+    }
+
+    *info = configs[static_cast<size_t>(activeId)];
+    return NO_ERROR;
+!!!14320773.cpp!!!	getActiveConfig(in display : sp<IBinder>) : int
+    return ComposerService::getComposerService()->getActiveConfig(display);
+!!!14320901.cpp!!!	setActiveConfig(in display : sp<IBinder>, in id : int) : status_t
+    return ComposerService::getComposerService()->setActiveConfig(display, id);
+!!!14321029.cpp!!!	getDisplayColorModes(in display : sp<IBinder>, inout outColorModes : Vector<android_color_mode_t>) : status_t
+    return ComposerService::getComposerService()->getDisplayColorModes(display, outColorModes);
+!!!14321157.cpp!!!	getActiveColorMode(in display : sp<IBinder>) : android_color_mode_t
+    return ComposerService::getComposerService()->getActiveColorMode(display);
+!!!14321285.cpp!!!	setActiveColorMode(in display : sp<IBinder>, in colorMode : android_color_mode_t) : status_t
+    return ComposerService::getComposerService()->setActiveColorMode(display, colorMode);
+!!!14321413.cpp!!!	setDisplayPowerMode(in token : sp<IBinder>, in mode : int) : void
+    ComposerService::getComposerService()->setPowerMode(token, mode);
+!!!14321541.cpp!!!	createSurface(in name : String8, in w : uint32_t, in h : uint32_t, in format : PixelFormat, in flags : uint32_t = 0, inout parent : SurfaceControl = nullptr, in windowType : uint32_t = 0, in ownerUid : uint32_t = 0 // UID of the task) : sp<SurfaceControl>
+    sp<SurfaceControl> sur;
+    if (mStatus == NO_ERROR) {
+        sp<IBinder> handle;
+        sp<IBinder> parentHandle;
+        sp<IGraphicBufferProducer> gbp;
+
+        if (parent != nullptr) {
+            parentHandle = parent->getHandle();
+        }
+        status_t err = mClient->createSurface(name, w, h, format, flags, parentHandle,
+                windowType, ownerUid, &handle, &gbp);
+        ALOGE_IF(err, "SurfaceComposerClient::createSurface error %s", strerror(-err));
+        if (err == NO_ERROR) {
+            sur = new SurfaceControl(this, handle, gbp);
+        }
+    }
+    return sur;
+!!!14321669.cpp!!!	createDisplay(in displayName : String8, in secure : bool) : sp<IBinder>
+    return Composer::getInstance().createDisplay(displayName, secure);
+!!!14321797.cpp!!!	destroyDisplay(in display : sp<IBinder>) : void
+    Composer::getInstance().destroyDisplay(display);
+!!!14321925.cpp!!!	getBuiltInDisplay(in id : int32_t) : sp<IBinder>
+    return Composer::getInstance().getBuiltInDisplay(id);
+!!!14322053.cpp!!!	openGlobalTransaction() : void
+    Composer::openGlobalTransaction();
+!!!14322181.cpp!!!	closeGlobalTransaction(in synchronous : bool = false) : void
+    Composer::closeGlobalTransaction(synchronous);
+!!!14322309.cpp!!!	enableVSyncInjections(in enable : bool) : status_t
+    return Composer::enableVSyncInjections(enable);
+!!!14322437.cpp!!!	injectVSync(in when : nsecs_t) : status_t
+    return Composer::injectVSync(when);
+!!!14322565.cpp!!!	setAnimationTransaction() : void
+    Composer::setAnimationTransaction();
+!!!14322693.cpp!!!	hide(in id : sp<IBinder>) : status_t
+    return getComposer().setFlags(this, id,
+            layer_state_t::eLayerHidden,
+            layer_state_t::eLayerHidden);
+!!!14322821.cpp!!!	show(in id : sp<IBinder>) : status_t
+    return getComposer().setFlags(this, id,
+            0,
+            layer_state_t::eLayerHidden);
+!!!14322949.cpp!!!	setFlags(in id : sp<IBinder>, in flags : uint32_t, in mask : uint32_t) : status_t
+    return getComposer().setFlags(this, id, flags, mask);
+!!!14323077.cpp!!!	setTransparentRegionHint(in id : sp<IBinder>, in transparentRegion : Region) : status_t
+    return getComposer().setTransparentRegionHint(this, id, transparentRegion);
+!!!14323205.cpp!!!	setLayer(in id : sp<IBinder>, in z : int32_t) : status_t
+    return getComposer().setLayer(this, id, z);
+!!!14323333.cpp!!!	setRelativeLayer(in id : sp<IBinder>, in relativeTo : sp<IBinder>, in z : int32_t) : status_t
+    return getComposer().setRelativeLayer(this, id, relativeTo, z);
+!!!14323461.cpp!!!	setAlpha(in id : sp<IBinder>, in alpha : float = 1.0f) : status_t
+    return getComposer().setAlpha(this, id, alpha);
+!!!14323589.cpp!!!	setMatrix(in id : sp<IBinder>, in dsdx : float, in dtdx : float, in dtdy : float, in dsdy : float) : status_t
+    return getComposer().setMatrix(this, id, dsdx, dtdx, dtdy, dsdy);
+!!!14323717.cpp!!!	setPosition(in id : sp<IBinder>, in x : float, in y : float) : status_t
+    return getComposer().setPosition(this, id, x, y);
+!!!14323845.cpp!!!	setSize(in id : sp<IBinder>, in w : uint32_t, in h : uint32_t) : status_t
+    return getComposer().setSize(this, id, w, h);
+!!!14323973.cpp!!!	setCrop(in id : sp<IBinder>, in crop : Rect) : status_t
+    return getComposer().setCrop(this, id, crop);
+!!!14324101.cpp!!!	setFinalCrop(in id : sp<IBinder>, in crop : Rect) : status_t
+    return getComposer().setFinalCrop(this, id, crop);
+!!!14324229.cpp!!!	setLayerStack(in id : sp<IBinder>, in layerStack : uint32_t) : status_t
+    return getComposer().setLayerStack(this, id, layerStack);
+!!!14324357.cpp!!!	deferTransactionUntil(in id : sp<IBinder>, in handle : sp<IBinder>, in frameNumber : uint64_t) : status_t
+    return getComposer().deferTransactionUntil(this, id, handle, frameNumber);
+!!!14324485.cpp!!!	deferTransactionUntil(in id : sp<IBinder>, in barrierSurface : sp<Surface>, in frameNumber : uint64_t) : status_t
+    return getComposer().deferTransactionUntil(this, id, barrierSurface, frameNumber);
+!!!14324613.cpp!!!	reparentChildren(in id : sp<IBinder>, in newParentHandle : sp<IBinder>) : status_t
+    return getComposer().reparentChildren(this, id, newParentHandle);
+!!!14324741.cpp!!!	detachChildren(in id : sp<IBinder>) : status_t
+    return getComposer().detachChildren(this, id);
+!!!14324869.cpp!!!	setOverrideScalingMode(in id : sp<IBinder>, in overrideScalingMode : int32_t) : status_t
+    return getComposer().setOverrideScalingMode(
+            this, id, overrideScalingMode);
+!!!14324997.cpp!!!	setGeometryAppliesWithResize(in id : sp<IBinder>) : status_t
+    return getComposer().setGeometryAppliesWithResize(this, id);
+!!!14325125.cpp!!!	destroySurface(in sid : sp<IBinder>) : status_t
+    if (mStatus != NO_ERROR)
+        return mStatus;
+    status_t err = mClient->destroySurface(sid);
+    return err;
+!!!14325253.cpp!!!	clearLayerFrameStats(in token : sp<IBinder>) : status_t
+    if (mStatus != NO_ERROR) {
+        return mStatus;
+    }
+    return mClient->clearLayerFrameStats(token);
+!!!14325381.cpp!!!	getLayerFrameStats(in token : sp<IBinder>, inout outStats : FrameStats) : status_t
+    if (mStatus != NO_ERROR) {
+        return mStatus;
+    }
+    return mClient->getLayerFrameStats(token, outStats);
+!!!14325509.cpp!!!	clearAnimationFrameStats() : status_t
+    return ComposerService::getComposerService()->clearAnimationFrameStats();
+!!!14325637.cpp!!!	getAnimationFrameStats(inout outStats : FrameStats) : status_t
+    return ComposerService::getComposerService()->getAnimationFrameStats(outStats);
+!!!14325765.cpp!!!	getHdrCapabilities(in display : sp<IBinder>, inout outCapabilities : HdrCapabilities) : status_t
+    return ComposerService::getComposerService()->getHdrCapabilities(display,
+            outCapabilities);
+!!!14325893.cpp!!!	setDisplaySurface(in token : sp<IBinder>, in bufferProducer : sp<IGraphicBufferProducer>) : status_t
+    return Composer::getInstance().setDisplaySurface(token, bufferProducer);
+!!!14326021.cpp!!!	setDisplayLayerStack(in token : sp<IBinder>, in layerStack : uint32_t) : void
+    Composer::getInstance().setDisplayLayerStack(token, layerStack);
+!!!14326149.cpp!!!	setDisplaySize(in token : sp<IBinder>, in width : uint32_t, in height : uint32_t) : void
+    Composer::getInstance().setDisplaySize(token, width, height);
+!!!14326277.cpp!!!	setDisplayProjection(in token : sp<IBinder>, in orientation : uint32_t, in layerStackRect : Rect, in displayRect : Rect) : void
+    Composer::getInstance().setDisplayProjection(token, orientation,
+            layerStackRect, displayRect);
+!!!14326405.cpp!!!	onFirstRef() : void
+    sp<ISurfaceComposer> sm(ComposerService::getComposerService());
+    if (sm != 0) {
+        auto rootProducer = mParent.promote();
+        sp<ISurfaceComposerClient> conn;
+        conn = (rootProducer != nullptr) ? sm->createScopedConnection(rootProducer) :
+                sm->createConnection();
+        if (conn != 0) {
+            mClient = conn;
+            mStatus = NO_ERROR;
+        }
+    }
+!!!14326533.cpp!!!	getComposer() : Composer
+    return mComposer;

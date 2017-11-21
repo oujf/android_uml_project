@@ -1,0 +1,54 @@
+class CallbackHandler
+!!!1675141.cpp!!!	onMessageReceived(in msg : sp<AMessage>) : void
+    switch (msg->what()) {
+        case kWhatBufferRemoved:
+        {
+            AImageReader_BufferRemovedCallback onBufferRemoved;
+            void* context;
+            bool found = msg->findPointer(kCallbackFpKey, (void**) &onBufferRemoved);
+            if (!found || onBufferRemoved == nullptr) {
+                ALOGE("%s: Cannot find onBufferRemoved callback fp!", __FUNCTION__);
+                return;
+            }
+            found = msg->findPointer(kContextKey, &context);
+            if (!found) {
+                ALOGE("%s: Cannot find callback context!", __FUNCTION__);
+                return;
+            }
+            sp<RefBase> bufferToFree;
+            found = msg->findObject(kGraphicBufferKey, &bufferToFree);
+            if (!found || bufferToFree == nullptr) {
+                ALOGE("%s: Cannot find the buffer to free!", __FUNCTION__);
+                return;
+            }
+
+            // TODO(jwcai) Someone from Android graphics team stating this should just be a
+            // static_cast.
+            AHardwareBuffer* outBuffer = reinterpret_cast<AHardwareBuffer*>(bufferToFree.get());
+
+            // At this point, bufferToFree holds the last reference to the GraphicBuffer owned by
+            // this AImageReader, and the reference will be gone once this function returns.
+            (*onBufferRemoved)(context, mReader, outBuffer);
+            break;
+        }
+        case kWhatImageAvailable:
+        {
+            AImageReader_ImageCallback onImageAvailable;
+            void* context;
+            bool found = msg->findPointer(kCallbackFpKey, (void**) &onImageAvailable);
+            if (!found || onImageAvailable == nullptr) {
+                ALOGE("%s: Cannot find onImageAvailable callback fp!", __FUNCTION__);
+                return;
+            }
+            found = msg->findPointer(kContextKey, &context);
+            if (!found) {
+                ALOGE("%s: Cannot find callback context!", __FUNCTION__);
+                return;
+            }
+            (*onImageAvailable)(context, mReader);
+            break;
+        }
+        default:
+            ALOGE("%s: unknown message type %d", __FUNCTION__, msg->what());
+            break;
+    }

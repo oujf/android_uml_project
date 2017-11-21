@@ -1,0 +1,58 @@
+class RecoverableSecurityException
+!!!5663877.java!!!	RecoverableSecurityException(inout in : Parcel)
+        this(new SecurityException(in.readString()), in.readCharSequence(),
+                RemoteAction.CREATOR.createFromParcel(in));
+!!!5664005.java!!!	RecoverableSecurityException(inout cause : Throwable, inout userMessage : CharSequence, inout userAction : RemoteAction)
+        super(cause.getMessage());
+        mUserMessage = Preconditions.checkNotNull(userMessage);
+        mUserAction = Preconditions.checkNotNull(userAction);
+!!!5664133.java!!!	RecoverableSecurityException(inout cause : Throwable, inout userMessage : CharSequence, inout userActionTitle : CharSequence, inout userAction : PendingIntent)
+        this(cause, userMessage,
+                new RemoteAction(
+                        Icon.createWithResource("android",
+                                com.android.internal.R.drawable.ic_restart),
+                        userActionTitle, userActionTitle, userAction));
+!!!5664261.java!!!	getUserMessage() : CharSequence
+        return mUserMessage;
+!!!5664389.java!!!	getUserAction() : RemoteAction
+        return mUserAction;
+!!!5664517.java!!!	showAsNotification(inout context : Context) : void
+        final NotificationManager nm = context.getSystemService(NotificationManager.class);
+
+        // Create a channel per-sender, since we don't want one poorly behaved
+        // remote app to cause all of our notifications to be blocked
+        final String channelId = TAG + "_" + mUserAction.getActionIntent().getCreatorUid();
+        nm.createNotificationChannel(new NotificationChannel(channelId, TAG,
+                NotificationManager.IMPORTANCE_DEFAULT));
+
+        showAsNotification(context, channelId);
+!!!5664645.java!!!	showAsNotification(inout context : Context, in channelId : String) : void
+        final NotificationManager nm = context.getSystemService(NotificationManager.class);
+        final Notification.Builder builder = new Notification.Builder(context, channelId)
+                .setSmallIcon(com.android.internal.R.drawable.ic_print_error)
+                .setContentTitle(mUserAction.getTitle())
+                .setContentText(mUserMessage)
+                .setContentIntent(mUserAction.getActionIntent())
+                .setCategory(Notification.CATEGORY_ERROR);
+        nm.notify(TAG, mUserAction.getActionIntent().getCreatorUid(), builder.build());
+!!!5664773.java!!!	showAsDialog(inout activity : Activity) : void
+        final LocalDialog dialog = new LocalDialog();
+        final Bundle args = new Bundle();
+        args.putParcelable(TAG, this);
+        dialog.setArguments(args);
+
+        final String tag = TAG + "_" + mUserAction.getActionIntent().getCreatorUid();
+        final FragmentManager fm = activity.getFragmentManager();
+        final FragmentTransaction ft = fm.beginTransaction();
+        final Fragment old = fm.findFragmentByTag(tag);
+        if (old != null) {
+            ft.remove(old);
+        }
+        ft.add(dialog, tag);
+        ft.commitAllowingStateLoss();
+!!!5665029.java!!!	describeContents() : int
+        return 0;
+!!!5665157.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        dest.writeString(getMessage());
+        dest.writeCharSequence(mUserMessage);
+        mUserAction.writeToParcel(dest, flags);

@@ -1,0 +1,136 @@
+class OMX
+!!!1352453.cpp!!!	listNodes(inout list : List<ComponentInfo>) : status_t
+    list->clear();
+
+    OMX_U32 index = 0;
+    char componentName[256];
+    while (mMaster->enumerateComponents(
+                componentName, sizeof(componentName), index) == OMX_ErrorNone) {
+        list->push_back(ComponentInfo());
+        ComponentInfo &info = *--list->end();
+
+        info.mName = componentName;
+
+        Vector<String8> roles;
+        OMX_ERRORTYPE err =
+            mMaster->getRolesOfComponent(componentName, &roles);
+
+        if (err == OMX_ErrorNone) {
+            for (OMX_U32 i = 0; i < roles.size(); ++i) {
+                info.mRoles.push_back(roles[i]);
+            }
+        }
+
+        ++index;
+    }
+
+    return OK;
+!!!1352581.cpp!!!	allocateNode(in name : char, in observer : sp<IOMXObserver>, inout omxNode : sp<IOMXNode>) : status_t
+    Mutex::Autolock autoLock(mLock);
+
+    omxNode->clear();
+
+    if (mLiveNodes.size() == kMaxNodeInstances) {
+        return NO_MEMORY;
+    }
+
+    sp<OMXNodeInstance> instance = new OMXNodeInstance(this, observer, name);
+
+    OMX_COMPONENTTYPE *handle;
+    OMX_ERRORTYPE err = mMaster->makeComponentInstance(
+            name, &OMXNodeInstance::kCallbacks,
+            instance.get(), &handle);
+
+    if (err != OMX_ErrorNone) {
+        ALOGE("FAILED to allocate omx component '%s' err=%s(%#x)", name, asString(err), err);
+
+        return StatusFromOMXError(err);
+    }
+    instance->setHandle(handle);
+    std::vector<AString> quirkVector;
+    if (mParser.getQuirks(name, &quirkVector) == OK) {
+        uint32_t quirks = 0;
+        for (const AString quirk : quirkVector) {
+            if (quirk == "requires-allocate-on-input-ports") {
+                quirks |= kRequiresAllocateBufferOnInputPorts;
+            }
+            if (quirk == "requires-allocate-on-output-ports") {
+                quirks |= kRequiresAllocateBufferOnOutputPorts;
+            }
+        }
+        instance->setQuirks(quirks);
+    }
+
+    mLiveNodes.add(IInterface::asBinder(observer), instance);
+    IInterface::asBinder(observer)->linkToDeath(this);
+
+    *omxNode = instance;
+
+    return OK;
+!!!1352709.cpp!!!	createInputSurface(inout bufferProducer : sp<IGraphicBufferProducer>, inout bufferSource : sp<IGraphicBufferSource>) : status_t
+    if (bufferProducer == NULL || bufferSource == NULL) {
+        ALOGE("b/25884056");
+        return BAD_VALUE;
+    }
+
+    sp<GraphicBufferSource> graphicBufferSource = new GraphicBufferSource();
+    status_t err = graphicBufferSource->initCheck();
+    if (err != OK) {
+        ALOGE("Failed to create persistent input surface: %s (%d)",
+                strerror(-err), err);
+        return err;
+    }
+
+    *bufferProducer = graphicBufferSource->getIGraphicBufferProducer();
+    *bufferSource = new BWGraphicBufferSource(graphicBufferSource);
+
+    return OK;
+!!!1352837.cpp!!!	binderDied(in the_late_who : wp<IBinder>) : void
+    sp<OMXNodeInstance> instance;
+
+    {
+        Mutex::Autolock autoLock(mLock);
+
+        ssize_t index = mLiveNodes.indexOfKey(the_late_who);
+
+        if (index < 0) {
+            ALOGE("b/27597103, nonexistent observer on binderDied");
+            android_errorWriteLog(0x534e4554, "27597103");
+            return;
+        }
+
+        instance = mLiveNodes.editValueAt(index);
+        mLiveNodes.removeItemsAt(index);
+    }
+
+    instance->onObserverDied();
+!!!1352965.cpp!!!	freeNode(in instance : sp<OMXNodeInstance>) : status_t
+    if (instance == NULL) {
+        return OK;
+    }
+
+    {
+        Mutex::Autolock autoLock(mLock);
+        ssize_t index = mLiveNodes.indexOfKey(IInterface::asBinder(instance->observer()));
+        if (index < 0) {
+            // This could conceivably happen if the observer dies at roughly the
+            // same time that a client attempts to free the node explicitly.
+
+            // NOTE: it's guaranteed that this method is called at most once per
+            //       instance.
+            ALOGV("freeNode: instance already removed from book-keeping.");
+        } else {
+            mLiveNodes.removeItemsAt(index);
+            IInterface::asBinder(instance->observer())->unlinkToDeath(this);
+        }
+    }
+
+    CHECK(instance->handle() != NULL);
+    OMX_ERRORTYPE err = mMaster->destroyComponentInstance(
+            static_cast<OMX_COMPONENTTYPE *>(instance->handle()));
+    ALOGV("freeNode: handle destroyed: %p", instance->handle());
+
+    return StatusFromOMXError(err);
+!!!1353093.cpp!!!	~OMX()
+    delete mMaster;
+    mMaster = NULL;

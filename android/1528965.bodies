@@ -1,0 +1,170 @@
+class TransferPipe
+!!!10003333.java!!!	TransferPipe()
+        this(null);
+!!!10003461.java!!!	TransferPipe(in bufferPrefix : String)
+        mThread = new Thread(this, "TransferPipe");
+        mFds = ParcelFileDescriptor.createPipe();
+        mBufferPrefix = bufferPrefix;
+!!!10003589.java!!!	getReadFd() : ParcelFileDescriptor
+        return mFds[0];
+!!!10003717.java!!!	getWriteFd() : ParcelFileDescriptor
+        return mFds[1];
+!!!10003845.java!!!	setBufferPrefix(in prefix : String) : void
+        mBufferPrefix = prefix;
+!!!10003973.java!!!	dumpAsync(inout binder : IBinder, inout out : FileDescriptor, inout args : String [[]]) : void
+        goDump(binder, out, args);
+!!!10004101.java!!!	go(inout caller : TransferPipe::Caller, inout iface : IInterface, inout out : FileDescriptor, in prefix : String, inout args : String [[]]) : void
+        go(caller, iface, out, prefix, args, DEFAULT_TIMEOUT);
+!!!10004229.java!!!	go(inout caller : TransferPipe::Caller, inout iface : IInterface, inout out : FileDescriptor, in prefix : String, inout args : String [[]], in timeout : long) : void
+        if ((iface.asBinder()) instanceof Binder) {
+            // This is a local object...  just call it directly.
+            try {
+                caller.go(iface, out, prefix, args);
+            } catch (RemoteException e) {
+            }
+            return;
+        }
+
+        try (TransferPipe tp = new TransferPipe()) {
+            caller.go(iface, tp.getWriteFd().getFileDescriptor(), prefix, args);
+            tp.go(out, timeout);
+        }
+!!!10004357.java!!!	goDump(inout binder : IBinder, inout out : FileDescriptor, inout args : String [[]]) : void
+        goDump(binder, out, args, DEFAULT_TIMEOUT);
+!!!10004485.java!!!	goDump(inout binder : IBinder, inout out : FileDescriptor, inout args : String [[]], in timeout : long) : void
+        if (binder instanceof Binder) {
+            // This is a local object...  just call it directly.
+            try {
+                binder.dump(out, args);
+            } catch (RemoteException e) {
+            }
+            return;
+        }
+
+        try (TransferPipe tp = new TransferPipe()) {
+            binder.dumpAsync(tp.getWriteFd().getFileDescriptor(), args);
+            tp.go(out, timeout);
+        }
+!!!10004613.java!!!	go(inout out : FileDescriptor) : void
+        go(out, DEFAULT_TIMEOUT);
+!!!10004741.java!!!	go(inout out : FileDescriptor, in timeout : long) : void
+        try {
+            synchronized (this) {
+                mOutFd = out;
+                mEndTime = SystemClock.uptimeMillis() + timeout;
+
+                if (DEBUG) Slog.i(TAG, "read=" + getReadFd() + " write=" + getWriteFd()
+                        + " out=" + out);
+
+                // Close the write fd, so we know when the other side is done.
+                closeFd(1);
+
+                mThread.start();
+
+                while (mFailure == null && !mComplete) {
+                    long waitTime = mEndTime - SystemClock.uptimeMillis();
+                    if (waitTime <= 0) {
+                        if (DEBUG) Slog.i(TAG, "TIMEOUT!");
+                        mThread.interrupt();
+                        throw new IOException("Timeout");
+                    }
+
+                    try {
+                        wait(waitTime);
+                    } catch (InterruptedException e) {
+                    }
+                }
+
+                if (DEBUG) Slog.i(TAG, "Finished: " + mFailure);
+                if (mFailure != null) {
+                    throw new IOException(mFailure);
+                }
+            }
+        } finally {
+            kill();
+        }
+!!!10004869.java!!!	closeFd(in num : int) : void
+        if (mFds[num] != null) {
+            if (DEBUG) Slog.i(TAG, "Closing: " + mFds[num]);
+            try {
+                mFds[num].close();
+            } catch (IOException e) {
+            }
+            mFds[num] = null;
+        }
+!!!10004997.java!!!	close() : void
+        kill();
+!!!10005125.java!!!	kill() : void
+        synchronized (this) {
+            closeFd(0);
+            closeFd(1);
+        }
+!!!10005253.java!!!	run() : void
+        final byte[] buffer = new byte[1024];
+        final FileInputStream fis;
+        final FileOutputStream fos;
+
+        synchronized (this) {
+            ParcelFileDescriptor readFd = getReadFd();
+            if (readFd == null) {
+                Slog.w(TAG, "Pipe has been closed...");
+                return;
+            }
+            fis = new FileInputStream(readFd.getFileDescriptor());
+            fos = new FileOutputStream(mOutFd);
+        }
+
+        if (DEBUG) Slog.i(TAG, "Ready to read pipe...");
+        byte[] bufferPrefix = null;
+        boolean needPrefix = true;
+        if (mBufferPrefix != null) {
+            bufferPrefix = mBufferPrefix.getBytes();
+        }
+
+        int size;
+        try {
+            while ((size=fis.read(buffer)) > 0) {
+                if (DEBUG) Slog.i(TAG, "Got " + size + " bytes");
+                if (bufferPrefix == null) {
+                    fos.write(buffer, 0, size);
+                } else {
+                    int start = 0;
+                    for (int i=0; i<size; i++) {
+                        if (buffer[i] != '\n') {
+                            if (i > start) {
+                                fos.write(buffer, start, i-start);
+                            }
+                            start = i;
+                            if (needPrefix) {
+                                fos.write(bufferPrefix);
+                                needPrefix = false;
+                            }
+                            do {
+                                i++;
+                            } while (i<size && buffer[i] != '\n');
+                            if (i < size) {
+                                needPrefix = true;
+                            }
+                        }
+                    }
+                    if (size > start) {
+                        fos.write(buffer, start, size-start);
+                    }
+                }
+            }
+            if (DEBUG) Slog.i(TAG, "End of pipe: size=" + size);
+            if (mThread.isInterrupted()) {
+                if (DEBUG) Slog.i(TAG, "Interrupted!");
+            }
+        } catch (IOException e) {
+            synchronized (this) {
+                mFailure = e.toString();
+                notifyAll();
+                return;
+            }
+        }
+
+        synchronized (this) {
+            mComplete = true;
+            notifyAll();
+        }

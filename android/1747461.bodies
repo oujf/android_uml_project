@@ -1,0 +1,171 @@
+class ShortcutBitmapSaver
+!!!12253829.java!!!	ShortcutBitmapSaver(inout service : ShortcutService)
+        mService = service;
+        // mLock = lock;
+!!!12253957.java!!!	waitForAllSavesLocked() : boolean
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        mExecutor.execute(() -> latch.countDown());
+
+        try {
+            if (latch.await(SAVE_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                return true;
+            }
+            mService.wtf("Timed out waiting on saving bitmaps.");
+        } catch (InterruptedException e) {
+            Slog.w(TAG, "interrupted");
+        }
+        return false;
+!!!12254085.java!!!	getBitmapPathMayWaitLocked(inout shortcut : ShortcutInfo) : String
+        final boolean success = waitForAllSavesLocked();
+        if (success && shortcut.hasIconFile()) {
+            return shortcut.getBitmapPath();
+        } else {
+            return null;
+        }
+!!!12254213.java!!!	removeIcon(inout shortcut : ShortcutInfo) : void
+        // Do not remove the actual bitmap file yet, because if the device crashes before saving
+        // the XML we'd lose the icon.  We just remove all dangling files after saving the XML.
+        shortcut.setIconResourceId(0);
+        shortcut.setIconResName(null);
+        shortcut.setBitmapPath(null);
+        shortcut.clearFlags(ShortcutInfo.FLAG_HAS_ICON_FILE |
+                ShortcutInfo.FLAG_ADAPTIVE_BITMAP | ShortcutInfo.FLAG_HAS_ICON_RES |
+                ShortcutInfo.FLAG_ICON_FILE_PENDING_SAVE);
+!!!12254341.java!!!	saveBitmapLocked(inout shortcut : ShortcutInfo, in maxDimension : int, inout format : CompressFormat, in quality : int) : void
+        final Icon icon = shortcut.getIcon();
+        Preconditions.checkNotNull(icon);
+
+        final Bitmap original = icon.getBitmap();
+        if (original == null) {
+            Log.e(TAG, "Missing icon: " + shortcut);
+            return;
+        }
+
+        // Compress it and enqueue to the requests.
+        final byte[] bytes;
+        try {
+            final Bitmap shrunk = mService.shrinkBitmap(original, maxDimension);
+            try {
+                try (final ByteArrayOutputStream out = new ByteArrayOutputStream(64 * 1024)) {
+                    if (!shrunk.compress(format, quality, out)) {
+                        Slog.wtf(ShortcutService.TAG, "Unable to compress bitmap");
+                    }
+                    out.flush();
+                    bytes = out.toByteArray();
+                    out.close();
+                }
+            } finally {
+                if (shrunk != original) {
+                    shrunk.recycle();
+                }
+            }
+        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+            Slog.wtf(ShortcutService.TAG, "Unable to write bitmap to file", e);
+            return;
+        }
+
+        shortcut.addFlags(
+                ShortcutInfo.FLAG_HAS_ICON_FILE | ShortcutInfo.FLAG_ICON_FILE_PENDING_SAVE);
+
+        if (icon.getType() == Icon.TYPE_ADAPTIVE_BITMAP) {
+            shortcut.addFlags(ShortcutInfo.FLAG_ADAPTIVE_BITMAP);
+        }
+
+        // Enqueue a pending save.
+        final PendingItem item = new PendingItem(shortcut, bytes);
+        synchronized (mPendingItems) {
+            mPendingItems.add(item);
+        }
+
+        if (DEBUG) {
+            Slog.d(TAG, "Scheduling to save: " + item);
+        }
+
+        mExecutor.execute(mRunnable);
+!!!12254469.java!!!	processPendingItems() : boolean
+        if (ADD_DELAY_BEFORE_SAVE_FOR_TEST) {
+            Slog.w(TAG, "*** ARTIFICIAL SLEEP ***");
+            try {
+                Thread.sleep(SAVE_DELAY_MS_FOR_TEST);
+            } catch (InterruptedException e) {
+            }
+        }
+
+        // NOTE:
+        // Ideally we should be holding the service lock when accessing shortcut instances,
+        // but that could cause a deadlock so we don't do it.
+        //
+        // Instead, waitForAllSavesLocked() uses a latch to make sure changes made on this
+        // thread is visible on the caller thread.
+
+        ShortcutInfo shortcut = null;
+        try {
+            final PendingItem item;
+
+            synchronized (mPendingItems) {
+                if (mPendingItems.size() == 0) {
+                    return false;
+                }
+                item = mPendingItems.pop();
+            }
+
+            shortcut = item.shortcut;
+
+            // See if the shortcut is still relevant. (It might have been removed already.)
+            if (!shortcut.isIconPendingSave()) {
+                return true;
+            }
+
+            if (DEBUG) {
+                Slog.d(TAG, "Saving bitmap: " + item);
+            }
+
+            File file = null;
+            try {
+                final FileOutputStreamWithPath out = mService.openIconFileForWrite(
+                        shortcut.getUserId(), shortcut);
+                file = out.getFile();
+
+                try {
+                    out.write(item.bytes);
+                } finally {
+                    IoUtils.closeQuietly(out);
+                }
+
+                shortcut.setBitmapPath(file.getAbsolutePath());
+
+            } catch (IOException | RuntimeException e) {
+                Slog.e(ShortcutService.TAG, "Unable to write bitmap to file", e);
+
+                if (file != null && file.exists()) {
+                    file.delete();
+                }
+                return true;
+            }
+        } finally {
+            if (DEBUG) {
+                Slog.d(TAG, "Saved bitmap.");
+            }
+            if (shortcut != null) {
+                if (shortcut.getBitmapPath() == null) {
+                    removeIcon(shortcut);
+                }
+
+                // Whatever happened, remove this flag.
+                shortcut.clearFlags(ShortcutInfo.FLAG_ICON_FILE_PENDING_SAVE);
+            }
+        }
+        return true;
+!!!12254597.java!!!	dumpLocked(inout pw : PrintWriter, in prefix : String) : void
+        synchronized (mPendingItems) {
+            final int N = mPendingItems.size();
+            pw.print(prefix);
+            pw.println("Pending saves: Num=" + N + " Executor=" + mExecutor);
+
+            for (PendingItem item : mPendingItems) {
+                pw.print(prefix);
+                pw.print("  ");
+                pw.println(item);
+            }
+        }

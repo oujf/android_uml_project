@@ -1,0 +1,78 @@
+class BigPictureStyle
+!!!5604485.java!!!	BigPictureStyle(inout builder : Notification::Builder)
+            setBuilder(builder);
+!!!5604613.java!!!	setBigContentTitle(inout title : CharSequence) : Notification::BigPictureStyle
+            internalSetBigContentTitle(safeCharSequence(title));
+            return this;
+!!!5604741.java!!!	setSummaryText(inout cs : CharSequence) : Notification::BigPictureStyle
+            internalSetSummaryText(safeCharSequence(cs));
+            return this;
+!!!5604869.java!!!	bigPicture(inout b : Bitmap) : Notification::BigPictureStyle
+            mPicture = b;
+            return this;
+!!!5604997.java!!!	bigLargeIcon(inout b : Bitmap) : Notification::BigPictureStyle
+            return bigLargeIcon(b != null ? Icon.createWithBitmap(b) : null);
+!!!5605125.java!!!	bigLargeIcon(inout icon : Icon) : Notification::BigPictureStyle
+            mBigLargeIconSet = true;
+            mBigLargeIcon = icon;
+            return this;
+!!!5605253.java!!!	purgeResources() : void
+            super.purgeResources();
+            if (mPicture != null &&
+                mPicture.isMutable() &&
+                mPicture.getAllocationByteCount() >= MIN_ASHMEM_BITMAP_SIZE) {
+                mPicture = mPicture.createAshmemBitmap();
+            }
+            if (mBigLargeIcon != null) {
+                mBigLargeIcon.convertToAshmem();
+            }
+!!!5605381.java!!!	makeBigContentView() : RemoteViews
+            // Replace mN.mLargeIcon with mBigLargeIcon if mBigLargeIconSet
+            // This covers the following cases:
+            //   1. mBigLargeIconSet -> mBigLargeIcon (null or non-null) applies, overrides
+            //          mN.mLargeIcon
+            //   2. !mBigLargeIconSet -> mN.mLargeIcon applies
+            Icon oldLargeIcon = null;
+            Bitmap largeIconLegacy = null;
+            if (mBigLargeIconSet) {
+                oldLargeIcon = mBuilder.mN.mLargeIcon;
+                mBuilder.mN.mLargeIcon = mBigLargeIcon;
+                // The legacy largeIcon might not allow us to clear the image, as it's taken in
+                // replacement if the other one is null. Because we're restoring these legacy icons
+                // for old listeners, this is in general non-null.
+                largeIconLegacy = mBuilder.mN.largeIcon;
+                mBuilder.mN.largeIcon = null;
+            }
+
+            RemoteViews contentView = getStandardView(mBuilder.getBigPictureLayoutResource());
+            if (mSummaryTextSet) {
+                contentView.setTextViewText(R.id.text, mBuilder.processLegacyText(mSummaryText));
+                mBuilder.setTextViewColorSecondary(contentView, R.id.text);
+                contentView.setViewVisibility(R.id.text, View.VISIBLE);
+            }
+            mBuilder.setContentMinHeight(contentView, mBuilder.mN.hasLargeIcon());
+
+            if (mBigLargeIconSet) {
+                mBuilder.mN.mLargeIcon = oldLargeIcon;
+                mBuilder.mN.largeIcon = largeIconLegacy;
+            }
+
+            contentView.setImageViewBitmap(R.id.big_picture, mPicture);
+            return contentView;
+!!!5605509.java!!!	addExtras(inout extras : Bundle) : void
+            super.addExtras(extras);
+
+            if (mBigLargeIconSet) {
+                extras.putParcelable(EXTRA_LARGE_ICON_BIG, mBigLargeIcon);
+            }
+            extras.putParcelable(EXTRA_PICTURE, mPicture);
+!!!5605637.java!!!	restoreFromExtras(inout extras : Bundle) : void
+            super.restoreFromExtras(extras);
+
+            if (extras.containsKey(EXTRA_LARGE_ICON_BIG)) {
+                mBigLargeIconSet = true;
+                mBigLargeIcon = extras.getParcelable(EXTRA_LARGE_ICON_BIG);
+            }
+            mPicture = extras.getParcelable(EXTRA_PICTURE);
+!!!5605765.java!!!	hasSummaryInHeader() : boolean
+            return false;

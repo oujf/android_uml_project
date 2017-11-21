@@ -1,0 +1,133 @@
+class ViolationInfo
+!!!7602821.java!!!	ViolationInfo()
+            message = null;
+            crashInfo = null;
+            policy = 0;
+!!!7602949.java!!!	ViolationInfo(inout tr : Throwable, in policy : int)
+            this(null, tr, policy);
+!!!7603077.java!!!	ViolationInfo(in message : String, inout tr : Throwable, in policy : int)
+            this.message = message;
+            crashInfo = new ApplicationErrorReport.CrashInfo(tr);
+            violationUptimeMillis = SystemClock.uptimeMillis();
+            this.policy = policy;
+            this.numAnimationsRunning = ValueAnimator.getCurrentAnimationsCount();
+            Intent broadcastIntent = ActivityThread.getIntentBeingBroadcast();
+            if (broadcastIntent != null) {
+                broadcastIntentAction = broadcastIntent.getAction();
+            }
+            ThreadSpanState state = sThisThreadSpanState.get();
+            if (tr instanceof InstanceCountViolation) {
+                this.numInstances = ((InstanceCountViolation) tr).mInstances;
+            }
+            synchronized (state) {
+                int spanActiveCount = state.mActiveSize;
+                if (spanActiveCount > MAX_SPAN_TAGS) {
+                    spanActiveCount = MAX_SPAN_TAGS;
+                }
+                if (spanActiveCount != 0) {
+                    this.tags = new String[spanActiveCount];
+                    Span iter = state.mActiveHead;
+                    int index = 0;
+                    while (iter != null && index < spanActiveCount) {
+                        this.tags[index] = iter.mName;
+                        index++;
+                        iter = iter.mNext;
+                    }
+                }
+            }
+!!!7603205.java!!!	hashCode() : int
+            int result = 17;
+            if (crashInfo != null) {
+                result = 37 * result + crashInfo.stackTrace.hashCode();
+            }
+            if (numAnimationsRunning != 0) {
+                result *= 37;
+            }
+            if (broadcastIntentAction != null) {
+                result = 37 * result + broadcastIntentAction.hashCode();
+            }
+            if (tags != null) {
+                for (String tag : tags) {
+                    result = 37 * result + tag.hashCode();
+                }
+            }
+            return result;
+!!!7603333.java!!!	ViolationInfo(inout in : Parcel)
+            this(in, false);
+!!!7603461.java!!!	ViolationInfo(inout in : Parcel, inout unsetGatheringBit : boolean)
+            message = in.readString();
+            if (in.readInt() != 0) {
+                crashInfo = new ApplicationErrorReport.CrashInfo(in);
+            } else {
+                crashInfo = null;
+            }
+            int rawPolicy = in.readInt();
+            if (unsetGatheringBit) {
+                policy = rawPolicy & ~PENALTY_GATHER;
+            } else {
+                policy = rawPolicy;
+            }
+            durationMillis = in.readInt();
+            violationNumThisLoop = in.readInt();
+            numAnimationsRunning = in.readInt();
+            violationUptimeMillis = in.readLong();
+            numInstances = in.readLong();
+            broadcastIntentAction = in.readString();
+            tags = in.readStringArray();
+!!!7603589.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+            dest.writeString(message);
+            if (crashInfo != null) {
+                dest.writeInt(1);
+                crashInfo.writeToParcel(dest, flags);
+            } else {
+                dest.writeInt(0);
+            }
+            int start = dest.dataPosition();
+            dest.writeInt(policy);
+            dest.writeInt(durationMillis);
+            dest.writeInt(violationNumThisLoop);
+            dest.writeInt(numAnimationsRunning);
+            dest.writeLong(violationUptimeMillis);
+            dest.writeLong(numInstances);
+            dest.writeString(broadcastIntentAction);
+            dest.writeStringArray(tags);
+            int total = dest.dataPosition()-start;
+            if (Binder.CHECK_PARCEL_SIZE && total > 10*1024) {
+                Slog.d(TAG, "VIO: policy=" + policy + " dur=" + durationMillis
+                        + " numLoop=" + violationNumThisLoop
+                        + " anim=" + numAnimationsRunning
+                        + " uptime=" + violationUptimeMillis
+                        + " numInst=" + numInstances);
+                Slog.d(TAG, "VIO: action=" + broadcastIntentAction);
+                Slog.d(TAG, "VIO: tags=" + Arrays.toString(tags));
+                Slog.d(TAG, "VIO: TOTAL BYTES WRITTEN: " + (dest.dataPosition()-start));
+            }
+!!!7603717.java!!!	dump(inout pw : Printer, in prefix : String) : void
+            if (crashInfo != null) {
+                crashInfo.dump(pw, prefix);
+            }
+            pw.println(prefix + "policy: " + policy);
+            if (durationMillis != -1) {
+                pw.println(prefix + "durationMillis: " + durationMillis);
+            }
+            if (numInstances != -1) {
+                pw.println(prefix + "numInstances: " + numInstances);
+            }
+            if (violationNumThisLoop != 0) {
+                pw.println(prefix + "violationNumThisLoop: " + violationNumThisLoop);
+            }
+            if (numAnimationsRunning != 0) {
+                pw.println(prefix + "numAnimationsRunning: " + numAnimationsRunning);
+            }
+            pw.println(prefix + "violationUptimeMillis: " + violationUptimeMillis);
+            if (broadcastIntentAction != null) {
+                pw.println(prefix + "broadcastIntentAction: " + broadcastIntentAction);
+            }
+            if (tags != null) {
+                int index = 0;
+                for (String tag : tags) {
+                    pw.println(prefix + "tag[" + (index++) + "]: " + tag);
+                }
+            }
+!!!7603845.java!!!	describeContents() : int
+            return 0;

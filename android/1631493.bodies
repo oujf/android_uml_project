@@ -1,0 +1,91 @@
+class CeDatabaseHelper
+!!!10951429.java!!!	CeDatabaseHelper(inout context : Context, in ceDatabaseName : String)
+            super(context, ceDatabaseName, null, CE_DATABASE_VERSION);
+!!!10951557.java!!!	onCreate(inout db : SQLiteDatabase) : void
+            Log.i(TAG, "Creating CE database " + getDatabaseName());
+            db.execSQL("CREATE TABLE " + TABLE_ACCOUNTS + " ( "
+                    + ACCOUNTS_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    + ACCOUNTS_NAME + " TEXT NOT NULL, "
+                    + ACCOUNTS_TYPE + " TEXT NOT NULL, "
+                    + ACCOUNTS_PASSWORD + " TEXT, "
+                    + "UNIQUE(" + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + "))");
+
+            db.execSQL("CREATE TABLE " + TABLE_AUTHTOKENS + " (  "
+                    + AUTHTOKENS_ID + " INTEGER PRIMARY KEY AUTOINCREMENT,  "
+                    + AUTHTOKENS_ACCOUNTS_ID + " INTEGER NOT NULL, "
+                    + AUTHTOKENS_TYPE + " TEXT NOT NULL,  "
+                    + AUTHTOKENS_AUTHTOKEN + " TEXT,  "
+                    + "UNIQUE (" + AUTHTOKENS_ACCOUNTS_ID + "," + AUTHTOKENS_TYPE + "))");
+
+            db.execSQL("CREATE TABLE " + TABLE_EXTRAS + " ( "
+                    + EXTRAS_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    + EXTRAS_ACCOUNTS_ID + " INTEGER, "
+                    + EXTRAS_KEY + " TEXT NOT NULL, "
+                    + EXTRAS_VALUE + " TEXT, "
+                    + "UNIQUE(" + EXTRAS_ACCOUNTS_ID + "," + EXTRAS_KEY + "))");
+
+            createAccountsDeletionTrigger(db);
+!!!10951685.java!!!	createAccountsDeletionTrigger(inout db : SQLiteDatabase) : void
+            db.execSQL(""
+                    + " CREATE TRIGGER " + TABLE_ACCOUNTS + "Delete DELETE ON " + TABLE_ACCOUNTS
+                    + " BEGIN"
+                    + "   DELETE FROM " + TABLE_AUTHTOKENS
+                    + "     WHERE " + AUTHTOKENS_ACCOUNTS_ID + "=OLD." + ACCOUNTS_ID + " ;"
+                    + "   DELETE FROM " + TABLE_EXTRAS
+                    + "     WHERE " + EXTRAS_ACCOUNTS_ID + "=OLD." + ACCOUNTS_ID + " ;"
+                    + " END");
+!!!10951813.java!!!	onUpgrade(inout db : SQLiteDatabase, in oldVersion : int, in newVersion : int) : void
+            Log.i(TAG, "Upgrade CE from version " + oldVersion + " to version " + newVersion);
+
+            if (oldVersion == 9) {
+                if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                    Log.v(TAG, "onUpgrade upgrading to v10");
+                }
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE_META);
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE_SHARED_ACCOUNTS);
+                // Recreate the trigger, since the old one references the table to be removed
+                db.execSQL("DROP TRIGGER IF EXISTS " + TABLE_ACCOUNTS + "Delete");
+                createAccountsDeletionTrigger(db);
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE_GRANTS);
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE_DEBUG);
+                oldVersion++;
+            }
+
+            if (oldVersion != newVersion) {
+                Log.e(TAG, "failed to upgrade version " + oldVersion + " to version " + newVersion);
+            }
+!!!10951941.java!!!	onOpen(inout db : SQLiteDatabase) : void
+            if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "opened database " + CE_DATABASE_NAME);
+!!!10952069.java!!!	create(inout context : Context, inout preNDatabaseFile : File, inout ceDatabaseFile : File) : AccountsDb::CeDatabaseHelper
+            boolean newDbExists = ceDatabaseFile.exists();
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                Log.v(TAG, "CeDatabaseHelper.create ceDatabaseFile=" + ceDatabaseFile
+                        + " oldDbExists=" + preNDatabaseFile.exists()
+                        + " newDbExists=" + newDbExists);
+            }
+            boolean removeOldDb = false;
+            if (!newDbExists && preNDatabaseFile.exists()) {
+                removeOldDb = migratePreNDbToCe(preNDatabaseFile, ceDatabaseFile);
+            }
+            // Try to open and upgrade if necessary
+            CeDatabaseHelper ceHelper = new CeDatabaseHelper(context, ceDatabaseFile.getPath());
+            ceHelper.getWritableDatabase();
+            ceHelper.close();
+            if (removeOldDb) {
+                Slog.i(TAG, "Migration complete - removing pre-N db " + preNDatabaseFile);
+                if (!SQLiteDatabase.deleteDatabase(preNDatabaseFile)) {
+                    Slog.e(TAG, "Cannot remove pre-N db " + preNDatabaseFile);
+                }
+            }
+            return ceHelper;
+!!!10952197.java!!!	migratePreNDbToCe(inout oldDbFile : File, inout ceDbFile : File) : boolean
+            Slog.i(TAG, "Moving pre-N DB " + oldDbFile + " to CE " + ceDbFile);
+            try {
+                FileUtils.copyFileOrThrow(oldDbFile, ceDbFile);
+            } catch (IOException e) {
+                Slog.e(TAG, "Cannot copy file to " + ceDbFile + " from " + oldDbFile, e);
+                // Try to remove potentially damaged file if I/O error occurred
+                deleteDbFileWarnIfFailed(ceDbFile);
+                return false;
+            }
+            return true;

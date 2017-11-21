@@ -1,0 +1,110 @@
+class PipMediaController
+!!!3273477.java!!!	PipMediaController(inout context : Context, inout activityManager : IActivityManager)
+        mContext = context;
+        mActivityManager = activityManager;
+        IntentFilter mediaControlFilter = new IntentFilter();
+        mediaControlFilter.addAction(ACTION_PLAY);
+        mediaControlFilter.addAction(ACTION_PAUSE);
+        mediaControlFilter.addAction(ACTION_NEXT);
+        mediaControlFilter.addAction(ACTION_PREV);
+        mContext.registerReceiver(mPlayPauseActionReceiver, mediaControlFilter);
+
+        createMediaActions();
+        mMediaSessionManager =
+                (MediaSessionManager) context.getSystemService(Context.MEDIA_SESSION_SERVICE);
+        mMediaSessionManager.addOnActiveSessionsChangedListener(controllers -> {
+            resolveActiveMediaController(controllers);
+        }, null);
+!!!3273605.java!!!	onActivityPinned() : void
+        // Once we enter PiP, try to find the active media controller for the top most activity
+        resolveActiveMediaController(mMediaSessionManager.getActiveSessions(null));
+!!!3273733.java!!!	addListener(inout listener : PipMediaController::ActionListener) : void
+        if (!mListeners.contains(listener)) {
+            mListeners.add(listener);
+            listener.onMediaActionsChanged(getMediaActions());
+        }
+!!!3273861.java!!!	removeListener(inout listener : PipMediaController::ActionListener) : void
+        listener.onMediaActionsChanged(Collections.EMPTY_LIST);
+        mListeners.remove(listener);
+!!!3273989.java!!!	getMediaActions() : List<RemoteAction>
+        if (mMediaController == null || mMediaController.getPlaybackState() == null) {
+            return Collections.EMPTY_LIST;
+        }
+
+        ArrayList<RemoteAction> mediaActions = new ArrayList<>();
+        int state = mMediaController.getPlaybackState().getState();
+        boolean isPlaying = MediaSession.isActiveState(state);
+        long actions = mMediaController.getPlaybackState().getActions();
+
+        // Prev action
+        mPrevAction.setEnabled((actions & PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0);
+        mediaActions.add(mPrevAction);
+
+        // Play/pause action
+        if (!isPlaying && ((actions & PlaybackState.ACTION_PLAY) != 0)) {
+            mediaActions.add(mPlayAction);
+        } else if (isPlaying && ((actions & PlaybackState.ACTION_PAUSE) != 0)) {
+            mediaActions.add(mPauseAction);
+        }
+
+        // Next action
+        mNextAction.setEnabled((actions & PlaybackState.ACTION_SKIP_TO_NEXT) != 0);
+        mediaActions.add(mNextAction);
+        return mediaActions;
+!!!3274117.java!!!	createMediaActions() : void
+        String pauseDescription = mContext.getString(R.string.pip_pause);
+        mPauseAction = new RemoteAction(Icon.createWithResource(mContext,
+                R.drawable.ic_pause_white), pauseDescription, pauseDescription,
+                        PendingIntent.getBroadcast(mContext, 0, new Intent(ACTION_PAUSE),
+                                FLAG_UPDATE_CURRENT));
+
+        String playDescription = mContext.getString(R.string.pip_play);
+        mPlayAction = new RemoteAction(Icon.createWithResource(mContext,
+                R.drawable.ic_play_arrow_white), playDescription, playDescription,
+                        PendingIntent.getBroadcast(mContext, 0, new Intent(ACTION_PLAY),
+                                FLAG_UPDATE_CURRENT));
+
+        String nextDescription = mContext.getString(R.string.pip_skip_to_next);
+        mNextAction = new RemoteAction(Icon.createWithResource(mContext,
+                R.drawable.ic_skip_next_white), nextDescription, nextDescription,
+                        PendingIntent.getBroadcast(mContext, 0, new Intent(ACTION_NEXT),
+                                FLAG_UPDATE_CURRENT));
+
+        String prevDescription = mContext.getString(R.string.pip_skip_to_prev);
+        mPrevAction = new RemoteAction(Icon.createWithResource(mContext,
+                R.drawable.ic_skip_previous_white), prevDescription, prevDescription,
+                        PendingIntent.getBroadcast(mContext, 0, new Intent(ACTION_PREV),
+                                FLAG_UPDATE_CURRENT));
+!!!3274245.java!!!	resolveActiveMediaController(inout controllers : List<MediaController>) : void
+        if (controllers != null) {
+            final ComponentName topActivity = PipUtils.getTopPinnedActivity(mContext,
+                    mActivityManager);
+            if (topActivity != null) {
+                for (int i = 0; i < controllers.size(); i++) {
+                    final MediaController controller = controllers.get(i);
+                    if (controller.getPackageName().equals(topActivity.getPackageName())) {
+                        setActiveMediaController(controller);
+                        return;
+                    }
+                }
+            }
+        }
+        setActiveMediaController(null);
+!!!3274373.java!!!	setActiveMediaController(inout controller : MediaController) : void
+        if (controller != mMediaController) {
+            if (mMediaController != null) {
+                mMediaController.unregisterCallback(mPlaybackChangedListener);
+            }
+            mMediaController = controller;
+            if (controller != null) {
+                controller.registerCallback(mPlaybackChangedListener);
+            }
+            notifyActionsChanged();
+
+            // TODO(winsonc): Consider if we want to close the PIP after a timeout (like on TV)
+        }
+!!!3274501.java!!!	notifyActionsChanged() : void
+        if (!mListeners.isEmpty()) {
+            List<RemoteAction> actions = getMediaActions();
+            mListeners.forEach(l -> l.onMediaActionsChanged(actions));
+        }

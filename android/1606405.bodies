@@ -1,0 +1,316 @@
+class LockSettingsStorage
+!!!10747909.java!!!	LockSettingsStorage(inout context : Context)
+        mContext = context;
+        mOpenHelper = new DatabaseHelper(context);
+!!!10748037.java!!!	setDatabaseOnCreateCallback(inout callback : LockSettingsStorage::Callback) : void
+        mOpenHelper.setCallback(callback);
+!!!10748165.java!!!	writeKeyValue(in key : String, in value : String, in userId : int) : void
+        writeKeyValue(mOpenHelper.getWritableDatabase(), key, value, userId);
+!!!10748293.java!!!	writeKeyValue(inout db : SQLiteDatabase, in key : String, in value : String, in userId : int) : void
+        ContentValues cv = new ContentValues();
+        cv.put(COLUMN_KEY, key);
+        cv.put(COLUMN_USERID, userId);
+        cv.put(COLUMN_VALUE, value);
+
+        db.beginTransaction();
+        try {
+            db.delete(TABLE, COLUMN_KEY + "=? AND " + COLUMN_USERID + "=?",
+                    new String[] {key, Integer.toString(userId)});
+            db.insert(TABLE, null, cv);
+            db.setTransactionSuccessful();
+            mCache.putKeyValue(key, value, userId);
+        } finally {
+            db.endTransaction();
+        }
+
+!!!10748421.java!!!	readKeyValue(in key : String, in defaultValue : String, in userId : int) : String
+        int version;
+        synchronized (mCache) {
+            if (mCache.hasKeyValue(key, userId)) {
+                return mCache.peekKeyValue(key, defaultValue, userId);
+            }
+            version = mCache.getVersion();
+        }
+
+        Cursor cursor;
+        Object result = DEFAULT;
+        SQLiteDatabase db = mOpenHelper.getReadableDatabase();
+        if ((cursor = db.query(TABLE, COLUMNS_FOR_QUERY,
+                COLUMN_USERID + "=? AND " + COLUMN_KEY + "=?",
+                new String[] { Integer.toString(userId), key },
+                null, null, null)) != null) {
+            if (cursor.moveToFirst()) {
+                result = cursor.getString(0);
+            }
+            cursor.close();
+        }
+        mCache.putKeyValueIfUnchanged(key, result, userId, version);
+        return result == DEFAULT ? defaultValue : (String) result;
+!!!10748549.java!!!	prefetchUser(in userId : int) : void
+        int version;
+        synchronized (mCache) {
+            if (mCache.isFetched(userId)) {
+                return;
+            }
+            mCache.setFetched(userId);
+            version = mCache.getVersion();
+        }
+
+        Cursor cursor;
+        SQLiteDatabase db = mOpenHelper.getReadableDatabase();
+        if ((cursor = db.query(TABLE, COLUMNS_FOR_PREFETCH,
+                COLUMN_USERID + "=?",
+                new String[] { Integer.toString(userId) },
+                null, null, null)) != null) {
+            while (cursor.moveToNext()) {
+                String key = cursor.getString(0);
+                String value = cursor.getString(1);
+                mCache.putKeyValueIfUnchanged(key, value, userId, version);
+            }
+            cursor.close();
+        }
+
+        // Populate cache by reading the password and pattern files.
+        readCredentialHash(userId);
+!!!10748677.java!!!	readPasswordHashIfExists(in userId : int) : LockSettingsStorage::CredentialHash
+        byte[] stored = readFile(getLockPasswordFilename(userId));
+        if (!ArrayUtils.isEmpty(stored)) {
+            return new CredentialHash(stored, LockPatternUtils.CREDENTIAL_TYPE_PASSWORD,
+                    CredentialHash.VERSION_GATEKEEPER);
+        }
+
+        stored = readFile(getLegacyLockPasswordFilename(userId));
+        if (!ArrayUtils.isEmpty(stored)) {
+            return new CredentialHash(stored, LockPatternUtils.CREDENTIAL_TYPE_PASSWORD,
+                    CredentialHash.VERSION_LEGACY);
+        }
+        return null;
+!!!10748805.java!!!	readPatternHashIfExists(in userId : int) : LockSettingsStorage::CredentialHash
+        byte[] stored = readFile(getLockPatternFilename(userId));
+        if (!ArrayUtils.isEmpty(stored)) {
+            return new CredentialHash(stored, LockPatternUtils.CREDENTIAL_TYPE_PATTERN,
+                    CredentialHash.VERSION_GATEKEEPER);
+        }
+
+        stored = readFile(getBaseZeroLockPatternFilename(userId));
+        if (!ArrayUtils.isEmpty(stored)) {
+            return new CredentialHash(stored, true);
+        }
+
+        stored = readFile(getLegacyLockPatternFilename(userId));
+        if (!ArrayUtils.isEmpty(stored)) {
+            return new CredentialHash(stored, LockPatternUtils.CREDENTIAL_TYPE_PATTERN,
+                    CredentialHash.VERSION_LEGACY);
+        }
+        return null;
+!!!10748933.java!!!	readCredentialHash(in userId : int) : LockSettingsStorage::CredentialHash
+        CredentialHash passwordHash = readPasswordHashIfExists(userId);
+        CredentialHash patternHash = readPatternHashIfExists(userId);
+        if (passwordHash != null && patternHash != null) {
+            if (passwordHash.version == CredentialHash.VERSION_GATEKEEPER) {
+                return passwordHash;
+            } else {
+                return patternHash;
+            }
+        } else if (passwordHash != null) {
+            return passwordHash;
+        } else if (patternHash != null) {
+            return patternHash;
+        } else {
+            return CredentialHash.createEmptyHash();
+        }
+!!!10749061.java!!!	removeChildProfileLock(in userId : int) : void
+        if (DEBUG)
+            Slog.e(TAG, "Remove child profile lock for user: " + userId);
+        try {
+            deleteFile(getChildProfileLockFile(userId));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+!!!10749189.java!!!	writeChildProfileLock(in userId : int, inout lock : byte [[]]) : void
+        writeFile(getChildProfileLockFile(userId), lock);
+!!!10749317.java!!!	readChildProfileLock(in userId : int) : byte
+        return readFile(getChildProfileLockFile(userId));
+!!!10749445.java!!!	hasChildProfileLock(in userId : int) : boolean
+        return hasFile(getChildProfileLockFile(userId));
+!!!10749573.java!!!	hasPassword(in userId : int) : boolean
+        return hasFile(getLockPasswordFilename(userId)) ||
+            hasFile(getLegacyLockPasswordFilename(userId));
+!!!10749701.java!!!	hasPattern(in userId : int) : boolean
+        return hasFile(getLockPatternFilename(userId)) ||
+            hasFile(getBaseZeroLockPatternFilename(userId)) ||
+            hasFile(getLegacyLockPatternFilename(userId));
+!!!10749829.java!!!	hasCredential(in userId : int) : boolean
+        return hasPassword(userId) || hasPattern(userId);
+!!!10749957.java!!!	hasFile(in name : String) : boolean
+        byte[] contents = readFile(name);
+        return contents != null && contents.length > 0;
+!!!10750085.java!!!	readFile(in name : String) : byte
+        int version;
+        synchronized (mCache) {
+            if (mCache.hasFile(name)) {
+                return mCache.peekFile(name);
+            }
+            version = mCache.getVersion();
+        }
+
+        RandomAccessFile raf = null;
+        byte[] stored = null;
+        try {
+            raf = new RandomAccessFile(name, "r");
+            stored = new byte[(int) raf.length()];
+            raf.readFully(stored, 0, stored.length);
+            raf.close();
+        } catch (IOException e) {
+            Slog.e(TAG, "Cannot read file " + e);
+        } finally {
+            if (raf != null) {
+                try {
+                    raf.close();
+                } catch (IOException e) {
+                    Slog.e(TAG, "Error closing file " + e);
+                }
+            }
+        }
+        mCache.putFileIfUnchanged(name, stored, version);
+        return stored;
+!!!10750213.java!!!	writeFile(in name : String, inout hash : byte [[]]) : void
+        synchronized (mFileWriteLock) {
+            RandomAccessFile raf = null;
+            try {
+                // Write the hash to file, requiring each write to be synchronized to the
+                // underlying storage device immediately to avoid data loss in case of power loss.
+                // This also ensures future secdiscard operation on the file succeeds since the
+                // file would have been allocated on flash.
+                raf = new RandomAccessFile(name, "rws");
+                // Truncate the file if pattern is null, to clear the lock
+                if (hash == null || hash.length == 0) {
+                    raf.setLength(0);
+                } else {
+                    raf.write(hash, 0, hash.length);
+                }
+                raf.close();
+            } catch (IOException e) {
+                Slog.e(TAG, "Error writing to file " + e);
+            } finally {
+                if (raf != null) {
+                    try {
+                        raf.close();
+                    } catch (IOException e) {
+                        Slog.e(TAG, "Error closing file " + e);
+                    }
+                }
+            }
+            mCache.putFile(name, hash);
+        }
+!!!10750341.java!!!	deleteFile(in name : String) : void
+        if (DEBUG) Slog.e(TAG, "Delete file " + name);
+        synchronized (mFileWriteLock) {
+            File file = new File(name);
+            if (file.exists()) {
+                file.delete();
+                mCache.putFile(name, null);
+            }
+        }
+!!!10750469.java!!!	writeCredentialHash(inout hash : LockSettingsStorage::CredentialHash, in userId : int) : void
+        byte[] patternHash = null;
+        byte[] passwordHash = null;
+
+        if (hash.type == LockPatternUtils.CREDENTIAL_TYPE_PASSWORD) {
+            passwordHash = hash.hash;
+        } else if (hash.type == LockPatternUtils.CREDENTIAL_TYPE_PATTERN) {
+            patternHash = hash.hash;
+        }
+        writeFile(getLockPasswordFilename(userId), passwordHash);
+        writeFile(getLockPatternFilename(userId), patternHash);
+!!!10750597.java!!!	getLockPatternFilename(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, LOCK_PATTERN_FILE);
+!!!10750725.java!!!	getLockPasswordFilename(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, LOCK_PASSWORD_FILE);
+!!!10750853.java!!!	getLegacyLockPatternFilename(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, LEGACY_LOCK_PATTERN_FILE);
+!!!10750981.java!!!	getLegacyLockPasswordFilename(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, LEGACY_LOCK_PASSWORD_FILE);
+!!!10751109.java!!!	getBaseZeroLockPatternFilename(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, BASE_ZERO_LOCK_PATTERN_FILE);
+!!!10751237.java!!!	getChildProfileLockFile(in userId : int) : String
+        return getLockCredentialFilePathForUser(userId, CHILD_PROFILE_LOCK_FILE);
+!!!10751365.java!!!	getLockCredentialFilePathForUser(in userId : int, in basename : String) : String
+        String dataSystemDirectory = Environment.getDataDirectory().getAbsolutePath() +
+                        SYSTEM_DIRECTORY;
+        if (userId == 0) {
+            // Leave it in the same place for user 0
+            return dataSystemDirectory + basename;
+        } else {
+            return new File(Environment.getUserSystemDirectory(userId), basename).getAbsolutePath();
+        }
+!!!10751493.java!!!	writeSyntheticPasswordState(in userId : int, in handle : long, in name : String, inout data : byte [[]]) : void
+        writeFile(getSynthenticPasswordStateFilePathForUser(userId, handle, name), data);
+!!!10751621.java!!!	readSyntheticPasswordState(in userId : int, in handle : long, in name : String) : byte
+        return readFile(getSynthenticPasswordStateFilePathForUser(userId, handle, name));
+!!!10751749.java!!!	deleteSyntheticPasswordState(in userId : int, in handle : long, in name : String) : void
+        String path = getSynthenticPasswordStateFilePathForUser(userId, handle, name);
+        File file = new File(path);
+        if (file.exists()) {
+            try {
+                mContext.getSystemService(StorageManager.class).secdiscard(file.getAbsolutePath());
+            } catch (Exception e) {
+                Slog.w(TAG, "Failed to secdiscard " + path, e);
+            } finally {
+                file.delete();
+            }
+            mCache.putFile(path, null);
+        }
+!!!10751877.java!!!	getSyntheticPasswordDirectoryForUser(in userId : int) : File
+        return new File(Environment.getDataSystemDeDirectory(userId) ,SYNTHETIC_PASSWORD_DIRECTORY);
+!!!10752005.java!!!	getSynthenticPasswordStateFilePathForUser(in userId : int, in handle : long, in name : String) : String
+        File baseDir = getSyntheticPasswordDirectoryForUser(userId);
+        String baseName = String.format("%016x.%s", handle, name);
+        if (!baseDir.exists()) {
+            baseDir.mkdir();
+        }
+        return new File(baseDir, baseName).getAbsolutePath();
+!!!10752133.java!!!	removeUser(in userId : int) : void
+        SQLiteDatabase db = mOpenHelper.getWritableDatabase();
+
+        final UserManager um = (UserManager) mContext.getSystemService(USER_SERVICE);
+        final UserInfo parentInfo = um.getProfileParent(userId);
+
+        if (parentInfo == null) {
+            // This user owns its lock settings files - safe to delete them
+            synchronized (mFileWriteLock) {
+                String name = getLockPasswordFilename(userId);
+                File file = new File(name);
+                if (file.exists()) {
+                    file.delete();
+                    mCache.putFile(name, null);
+                }
+                name = getLockPatternFilename(userId);
+                file = new File(name);
+                if (file.exists()) {
+                    file.delete();
+                    mCache.putFile(name, null);
+                }
+            }
+        } else {
+            // Managed profile
+            removeChildProfileLock(userId);
+        }
+
+        File spStateDir = getSyntheticPasswordDirectoryForUser(userId);
+        try {
+            db.beginTransaction();
+            db.delete(TABLE, COLUMN_USERID + "='" + userId + "'", null);
+            db.setTransactionSuccessful();
+            mCache.removeUser(userId);
+            // The directory itself will be deleted as part of user deletion operation by the
+            // framework, so only need to purge cache here.
+            //TODO: (b/34600579) invoke secdiscardable
+            mCache.purgePath(spStateDir.getAbsolutePath());
+        } finally {
+            db.endTransaction();
+        }
+!!!10752261.java!!!	closeDatabase() : void
+        mOpenHelper.close();
+!!!10752389.java!!!	clearCache() : void
+        mCache.clear();

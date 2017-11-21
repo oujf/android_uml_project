@@ -1,0 +1,41 @@
+class KeyguardSecurityModel
+!!!4343301.java!!!	KeyguardSecurityModel(inout context : Context)
+        mContext = context;
+        mLockPatternUtils = new LockPatternUtils(context);
+        mIsPukScreenAvailable = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_enable_puk_unlock_screen);
+!!!4343429.java!!!	setLockPatternUtils(inout utils : LockPatternUtils) : void
+        mLockPatternUtils = utils;
+!!!4343557.java!!!	getSecurityMode(in userId : int) : KeyguardSecurityModel::SecurityMode
+        KeyguardUpdateMonitor monitor = KeyguardUpdateMonitor.getInstance(mContext);
+
+        if (SubscriptionManager.isValidSubscriptionId(
+                monitor.getNextSubIdForState(IccCardConstants.State.PIN_REQUIRED))) {
+            return SecurityMode.SimPin;
+        }
+
+        if (mIsPukScreenAvailable && SubscriptionManager.isValidSubscriptionId(
+                monitor.getNextSubIdForState(IccCardConstants.State.PUK_REQUIRED))) {
+            return SecurityMode.SimPuk;
+        }
+
+        final int security = mLockPatternUtils.getActivePasswordQuality(userId);
+        switch (security) {
+            case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC:
+            case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX:
+                return SecurityMode.PIN;
+
+            case DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC:
+            case DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC:
+            case DevicePolicyManager.PASSWORD_QUALITY_COMPLEX:
+            case DevicePolicyManager.PASSWORD_QUALITY_MANAGED:
+                return SecurityMode.Password;
+
+            case DevicePolicyManager.PASSWORD_QUALITY_SOMETHING:
+                return SecurityMode.Pattern;
+            case DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED:
+                return SecurityMode.None;
+
+            default:
+                throw new IllegalStateException("Unknown security quality:" + security);
+        }

@@ -1,0 +1,78 @@
+class MediaAdapter
+!!!1269509.cpp!!!	~MediaAdapter()
+    Mutex::Autolock autoLock(mAdapterLock);
+    mOutputFormat.clear();
+    CHECK(mCurrentMediaBuffer == NULL);
+!!!1269637.cpp!!!	start(inout params : MetaData = NULL) : status_t
+    Mutex::Autolock autoLock(mAdapterLock);
+    if (!mStarted) {
+        mStarted = true;
+    }
+    return OK;
+!!!1269765.cpp!!!	stop() : status_t
+    Mutex::Autolock autoLock(mAdapterLock);
+    if (mStarted) {
+        mStarted = false;
+        // If stop() happens immediately after a pushBuffer(), we should
+        // clean up the mCurrentMediaBuffer
+        if (mCurrentMediaBuffer != NULL) {
+            mCurrentMediaBuffer->release();
+            mCurrentMediaBuffer = NULL;
+        }
+        // While read() is still waiting, we should signal it to finish.
+        mBufferReadCond.signal();
+    }
+    return OK;
+!!!1269893.cpp!!!	getFormat() : sp<MetaData>
+    Mutex::Autolock autoLock(mAdapterLock);
+    return mOutputFormat;
+!!!1270021.cpp!!!	read(inout buffer : MediaBuffer, in options : ReadOptions = NULL) : status_t
+    Mutex::Autolock autoLock(mAdapterLock);
+    if (!mStarted) {
+        ALOGV("Read before even started!");
+        return ERROR_END_OF_STREAM;
+    }
+
+    while (mCurrentMediaBuffer == NULL && mStarted) {
+        ALOGV("waiting @ read()");
+        mBufferReadCond.wait(mAdapterLock);
+    }
+
+    if (!mStarted) {
+        ALOGV("read interrupted after stop");
+        CHECK(mCurrentMediaBuffer == NULL);
+        return ERROR_END_OF_STREAM;
+    }
+
+    CHECK(mCurrentMediaBuffer != NULL);
+
+    *buffer = mCurrentMediaBuffer;
+    mCurrentMediaBuffer = NULL;
+    (*buffer)->setObserver(this);
+
+    return OK;
+!!!1270149.cpp!!!	signalBufferReturned(inout buffer : MediaBuffer) : void
+    Mutex::Autolock autoLock(mAdapterLock);
+    CHECK(buffer != NULL);
+    buffer->setObserver(0);
+    buffer->release();
+    ALOGV("buffer returned %p", buffer);
+    mBufferReturnedCond.signal();
+!!!1270277.cpp!!!	pushBuffer(inout buffer : MediaBuffer) : status_t
+    if (buffer == NULL) {
+        ALOGE("pushBuffer get an NULL buffer");
+        return -EINVAL;
+    }
+
+    Mutex::Autolock autoLock(mAdapterLock);
+    if (!mStarted) {
+        ALOGE("pushBuffer called before start");
+        return INVALID_OPERATION;
+    }
+    mCurrentMediaBuffer = buffer;
+    mBufferReadCond.signal();
+
+    ALOGV("wait for the buffer returned @ pushBuffer! %p", buffer);
+    mBufferReturnedCond.wait(mAdapterLock);
+
+    return OK;

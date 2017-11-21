@@ -1,0 +1,45 @@
+class KernelMemoryBandwidthStats
+!!!9990405.java!!!	updateStats() : void
+        if (mStatsDoNotExist) {
+            // Skip reading.
+            return;
+        }
+
+        StrictMode.ThreadPolicy policy = StrictMode.allowThreadDiskReads();
+        try (BufferedReader reader = new BufferedReader(new FileReader(mSysfsFile))) {
+            parseStats(reader);
+        } catch (FileNotFoundException e) {
+            Slog.w(TAG, "No kernel memory bandwidth stats available");
+            mBandwidthEntries.clear();
+            mStatsDoNotExist = true;
+        } catch (IOException e) {
+            Slog.e(TAG, "Failed to read memory bandwidth: " + e.getMessage());
+            mBandwidthEntries.clear();
+        } finally {
+            StrictMode.setThreadPolicy(policy);
+        }
+!!!9990533.java!!!	parseStats(inout reader : BufferedReader) : void
+        String line;
+        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(' ');
+        mBandwidthEntries.clear();
+        while ((line = reader.readLine()) != null) {
+            splitter.setString(line);
+            splitter.next();
+            int bandwidth = 0;
+            int index;
+            do {
+                if ((index = mBandwidthEntries.indexOfKey(bandwidth)) >= 0) {
+                    mBandwidthEntries.put(bandwidth, mBandwidthEntries.valueAt(index)
+                            + Long.parseLong(splitter.next()) / 1000000);
+                } else {
+                    mBandwidthEntries.put(bandwidth, Long.parseLong(splitter.next()) / 1000000);
+                }
+                if (DEBUG) {
+                    Slog.d(TAG, String.format("bandwidth: %s time: %s", bandwidth,
+                            mBandwidthEntries.get(bandwidth)));
+                }
+                bandwidth++;
+            } while(splitter.hasNext());
+        }
+!!!9990661.java!!!	getBandwidthEntries() : LongSparseLongArray
+        return mBandwidthEntries;

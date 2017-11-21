@@ -1,0 +1,74 @@
+class AccessibilityButtonController
+!!!4474885.java!!!	AccessibilityButtonController(inout serviceConnection : IAccessibilityServiceConnection)
+        mServiceConnection = serviceConnection;
+        mLock = new Object();
+!!!4475013.java!!!	isAccessibilityButtonAvailable() : boolean
+        try {
+            return mServiceConnection.isAccessibilityButtonAvailable();
+        } catch (RemoteException re) {
+            Slog.w(LOG_TAG, "Failed to get accessibility button availability.", re);
+            re.rethrowFromSystemServer();
+            return false;
+        }
+!!!4475141.java!!!	registerAccessibilityButtonCallback(inout callback : AccessibilityButtonController::AccessibilityButtonCallback) : void
+        registerAccessibilityButtonCallback(callback, new Handler(Looper.getMainLooper()));
+!!!4475269.java!!!	registerAccessibilityButtonCallback(inout callback : AccessibilityButtonController::AccessibilityButtonCallback, inout handler : Handler) : void
+        Preconditions.checkNotNull(callback);
+        Preconditions.checkNotNull(handler);
+        synchronized (mLock) {
+            if (mCallbacks == null) {
+                mCallbacks = new ArrayMap<>();
+            }
+
+            mCallbacks.put(callback, handler);
+        }
+!!!4475397.java!!!	unregisterAccessibilityButtonCallback(inout callback : AccessibilityButtonController::AccessibilityButtonCallback) : void
+        Preconditions.checkNotNull(callback);
+        synchronized (mLock) {
+            if (mCallbacks == null) {
+                return;
+            }
+
+            final int keyIndex = mCallbacks.indexOfKey(callback);
+            final boolean hasKey = keyIndex >= 0;
+            if (hasKey) {
+                mCallbacks.removeAt(keyIndex);
+            }
+        }
+!!!4475525.java!!!	dispatchAccessibilityButtonClicked() : void
+        final ArrayMap<AccessibilityButtonCallback, Handler> entries;
+        synchronized (mLock) {
+            if (mCallbacks == null || mCallbacks.isEmpty()) {
+                Slog.w(LOG_TAG, "Received accessibility button click with no callbacks!");
+                return;
+            }
+
+            // Callbacks may remove themselves. Perform a shallow copy to avoid concurrent
+            // modification.
+            entries = new ArrayMap<>(mCallbacks);
+        }
+
+        for (int i = 0, count = entries.size(); i < count; i++) {
+            final AccessibilityButtonCallback callback = entries.keyAt(i);
+            final Handler handler = entries.valueAt(i);
+            handler.post(() -> callback.onClicked(this));
+        }
+!!!4475653.java!!!	dispatchAccessibilityButtonAvailabilityChanged(inout available : boolean) : void
+        final ArrayMap<AccessibilityButtonCallback, Handler> entries;
+        synchronized (mLock) {
+            if (mCallbacks == null || mCallbacks.isEmpty()) {
+                Slog.w(LOG_TAG,
+                        "Received accessibility button availability change with no callbacks!");
+                return;
+            }
+
+            // Callbacks may remove themselves. Perform a shallow copy to avoid concurrent
+            // modification.
+            entries = new ArrayMap<>(mCallbacks);
+        }
+
+        for (int i = 0, count = entries.size(); i < count; i++) {
+            final AccessibilityButtonCallback callback = entries.keyAt(i);
+            final Handler handler = entries.valueAt(i);
+            handler.post(() -> callback.onAvailabilityChanged(this, available));
+        }

@@ -1,0 +1,76 @@
+class TetheredState
+!!!11420421.java!!!	enter() : void
+            super.enter();
+            if (mLastError != ConnectivityManager.TETHER_ERROR_NO_ERROR) {
+                transitionTo(mInitialState);
+            }
+
+            if (DBG) Log.d(TAG, "Tethered " + mIfaceName);
+            sendInterfaceState(IControlsTethering.STATE_TETHERED);
+!!!11420549.java!!!	exit() : void
+            cleanupUpstream();
+            super.exit();
+!!!11420677.java!!!	cleanupUpstream() : void
+            if (mMyUpstreamIfaceName == null) return;
+
+            cleanupUpstreamInterface(mMyUpstreamIfaceName);
+            mMyUpstreamIfaceName = null;
+!!!11420805.java!!!	cleanupUpstreamInterface(in upstreamIface : String) : void
+            // Note that we don't care about errors here.
+            // Sometimes interfaces are gone before we get
+            // to remove their rules, which generates errors.
+            // Just do the best we can.
+            try {
+                // About to tear down NAT; gather remaining statistics.
+                mStatsService.forceUpdate();
+            } catch (Exception e) {
+                if (VDBG) Log.e(TAG, "Exception in forceUpdate: " + e.toString());
+            }
+            try {
+                mNMService.stopInterfaceForwarding(mIfaceName, upstreamIface);
+            } catch (Exception e) {
+                if (VDBG) Log.e(TAG, "Exception in removeInterfaceForward: " + e.toString());
+            }
+            try {
+                mNMService.disableNat(mIfaceName, upstreamIface);
+            } catch (Exception e) {
+                if (VDBG) Log.e(TAG, "Exception in disableNat: " + e.toString());
+            }
+!!!11420933.java!!!	processMessage(inout message : Message) : boolean
+            if (super.processMessage(message)) return true;
+
+            maybeLogMessage(this, message.what);
+            boolean retValue = true;
+            switch (message.what) {
+                case CMD_TETHER_REQUESTED:
+                    mLog.e("CMD_TETHER_REQUESTED while already tethering.");
+                    break;
+                case CMD_TETHER_CONNECTION_CHANGED:
+                    String newUpstreamIfaceName = (String)(message.obj);
+                    if ((mMyUpstreamIfaceName == null && newUpstreamIfaceName == null) ||
+                            (mMyUpstreamIfaceName != null &&
+                            mMyUpstreamIfaceName.equals(newUpstreamIfaceName))) {
+                        if (VDBG) Log.d(TAG, "Connection changed noop - dropping");
+                        break;
+                    }
+                    cleanupUpstream();
+                    if (newUpstreamIfaceName != null) {
+                        try {
+                            mNMService.enableNat(mIfaceName, newUpstreamIfaceName);
+                            mNMService.startInterfaceForwarding(mIfaceName,
+                                    newUpstreamIfaceName);
+                        } catch (Exception e) {
+                            mLog.e("Exception enabling NAT: " + e);
+                            cleanupUpstreamInterface(newUpstreamIfaceName);
+                            mLastError = ConnectivityManager.TETHER_ERROR_ENABLE_NAT_ERROR;
+                            transitionTo(mInitialState);
+                            return true;
+                        }
+                    }
+                    mMyUpstreamIfaceName = newUpstreamIfaceName;
+                    break;
+                default:
+                    retValue = false;
+                    break;
+            }
+            return retValue;

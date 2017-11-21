@@ -1,0 +1,131 @@
+class PackageUsage
+!!!12215173.java!!!	PackageUsage()
+        super("package-usage.list", "PackageUsage_DiskWriter", /* lock */ true);
+!!!12215301.java!!!	isHistoricalPackageUsageAvailable() : boolean
+        return mIsHistoricalPackageUsageAvailable;
+!!!12215429.java!!!	writeInternal(inout packages : Map<String, PackageParser.Package>) : void
+        AtomicFile file = getFile();
+        FileOutputStream f = null;
+        try {
+            f = file.startWrite();
+            BufferedOutputStream out = new BufferedOutputStream(f);
+            FileUtils.setPermissions(file.getBaseFile().getPath(),
+                    0640, SYSTEM_UID, PACKAGE_INFO_GID);
+            StringBuilder sb = new StringBuilder();
+
+            sb.append(USAGE_FILE_MAGIC_VERSION_1);
+            sb.append('\n');
+            out.write(sb.toString().getBytes(StandardCharsets.US_ASCII));
+
+            for (PackageParser.Package pkg : packages.values()) {
+                if (pkg.getLatestPackageUseTimeInMills() == 0L) {
+                    continue;
+                }
+                sb.setLength(0);
+                sb.append(pkg.packageName);
+                for (long usageTimeInMillis : pkg.mLastPackageUsageTimeInMills) {
+                    sb.append(' ');
+                    sb.append(usageTimeInMillis);
+                }
+                sb.append('\n');
+                out.write(sb.toString().getBytes(StandardCharsets.US_ASCII));
+            }
+            out.flush();
+            file.finishWrite(f);
+        } catch (IOException e) {
+            if (f != null) {
+                file.failWrite(f);
+            }
+            Log.e(PackageManagerService.TAG, "Failed to write package usage times", e);
+        }
+!!!12215557.java!!!	readInternal(inout packages : Map<String, PackageParser.Package>) : void
+        AtomicFile file = getFile();
+        BufferedInputStream in = null;
+        try {
+            in = new BufferedInputStream(file.openRead());
+            StringBuffer sb = new StringBuffer();
+
+            String firstLine = readLine(in, sb);
+            if (firstLine == null) {
+                // Empty file. Do nothing.
+            } else if (USAGE_FILE_MAGIC_VERSION_1.equals(firstLine)) {
+                readVersion1LP(packages, in, sb);
+            } else {
+                readVersion0LP(packages, in, sb, firstLine);
+            }
+        } catch (FileNotFoundException expected) {
+            mIsHistoricalPackageUsageAvailable = false;
+        } catch (IOException e) {
+            Log.w(PackageManagerService.TAG, "Failed to read package usage times", e);
+        } finally {
+            IoUtils.closeQuietly(in);
+        }
+!!!12215685.java!!!	readVersion0LP(inout packages : Map<String, PackageParser.Package>, inout in : InputStream, inout sb : StringBuffer, in firstLine : String) : void
+        // Initial version of the file had no version number and stored one
+        // package-timestamp pair per line.
+        // Note that the first line has already been read from the InputStream.
+        for (String line = firstLine; line != null; line = readLine(in, sb)) {
+            String[] tokens = line.split(" ");
+            if (tokens.length != 2) {
+                throw new IOException("Failed to parse " + line +
+                        " as package-timestamp pair.");
+            }
+
+            String packageName = tokens[0];
+            PackageParser.Package pkg = packages.get(packageName);
+            if (pkg == null) {
+                continue;
+            }
+
+            long timestamp = parseAsLong(tokens[1]);
+            for (int reason = 0;
+                    reason < PackageManager.NOTIFY_PACKAGE_USE_REASONS_COUNT;
+                    reason++) {
+                pkg.mLastPackageUsageTimeInMills[reason] = timestamp;
+            }
+        }
+!!!12215813.java!!!	readVersion1LP(inout packages : Map<String, PackageParser.Package>, inout in : InputStream, inout sb : StringBuffer) : void
+        // Version 1 of the file started with the corresponding version
+        // number and then stored a package name and eight timestamps per line.
+        String line;
+        while ((line = readLine(in, sb)) != null) {
+            String[] tokens = line.split(" ");
+            if (tokens.length != PackageManager.NOTIFY_PACKAGE_USE_REASONS_COUNT + 1) {
+                throw new IOException("Failed to parse " + line + " as a timestamp array.");
+            }
+
+            String packageName = tokens[0];
+            PackageParser.Package pkg = packages.get(packageName);
+            if (pkg == null) {
+                continue;
+            }
+
+            for (int reason = 0;
+                    reason < PackageManager.NOTIFY_PACKAGE_USE_REASONS_COUNT;
+                    reason++) {
+                pkg.mLastPackageUsageTimeInMills[reason] = parseAsLong(tokens[reason + 1]);
+            }
+        }
+!!!12215941.java!!!	parseAsLong(in token : String) : long
+        try {
+            return Long.parseLong(token);
+        } catch (NumberFormatException e) {
+            throw new IOException("Failed to parse " + token + " as a long.", e);
+        }
+!!!12216069.java!!!	readLine(inout in : InputStream, inout sb : StringBuffer) : String
+        return readToken(in, sb, '\n');
+!!!12216197.java!!!	readToken(inout in : InputStream, inout sb : StringBuffer, in endOfToken : char) : String
+        sb.setLength(0);
+        while (true) {
+            int ch = in.read();
+            if (ch == -1) {
+                if (sb.length() == 0) {
+                    return null;
+                }
+                throw new IOException("Unexpected EOF");
+            }
+            if (ch == endOfToken) {
+                return sb.toString();
+            }
+            sb.append((char)ch);
+        }

@@ -1,0 +1,202 @@
+class PipMenuActivityController
+!!!3279109.java!!!	PipMenuActivityController(inout context : Context, inout activityManager : IActivityManager, inout mediaController : PipMediaController, inout inputConsumerController : InputConsumerController)
+        mContext = context;
+        mActivityManager = activityManager;
+        mMediaController = mediaController;
+        mInputConsumerController = inputConsumerController;
+
+        EventBus.getDefault().register(this);
+!!!3279237.java!!!	onActivityPinned() : void
+        if (mMenuState == MENU_STATE_NONE) {
+            // If the menu is not visible, then re-register the input consumer if it is not already
+            // registered
+            mInputConsumerController.registerInputConsumer();
+        }
+!!!3279365.java!!!	onPinnedStackAnimationEnded() : void
+        // Note: Only active menu activities care about this event
+        if (mToActivityMessenger != null) {
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_ANIMATION_ENDED;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify menu pinned animation ended", e);
+            }
+        }
+!!!3279493.java!!!	addListener(inout listener : PipMenuActivityController::Listener) : void
+        if (!mListeners.contains(listener)) {
+            mListeners.add(listener);
+        }
+!!!3279621.java!!!	setDismissFraction(in fraction : float) : void
+        if (DEBUG) {
+            Log.d(TAG, "setDismissFraction() hasActivity=" + (mToActivityMessenger != null)
+                    + " fraction=" + fraction);
+        }
+        if (mToActivityMessenger != null) {
+            mTmpDismissFractionData.clear();
+            mTmpDismissFractionData.putFloat(EXTRA_DISMISS_FRACTION, fraction);
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_UPDATE_DISMISS_FRACTION;
+            m.obj = mTmpDismissFractionData;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify menu to update dismiss fraction", e);
+            }
+        } else if (!mStartActivityRequested) {
+            startMenuActivity(MENU_STATE_NONE, null /* stackBounds */,
+                    null /* movementBounds */, false /* allowMenuTimeout */);
+        }
+!!!3279749.java!!!	showMenu(in menuState : int, inout stackBounds : Rect, inout movementBounds : Rect, inout allowMenuTimeout : boolean) : void
+        if (DEBUG) {
+            Log.d(TAG, "showMenu() state=" + menuState
+                    + " hasActivity=" + (mToActivityMessenger != null)
+                    + " callers=\n" + Debug.getCallers(5, "    "));
+        }
+        if (mToActivityMessenger != null) {
+            Bundle data = new Bundle();
+            data.putInt(EXTRA_MENU_STATE, menuState);
+            data.putParcelable(EXTRA_STACK_BOUNDS, stackBounds);
+            data.putParcelable(EXTRA_MOVEMENT_BOUNDS, movementBounds);
+            data.putBoolean(EXTRA_ALLOW_TIMEOUT, allowMenuTimeout);
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_SHOW_MENU;
+            m.obj = data;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify menu to show", e);
+            }
+        } else if (!mStartActivityRequested) {
+            startMenuActivity(menuState, stackBounds, movementBounds, allowMenuTimeout);
+        }
+!!!3279877.java!!!	pokeMenu() : void
+        if (DEBUG) {
+            Log.d(TAG, "pokeMenu() hasActivity=" + (mToActivityMessenger != null));
+        }
+        if (mToActivityMessenger != null) {
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_POKE_MENU;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify poke menu", e);
+            }
+        }
+!!!3280005.java!!!	hideMenu() : void
+        if (DEBUG) {
+            Log.d(TAG, "hideMenu() state=" + mMenuState
+                    + " hasActivity=" + (mToActivityMessenger != null)
+                    + " callers=\n" + Debug.getCallers(5, "    "));
+        }
+        if (mToActivityMessenger != null) {
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_HIDE_MENU;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify menu to hide", e);
+            }
+        }
+!!!3280133.java!!!	hideMenuWithoutResize() : void
+        onMenuStateChanged(MENU_STATE_NONE, false /* resize */);
+!!!3280261.java!!!	setAppActions(inout appActions : ParceledListSlice) : void
+        mAppActions = appActions;
+        updateMenuActions();
+!!!3280389.java!!!	resolveMenuActions() : ParceledListSlice
+        if (isValidActions(mAppActions)) {
+            return mAppActions;
+        }
+        return mMediaActions;
+!!!3280517.java!!!	startMenuActivity(in menuState : int, inout stackBounds : Rect, inout movementBounds : Rect, inout allowMenuTimeout : boolean) : void
+        try {
+            StackInfo pinnedStackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+            if (pinnedStackInfo != null && pinnedStackInfo.taskIds != null &&
+                    pinnedStackInfo.taskIds.length > 0) {
+                Intent intent = new Intent(mContext, PipMenuActivity.class);
+                intent.putExtra(EXTRA_CONTROLLER_MESSENGER, mMessenger);
+                intent.putExtra(EXTRA_ACTIONS, resolveMenuActions());
+                if (stackBounds != null) {
+                    intent.putExtra(EXTRA_STACK_BOUNDS, stackBounds);
+                }
+                if (movementBounds != null) {
+                    intent.putExtra(EXTRA_MOVEMENT_BOUNDS, movementBounds);
+                }
+                intent.putExtra(EXTRA_MENU_STATE, menuState);
+                intent.putExtra(EXTRA_ALLOW_TIMEOUT, allowMenuTimeout);
+                ActivityOptions options = ActivityOptions.makeCustomAnimation(mContext, 0, 0);
+                options.setLaunchTaskId(
+                        pinnedStackInfo.taskIds[pinnedStackInfo.taskIds.length - 1]);
+                options.setTaskOverlay(true, true /* canResume */);
+                mContext.startActivityAsUser(intent, options.toBundle(), UserHandle.CURRENT);
+                mStartActivityRequested = true;
+            } else {
+                Log.e(TAG, "No PIP tasks found");
+            }
+        } catch (RemoteException e) {
+            mStartActivityRequested = false;
+            Log.e(TAG, "Error showing PIP menu activity", e);
+        }
+!!!3280645.java!!!	updateMenuActions() : void
+        if (mToActivityMessenger != null) {
+            // Fetch the pinned stack bounds
+            Rect stackBounds = null;
+            try {
+                StackInfo pinnedStackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+                if (pinnedStackInfo != null) {
+                    stackBounds = pinnedStackInfo.bounds;
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error showing PIP menu activity", e);
+            }
+
+            Bundle data = new Bundle();
+            data.putParcelable(EXTRA_STACK_BOUNDS, stackBounds);
+            data.putParcelable(EXTRA_ACTIONS, resolveMenuActions());
+            Message m = Message.obtain();
+            m.what = PipMenuActivity.MESSAGE_UPDATE_ACTIONS;
+            m.obj = data;
+            try {
+                mToActivityMessenger.send(m);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not notify menu activity to update actions", e);
+            }
+        }
+!!!3280773.java!!!	isValidActions(inout actions : ParceledListSlice) : boolean
+        return actions != null && actions.getList().size() > 0;
+!!!3280901.java!!!	onMenuStateChanged(in menuState : int, inout resize : boolean) : void
+        if (DEBUG) {
+            Log.d(TAG, "onMenuStateChanged() mMenuState=" + mMenuState
+                    + " menuState=" + menuState + " resize=" + resize);
+        }
+        if (menuState == MENU_STATE_NONE) {
+            mInputConsumerController.registerInputConsumer();
+        } else {
+            mInputConsumerController.unregisterInputConsumer();
+        }
+        if (menuState != mMenuState) {
+            mListeners.forEach(l -> l.onPipMenuStateChanged(menuState, resize));
+            if (menuState == MENU_STATE_FULL) {
+                // Once visible, start listening for media action changes. This call will trigger
+                // the menu actions to be updated again.
+                mMediaController.addListener(mMediaActionListener);
+            } else {
+                // Once hidden, stop listening for media action changes. This call will trigger
+                // the menu actions to be updated again.
+                mMediaController.removeListener(mMediaActionListener);
+            }
+        }
+        mMenuState = menuState;
+!!!3281029.java!!!	onBusEvent(inout event : HidePipMenuEvent) : void
+        if (mStartActivityRequested) {
+            // If the menu has been start-requested, but not actually started, then we defer the
+            // trigger callback until the menu has started and called back to the controller
+            mOnAttachDecrementTrigger = event.getAnimationTrigger();
+            mOnAttachDecrementTrigger.increment();
+        }
+!!!3281157.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        final String innerPrefix = prefix + "  ";
+        pw.println(prefix + TAG);
+        pw.println(innerPrefix + "mMenuState=" + mMenuState);
+        pw.println(innerPrefix + "mToActivityMessenger=" + mToActivityMessenger);
+        pw.println(innerPrefix + "mListeners=" + mListeners.size());

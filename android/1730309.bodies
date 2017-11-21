@@ -1,0 +1,134 @@
+class OverlayManagerShellCommand
+!!!12024325.java!!!	OverlayManagerShellCommand(in iom : IOverlayManager)
+        mInterface = iom;
+!!!12024453.java!!!	onCommand(in cmd : String) : int
+        if (cmd == null) {
+            return handleDefaultCommands(cmd);
+        }
+        final PrintWriter err = getErrPrintWriter();
+        try {
+            switch (cmd) {
+                case "list":
+                    return runList();
+                case "enable":
+                    return runEnableDisable(true);
+                case "disable":
+                    return runEnableDisable(false);
+                case "set-priority":
+                    return runSetPriority();
+                default:
+                    return handleDefaultCommands(cmd);
+            }
+        } catch (IllegalArgumentException e) {
+            err.println("Error: " + e.getMessage());
+        } catch (RemoteException e) {
+            err.println("Remote exception: " + e);
+        }
+        return -1;
+!!!12024581.java!!!	onHelp() : void
+        final PrintWriter out = getOutPrintWriter();
+        out.println("Overlay manager (overlay) commands:");
+        out.println("  help");
+        out.println("    Print this help text.");
+        out.println("  dump [--verbose] [--user USER_ID] [PACKAGE [PACKAGE [...]]]");
+        out.println("    Print debugging information about the overlay manager.");
+        out.println("  list [--user USER_ID] [PACKAGE [PACKAGE [...]]]");
+        out.println("    Print information about target and overlay packages.");
+        out.println("    Overlay packages are printed in priority order. With optional");
+        out.println("    parameters PACKAGEs, limit output to the specified packages");
+        out.println("    but include more information about each package.");
+        out.println("  enable [--user USER_ID] PACKAGE");
+        out.println("    Enable overlay package PACKAGE.");
+        out.println("  disable [--user USER_ID] PACKAGE");
+        out.println("    Disable overlay package PACKAGE.");
+        out.println("  set-priority [--user USER_ID] PACKAGE PARENT|lowest|highest");
+        out.println("    Change the priority of the overlay PACKAGE to be just higher than");
+        out.println("    the priority of PACKAGE_PARENT If PARENT is the special keyword");
+        out.println("    'lowest', change priority of PACKAGE to the lowest priority.");
+        out.println("    If PARENT is the special keyword 'highest', change priority of");
+        out.println("    PACKAGE to the highest priority.");
+!!!12024709.java!!!	runList() : int
+        final PrintWriter out = getOutPrintWriter();
+        final PrintWriter err = getErrPrintWriter();
+
+        int userId = UserHandle.USER_SYSTEM;
+        String opt;
+        while ((opt = getNextOption()) != null) {
+            switch (opt) {
+                case "--user":
+                    userId = UserHandle.parseUserArg(getNextArgRequired());
+                    break;
+                default:
+                    err.println("Error: Unknown option: " + opt);
+                    return 1;
+            }
+        }
+
+        final Map<String, List<OverlayInfo>> allOverlays = mInterface.getAllOverlays(userId);
+        for (final String targetPackageName : allOverlays.keySet()) {
+            out.println(targetPackageName);
+            List<OverlayInfo> overlaysForTarget = allOverlays.get(targetPackageName);
+            final int N = overlaysForTarget.size();
+            for (int i = 0; i < N; i++) {
+                final OverlayInfo oi = overlaysForTarget.get(i);
+                String status;
+                switch (oi.state) {
+                    case OverlayInfo.STATE_ENABLED:
+                        status = "[x]";
+                        break;
+                    case OverlayInfo.STATE_DISABLED:
+                        status = "[ ]";
+                        break;
+                    default:
+                        status = "---";
+                        break;
+                }
+                out.println(String.format("%s %s", status, oi.packageName));
+            }
+            out.println();
+        }
+        return 0;
+!!!12024837.java!!!	runEnableDisable(in enable : boolean) : int
+        final PrintWriter err = getErrPrintWriter();
+
+        int userId = UserHandle.USER_SYSTEM;
+        String opt;
+        while ((opt = getNextOption()) != null) {
+            switch (opt) {
+                case "--user":
+                    userId = UserHandle.parseUserArg(getNextArgRequired());
+                    break;
+                default:
+                    err.println("Error: Unknown option: " + opt);
+                    return 1;
+            }
+        }
+
+        final String packageName = getNextArgRequired();
+        return mInterface.setEnabled(packageName, enable, userId) ? 0 : 1;
+!!!12024965.java!!!	runSetPriority() : int
+        final PrintWriter err = getErrPrintWriter();
+
+        int userId = UserHandle.USER_SYSTEM;
+        String opt;
+        while ((opt = getNextOption()) != null) {
+            switch (opt) {
+                case "--user":
+                    userId = UserHandle.parseUserArg(getNextArgRequired());
+                    break;
+                default:
+                    err.println("Error: Unknown option: " + opt);
+                    return 1;
+            }
+        }
+
+        final String packageName = getNextArgRequired();
+        final String newParentPackageName = getNextArgRequired();
+
+        if ("highest".equals(newParentPackageName)) {
+            return mInterface.setHighestPriority(packageName, userId) ? 0 : 1;
+        } else if ("lowest".equals(newParentPackageName)) {
+            return mInterface.setLowestPriority(packageName, userId) ? 0 : 1;
+        } else {
+            return mInterface.setPriority(packageName, newParentPackageName, userId) ? 0 : 1;
+        }

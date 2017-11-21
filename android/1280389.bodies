@@ -1,0 +1,317 @@
+class FastPrintWriter
+!!!10100357.java!!!	FastPrintWriter(inout out : OutputStream)
+        this(out, false, 8192);
+!!!10100485.java!!!	FastPrintWriter(inout out : OutputStream, inout autoFlush : boolean)
+        this(out, autoFlush, 8192);
+!!!10100613.java!!!	FastPrintWriter(inout out : OutputStream, inout autoFlush : boolean, in bufferLen : int)
+        super(new DummyWriter(), autoFlush);
+        if (out == null) {
+            throw new NullPointerException("out is null");
+        }
+        mBufferLen = bufferLen;
+        mText = new char[bufferLen];
+        mBytes = ByteBuffer.allocate(mBufferLen);
+        mOutputStream = out;
+        mWriter = null;
+        mPrinter = null;
+        mAutoFlush = autoFlush;
+        mSeparator = System.lineSeparator();
+        initDefaultEncoder();
+!!!10100741.java!!!	FastPrintWriter(inout wr : Writer)
+        this(wr, false, 8192);
+!!!10100869.java!!!	FastPrintWriter(inout wr : Writer, inout autoFlush : boolean)
+        this(wr, autoFlush, 8192);
+!!!10100997.java!!!	FastPrintWriter(inout wr : Writer, inout autoFlush : boolean, in bufferLen : int)
+        super(new DummyWriter(), autoFlush);
+        if (wr == null) {
+            throw new NullPointerException("wr is null");
+        }
+        mBufferLen = bufferLen;
+        mText = new char[bufferLen];
+        mBytes = null;
+        mOutputStream = null;
+        mWriter = wr;
+        mPrinter = null;
+        mAutoFlush = autoFlush;
+        mSeparator = System.lineSeparator();
+        initDefaultEncoder();
+!!!10101125.java!!!	FastPrintWriter(inout pr : Printer)
+        this(pr, 512);
+!!!10101253.java!!!	FastPrintWriter(inout pr : Printer, in bufferLen : int)
+        super(new DummyWriter(), true);
+        if (pr == null) {
+            throw new NullPointerException("pr is null");
+        }
+        mBufferLen = bufferLen;
+        mText = new char[bufferLen];
+        mBytes = null;
+        mOutputStream = null;
+        mWriter = null;
+        mPrinter = pr;
+        mAutoFlush = true;
+        mSeparator = System.lineSeparator();
+        initDefaultEncoder();
+!!!10101381.java!!!	initEncoder(in csn : String) : void
+        try {
+            mCharset = Charset.forName(csn).newEncoder();
+        } catch (Exception e) {
+            throw new UnsupportedEncodingException(csn);
+        }
+        mCharset.onMalformedInput(CodingErrorAction.REPLACE);
+        mCharset.onUnmappableCharacter(CodingErrorAction.REPLACE);
+!!!10101509.java!!!	checkError() : boolean
+        flush();
+        synchronized (lock) {
+            return mIoError;
+        }
+!!!10101637.java!!!	clearError() : void
+        synchronized (lock) {
+            mIoError = false;
+        }
+!!!10101765.java!!!	setError() : void
+        synchronized (lock) {
+            mIoError = true;
+        }
+!!!10101893.java!!!	initDefaultEncoder() : void
+        mCharset = Charset.defaultCharset().newEncoder();
+        mCharset.onMalformedInput(CodingErrorAction.REPLACE);
+        mCharset.onUnmappableCharacter(CodingErrorAction.REPLACE);
+!!!10102021.java!!!	appendLocked(in c : char) : void
+        int pos = mPos;
+        if (pos >= (mBufferLen-1)) {
+            flushLocked();
+            pos = mPos;
+        }
+        mText[pos] = c;
+        mPos = pos+1;
+!!!10102149.java!!!	appendLocked(in str : String, in i : int, in length : int) : void
+        final int BUFFER_LEN = mBufferLen;
+        if (length > BUFFER_LEN) {
+            final int end = i + length;
+            while (i < end) {
+                int next = i + BUFFER_LEN;
+                appendLocked(str, i, next < end ? BUFFER_LEN : (end - i));
+                i = next;
+            }
+            return;
+        }
+        int pos = mPos;
+        if ((pos+length) > BUFFER_LEN) {
+            flushLocked();
+            pos = mPos;
+        }
+        str.getChars(i, i + length, mText, pos);
+        mPos = pos + length;
+!!!10102277.java!!!	appendLocked(inout buf : char [[]], in i : int, in length : int) : void
+        final int BUFFER_LEN = mBufferLen;
+        if (length > BUFFER_LEN) {
+            final int end = i + length;
+            while (i < end) {
+                int next = i + BUFFER_LEN;
+                appendLocked(buf, i, next < end ? BUFFER_LEN : (end - i));
+                i = next;
+            }
+            return;
+        }
+        int pos = mPos;
+        if ((pos+length) > BUFFER_LEN) {
+            flushLocked();
+            pos = mPos;
+        }
+        System.arraycopy(buf, i, mText, pos, length);
+        mPos = pos + length;
+!!!10102405.java!!!	flushBytesLocked() : void
+        if (!mIoError) {
+            int position;
+            if ((position = mBytes.position()) > 0) {
+                mBytes.flip();
+                mOutputStream.write(mBytes.array(), 0, position);
+                mBytes.clear();
+            }
+        }
+!!!10102533.java!!!	flushLocked() : void
+        //Log.i("PackageManager", "flush mPos=" + mPos);
+        if (mPos > 0) {
+            if (mOutputStream != null) {
+                CharBuffer charBuffer = CharBuffer.wrap(mText, 0, mPos);
+                CoderResult result = mCharset.encode(charBuffer, mBytes, true);
+                while (!mIoError) {
+                    if (result.isError()) {
+                        throw new IOException(result.toString());
+                    } else if (result.isOverflow()) {
+                        flushBytesLocked();
+                        result = mCharset.encode(charBuffer, mBytes, true);
+                        continue;
+                    }
+                    break;
+                }
+                if (!mIoError) {
+                    flushBytesLocked();
+                    mOutputStream.flush();
+                }
+            } else if (mWriter != null) {
+                if (!mIoError) {
+                    mWriter.write(mText, 0, mPos);
+                    mWriter.flush();
+                }
+            } else {
+                int nonEolOff = 0;
+                final int sepLen = mSeparator.length();
+                final int len = sepLen < mPos ? sepLen : mPos;
+                while (nonEolOff < len && mText[mPos-1-nonEolOff]
+                        == mSeparator.charAt(mSeparator.length()-1-nonEolOff)) {
+                    nonEolOff++;
+                }
+                if (nonEolOff >= mPos) {
+                    mPrinter.println("");
+                } else {
+                    mPrinter.println(new String(mText, 0, mPos-nonEolOff));
+                }
+            }
+            mPos = 0;
+        }
+!!!10102661.java!!!	flush() : void
+        synchronized (lock) {
+            try {
+                flushLocked();
+                if (!mIoError) {
+                    if (mOutputStream != null) {
+                        mOutputStream.flush();
+                    } else if (mWriter != null) {
+                        mWriter.flush();
+                    }
+                }
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10102789.java!!!	close() : void
+        synchronized (lock) {
+            try {
+                flushLocked();
+                if (mOutputStream != null) {
+                    mOutputStream.close();
+                } else if (mWriter != null) {
+                    mWriter.close();
+                }
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10102917.java!!!	print(inout charArray : char [[]]) : void
+        synchronized (lock) {
+            try {
+                appendLocked(charArray, 0, charArray.length);
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10103045.java!!!	print(in ch : char) : void
+        synchronized (lock) {
+            try {
+                appendLocked(ch);
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10103173.java!!!	print(in str : String) : void
+        if (str == null) {
+            str = String.valueOf((Object) null);
+        }
+        synchronized (lock) {
+            try {
+                appendLocked(str, 0, str.length());
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10103301.java!!!	print(in inum : int) : void
+        if (inum == 0) {
+            print("0");
+        } else {
+            super.print(inum);
+        }
+!!!10103429.java!!!	print(in lnum : long) : void
+        if (lnum == 0) {
+            print("0");
+        } else {
+            super.print(lnum);
+        }
+!!!10103557.java!!!	println() : void
+        synchronized (lock) {
+            try {
+                appendLocked(mSeparator, 0, mSeparator.length());
+                if (mAutoFlush) {
+                    flushLocked();
+                }
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10103685.java!!!	println(in inum : int) : void
+        if (inum == 0) {
+            println("0");
+        } else {
+            super.println(inum);
+        }
+!!!10103813.java!!!	println(in lnum : long) : void
+        if (lnum == 0) {
+            println("0");
+        } else {
+            super.println(lnum);
+        }
+!!!10103941.java!!!	println(inout chars : char [[]]) : void
+        print(chars);
+        println();
+!!!10104069.java!!!	println(in c : char) : void
+        print(c);
+        println();
+!!!10104197.java!!!	write(inout buf : char [[]], in offset : int, in count : int) : void
+        synchronized (lock) {
+            try {
+                appendLocked(buf, offset, count);
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10104325.java!!!	write(in oneChar : int) : void
+        synchronized (lock) {
+            try {
+                appendLocked((char) oneChar);
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10104453.java!!!	write(in str : String) : void
+        synchronized (lock) {
+            try {
+                appendLocked(str, 0, str.length());
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10104581.java!!!	write(in str : String, in offset : int, in count : int) : void
+        synchronized (lock) {
+            try {
+                appendLocked(str, offset, count);
+            } catch (IOException e) {
+                Log.w("FastPrintWriter", "Write failure", e);
+                setError();
+            }
+        }
+!!!10104709.java!!!	append(inout csq : CharSequence, in start : int, in end : int) : PrintWriter
+        if (csq == null) {
+            csq = "null";
+        }
+        String output = csq.subSequence(start, end).toString();
+        write(output, 0, output.length());
+        return this;

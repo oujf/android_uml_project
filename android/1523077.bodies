@@ -1,0 +1,61 @@
+class KernelUidCpuFreqTimeReader
+!!!9991045.java!!!	readDelta(inout callback : KernelUidCpuFreqTimeReader::Callback) : void
+        if (!mProcFileAvailable && mReadErrorCounter >= TOTAL_READ_ERROR_COUNT) {
+            return;
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(UID_TIMES_PROC_FILE))) {
+            readDelta(reader, callback);
+            mProcFileAvailable = true;
+        } catch (IOException e) {
+            mReadErrorCounter++;
+            Slog.e(TAG, "Failed to read " + UID_TIMES_PROC_FILE + ": " + e);
+        }
+!!!9991173.java!!!	removeUid(in uid : int) : void
+        mLastUidCpuFreqTimeMs.delete(uid);
+!!!9991301.java!!!	readDelta(inout reader : BufferedReader, inout callback : KernelUidCpuFreqTimeReader::Callback) : void
+        String line = reader.readLine();
+        if (line == null) {
+            return;
+        }
+        readCpuFreqs(line, callback);
+        while ((line = reader.readLine()) != null) {
+            final int index = line.indexOf(' ');
+            final int uid = Integer.parseInt(line.substring(0, index - 1), 10);
+            readTimesForUid(uid, line.substring(index + 1, line.length()), callback);
+        }
+!!!9991429.java!!!	readTimesForUid(in uid : int, in line : String, inout callback : KernelUidCpuFreqTimeReader::Callback) : void
+        long[] uidTimeMs = mLastUidCpuFreqTimeMs.get(uid);
+        if (uidTimeMs == null) {
+            uidTimeMs = new long[mCpuFreqsCount];
+            mLastUidCpuFreqTimeMs.put(uid, uidTimeMs);
+        }
+        final String[] timesStr = line.split(" ");
+        final int size = timesStr.length;
+        if (size != uidTimeMs.length) {
+            Slog.e(TAG, "No. of readings don't match cpu freqs, readings: " + size
+                    + " cpuFreqsCount: " + uidTimeMs.length);
+            return;
+        }
+        final long[] deltaUidTimeMs = new long[size];
+        for (int i = 0; i < size; ++i) {
+            // Times read will be in units of 10ms
+            final long totalTimeMs = Long.parseLong(timesStr[i], 10) * 10;
+            deltaUidTimeMs[i] = totalTimeMs - uidTimeMs[i];
+            uidTimeMs[i] = totalTimeMs;
+        }
+        if (callback != null) {
+            callback.onUidCpuFreqTime(uid, deltaUidTimeMs);
+        }
+!!!9991557.java!!!	readCpuFreqs(in line : String, inout callback : KernelUidCpuFreqTimeReader::Callback) : void
+        if (mCpuFreqs == null) {
+            final String[] freqStr = line.split(" ");
+            // First item would be "uid:" which needs to be ignored
+            mCpuFreqsCount = freqStr.length - 1;
+            mCpuFreqs = new long[mCpuFreqsCount];
+            for (int i = 0; i < mCpuFreqsCount; ++i) {
+                mCpuFreqs[i] = Long.parseLong(freqStr[i + 1], 10);
+            }
+        }
+        if (callback != null) {
+            callback.onCpuFreqs(mCpuFreqs);
+        }

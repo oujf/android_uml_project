@@ -1,0 +1,31 @@
+class DeathRecipient
+!!!12802437.java!!!	binderDied() : void
+            try {
+                synchronized(mService.mWindowMap) {
+                    final WindowState win = mService.windowForClientLocked(mSession, mClient, false);
+                    Slog.i(TAG, "WIN DEATH: " + win);
+                    if (win != null) {
+                        final DisplayContent dc = getDisplayContent();
+                        if (win.mAppToken != null && win.mAppToken.findMainWindow() == win) {
+                            mService.mTaskSnapshotController.onAppDied(win.mAppToken);
+                        }
+                        win.removeIfPossible(shouldKeepVisibleDeadAppWindow());
+                        if (win.mAttrs.type == TYPE_DOCK_DIVIDER) {
+                            // The owner of the docked divider died :( We reset the docked stack,
+                            // just in case they have the divider at an unstable position. Better
+                            // also reset drag resizing state, because the owner can't do it
+                            // anymore.
+                            final TaskStack stack = dc.getDockedStackIgnoringVisibility();
+                            if (stack != null) {
+                                stack.resetDockedStackToMiddle();
+                            }
+                            mService.setDockedStackResizing(false);
+                        }
+                    } else if (mHasSurface) {
+                        Slog.e(TAG, "!!! LEAK !!! Window removed but surface still valid.");
+                        WindowState.this.removeIfPossible();
+                    }
+                }
+            } catch (IllegalArgumentException ex) {
+                // This will happen if the window has already been removed.
+            }

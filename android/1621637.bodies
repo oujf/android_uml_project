@@ -1,0 +1,41 @@
+class SystemServerInitThreadPool
+!!!10861189.java!!!	get() : SystemServerInitThreadPool
+        if (sInstance == null) {
+            sInstance = new SystemServerInitThreadPool();
+        }
+        Preconditions.checkState(sInstance.mService != null, "Cannot get " + TAG
+                + " - it has been shut down");
+        return sInstance;
+!!!10861317.java!!!	submit(inout runnable : Runnable, in description : String) : Future<?>
+        if (IS_DEBUGGABLE) {
+            return mService.submit(() -> {
+                Slog.d(TAG, "Started executing " + description);
+                try {
+                    runnable.run();
+                } catch (RuntimeException e) {
+                    Slog.e(TAG, "Failure in " + description + ": " + e, e);
+                    throw e;
+                }
+                Slog.d(TAG, "Finished executing "  + description);
+            });
+        }
+        return mService.submit(runnable);
+!!!10861445.java!!!	shutdown() : void
+        if (sInstance != null && sInstance.mService != null) {
+            sInstance.mService.shutdown();
+            boolean terminated;
+            try {
+                terminated = sInstance.mService.awaitTermination(SHUTDOWN_TIMEOUT_MILLIS,
+                        TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(TAG + " init interrupted");
+            }
+            List<Runnable> unstartedRunnables = sInstance.mService.shutdownNow();
+            if (!terminated) {
+                throw new IllegalStateException("Cannot shutdown. Unstarted tasks "
+                        + unstartedRunnables);
+            }
+            sInstance.mService = null; // Make mService eligible for GC
+            Slog.d(TAG, "Shutdown successful");
+        }

@@ -1,0 +1,105 @@
+class WallpaperWindowToken
+!!!12784133.java!!!	WallpaperWindowToken(inout service : WindowManagerService, inout token : IBinder, inout explicit : boolean, inout dc : DisplayContent, inout ownerCanManageAppTokens : boolean)
+        super(service, token, TYPE_WALLPAPER, explicit, dc, ownerCanManageAppTokens);
+        dc.mWallpaperController.addWallpaperToken(this);
+!!!12784261.java!!!	setExiting() : void
+        super.setExiting();
+        mDisplayContent.mWallpaperController.removeWallpaperToken(this);
+!!!12784389.java!!!	hideWallpaperToken(inout wasDeferred : boolean, in reason : String) : void
+        for (int j = mChildren.size() - 1; j >= 0; j--) {
+            final WindowState wallpaper = mChildren.get(j);
+            wallpaper.hideWallpaperWindow(wasDeferred, reason);
+        }
+        hidden = true;
+!!!12784517.java!!!	sendWindowWallpaperCommand(in action : String, in x : int, in y : int, in z : int, inout extras : Bundle, inout sync : boolean) : void
+        for (int wallpaperNdx = mChildren.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+            final WindowState wallpaper = mChildren.get(wallpaperNdx);
+            try {
+                wallpaper.mClient.dispatchWallpaperCommand(action, x, y, z, extras, sync);
+                // We only want to be synchronous with one wallpaper.
+                sync = false;
+            } catch (RemoteException e) {
+            }
+        }
+!!!12784645.java!!!	updateWallpaperOffset(in dw : int, in dh : int, inout sync : boolean) : void
+        final WallpaperController wallpaperController = mDisplayContent.mWallpaperController;
+        for (int wallpaperNdx = mChildren.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+            final WindowState wallpaper = mChildren.get(wallpaperNdx);
+            if (wallpaperController.updateWallpaperOffset(wallpaper, dw, dh, sync)) {
+                final WindowStateAnimator winAnimator = wallpaper.mWinAnimator;
+                winAnimator.computeShownFrameLocked();
+                // No need to lay out the windows - we can just set the wallpaper position directly.
+                winAnimator.setWallpaperOffset(wallpaper.mShownPosition);
+                // We only want to be synchronous with one wallpaper.
+                sync = false;
+            }
+        }
+!!!12784773.java!!!	updateWallpaperVisibility(inout visible : boolean) : void
+        final DisplayInfo displayInfo = mDisplayContent.getDisplayInfo();
+        final int dw = displayInfo.logicalWidth;
+        final int dh = displayInfo.logicalHeight;
+
+        if (hidden == visible) {
+            hidden = !visible;
+            // Need to do a layout to ensure the wallpaper now has the correct size.
+            mDisplayContent.setLayoutNeeded();
+        }
+
+        final WallpaperController wallpaperController = mDisplayContent.mWallpaperController;
+        for (int wallpaperNdx = mChildren.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+            final WindowState wallpaper = mChildren.get(wallpaperNdx);
+            if (visible) {
+                wallpaperController.updateWallpaperOffset(wallpaper, dw, dh, false);
+            }
+
+            wallpaper.dispatchWallpaperVisibility(visible);
+        }
+!!!12784901.java!!!	startAnimation(inout anim : Animation) : void
+        for (int ndx = mChildren.size() - 1; ndx >= 0; ndx--) {
+            final WindowState windowState = mChildren.get(ndx);
+            windowState.mWinAnimator.setAnimation(anim);
+        }
+!!!12785029.java!!!	updateWallpaperWindows(inout visible : boolean, in animLayerAdj : int) : void
+
+        if (hidden == visible) {
+            if (DEBUG_WALLPAPER_LIGHT) Slog.d(TAG,
+                    "Wallpaper token " + token + " hidden=" + !visible);
+            hidden = !visible;
+            // Need to do a layout to ensure the wallpaper now has the correct size.
+            mDisplayContent.setLayoutNeeded();
+        }
+
+        final DisplayInfo displayInfo = mDisplayContent.getDisplayInfo();
+        final int dw = displayInfo.logicalWidth;
+        final int dh = displayInfo.logicalHeight;
+        final WallpaperController wallpaperController = mDisplayContent.mWallpaperController;
+        for (int wallpaperNdx = mChildren.size() - 1; wallpaperNdx >= 0; wallpaperNdx--) {
+            final WindowState wallpaper = mChildren.get(wallpaperNdx);
+
+            if (visible) {
+                wallpaperController.updateWallpaperOffset(wallpaper, dw, dh, false);
+            }
+
+            // First, make sure the client has the current visibility state.
+            wallpaper.dispatchWallpaperVisibility(visible);
+
+            if (DEBUG_LAYERS || DEBUG_WALLPAPER_LIGHT) Slog.v(TAG, "adjustWallpaper win "
+                    + wallpaper + " anim layer: " + wallpaper.mWinAnimator.mAnimLayer);
+        }
+!!!12785157.java!!!	hasVisibleNotDrawnWallpaper() : boolean
+        for (int j = mChildren.size() - 1; j >= 0; --j) {
+            final WindowState wallpaper = mChildren.get(j);
+            if (wallpaper.hasVisibleNotDrawnWallpaper()) {
+                return true;
+            }
+        }
+        return false;
+!!!12785285.java!!!	toString() : String
+        if (stringName == null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("WallpaperWindowToken{");
+            sb.append(Integer.toHexString(System.identityHashCode(this)));
+            sb.append(" token="); sb.append(token); sb.append('}');
+            stringName = sb.toString();
+        }
+        return stringName;

@@ -1,0 +1,129 @@
+class TimePicker
+!!!5714309.java!!!	TimePicker(inout context : Context)
+        this(context, null);
+!!!5714437.java!!!	TimePicker(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, R.attr.timePickerStyle);
+!!!5714565.java!!!	TimePicker(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        this(context, attrs, defStyleAttr, 0);
+!!!5714693.java!!!	TimePicker(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        // DatePicker is important by default, unless app developer overrode attribute.
+        if (getImportantForAutofill() == IMPORTANT_FOR_AUTOFILL_AUTO) {
+            setImportantForAutofill(IMPORTANT_FOR_AUTOFILL_YES);
+        }
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.TimePicker, defStyleAttr, defStyleRes);
+        final boolean isDialogMode = a.getBoolean(R.styleable.TimePicker_dialogMode, false);
+        final int requestedMode = a.getInt(R.styleable.TimePicker_timePickerMode, MODE_SPINNER);
+        a.recycle();
+
+        if (requestedMode == MODE_CLOCK && isDialogMode) {
+            // You want MODE_CLOCK? YOU CAN'T HANDLE MODE_CLOCK! Well, maybe
+            // you can depending on your screen size. Let's check...
+            mMode = context.getResources().getInteger(R.integer.time_picker_mode);
+        } else {
+            mMode = requestedMode;
+        }
+
+        switch (mMode) {
+            case MODE_CLOCK:
+                mDelegate = new TimePickerClockDelegate(
+                        this, context, attrs, defStyleAttr, defStyleRes);
+                break;
+            case MODE_SPINNER:
+            default:
+                mDelegate = new TimePickerSpinnerDelegate(
+                        this, context, attrs, defStyleAttr, defStyleRes);
+                break;
+        }
+        mDelegate.setAutoFillChangeListener((v, h, m) -> {
+            final AutofillManager afm = context.getSystemService(AutofillManager.class);
+            if (afm != null) {
+                afm.notifyValueChanged(this);
+            }
+        });
+!!!5714821.java!!!	getMode() : int
+        return mMode;
+!!!5714949.java!!!	setHour(in hour : int) : void
+        mDelegate.setHour(MathUtils.constrain(hour, 0, 23));
+!!!5715077.java!!!	getHour() : int
+        return mDelegate.getHour();
+!!!5715205.java!!!	setMinute(in minute : int) : void
+        mDelegate.setMinute(MathUtils.constrain(minute, 0, 59));
+!!!5715333.java!!!	getMinute() : int
+        return mDelegate.getMinute();
+!!!5715461.java!!!	setCurrentHour(inout currentHour : Integer) : void
+        setHour(currentHour);
+!!!5715589.java!!!	getCurrentHour() : Integer
+        return getHour();
+!!!5715717.java!!!	setCurrentMinute(inout currentMinute : Integer) : void
+        setMinute(currentMinute);
+!!!5715845.java!!!	getCurrentMinute() : Integer
+        return getMinute();
+!!!5715973.java!!!	setIs24HourView(inout is24HourView : Boolean) : void
+        if (is24HourView == null) {
+            return;
+        }
+
+        mDelegate.setIs24Hour(is24HourView);
+!!!5716101.java!!!	is24HourView() : boolean
+        return mDelegate.is24Hour();
+!!!5716229.java!!!	setOnTimeChangedListener(inout onTimeChangedListener : TimePicker::OnTimeChangedListener) : void
+        mDelegate.setOnTimeChangedListener(onTimeChangedListener);
+!!!5716357.java!!!	setEnabled(inout enabled : boolean) : void
+        super.setEnabled(enabled);
+        mDelegate.setEnabled(enabled);
+!!!5716485.java!!!	isEnabled() : boolean
+        return mDelegate.isEnabled();
+!!!5716613.java!!!	getBaseline() : int
+        return mDelegate.getBaseline();
+!!!5716741.java!!!	validateInput() : boolean
+        return mDelegate.validateInput();
+!!!5716869.java!!!	onSaveInstanceState() : Parcelable
+        Parcelable superState = super.onSaveInstanceState();
+        return mDelegate.onSaveInstanceState(superState);
+!!!5716997.java!!!	onRestoreInstanceState(inout state : Parcelable) : void
+        BaseSavedState ss = (BaseSavedState) state;
+        super.onRestoreInstanceState(ss.getSuperState());
+        mDelegate.onRestoreInstanceState(ss);
+!!!5717125.java!!!	getAccessibilityClassName() : CharSequence
+        return TimePicker.class.getName();
+!!!5717253.java!!!	dispatchPopulateAccessibilityEventInternal(inout event : AccessibilityEvent) : boolean
+        return mDelegate.dispatchPopulateAccessibilityEvent(event);
+!!!5717381.java!!!	getHourView() : View
+        return mDelegate.getHourView();
+!!!5717509.java!!!	getMinuteView() : View
+        return mDelegate.getMinuteView();
+!!!5717637.java!!!	getAmView() : View
+        return mDelegate.getAmView();
+!!!5717765.java!!!	getPmView() : View
+        return mDelegate.getPmView();
+!!!5720709.java!!!	getAmPmStrings(inout context : Context) : String
+        final Locale locale = context.getResources().getConfiguration().locale;
+        final LocaleData d = LocaleData.get(locale);
+
+        final String[] result = new String[2];
+        result[0] = d.amPm[0].length() > 4 ? d.narrowAm : d.amPm[0];
+        result[1] = d.amPm[1].length() > 4 ? d.narrowPm : d.amPm[1];
+        return result;
+!!!5722501.java!!!	dispatchProvideAutofillStructure(inout structure : ViewStructure, in flags : int) : void
+        // This view is self-sufficient for autofill, so it needs to call
+        // onProvideAutoFillStructure() to fill itself, but it does not need to call
+        // dispatchProvideAutoFillStructure() to fill its children.
+        structure.setAutofillId(getAutofillId());
+        onProvideAutofillStructure(structure, flags);
+!!!5722629.java!!!	autofill(inout value : AutofillValue) : void
+        if (!isEnabled()) return;
+
+        if (!value.isDate()) {
+            Log.w(LOG_TAG, value + " could not be autofilled into " + this);
+            return;
+        }
+
+        mDelegate.setDate(value.getDateValue());
+!!!5722757.java!!!	getAutofillType() : int
+        return isEnabled() ? AUTOFILL_TYPE_DATE : AUTOFILL_TYPE_NONE;
+!!!5722885.java!!!	getAutofillValue() : AutofillValue
+        return isEnabled() ? AutofillValue.forDate(mDelegate.getDate()) : null;

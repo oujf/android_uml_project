@@ -1,0 +1,84 @@
+class EffectsFactoryHalHidl
+!!!602373.cpp!!!	queryNumberEffects(inout pNumEffects : uint32_t) : status_t
+    status_t queryResult = queryAllDescriptors();
+    if (queryResult == OK) {
+        *pNumEffects = mLastDescriptors.size();
+    }
+    return queryResult;
+!!!602501.cpp!!!	getDescriptor(in index : uint32_t, inout pDescriptor : effect_descriptor_t) : status_t
+    // TODO: We need somehow to track the changes on the server side
+    // or figure out how to convert everybody to query all the descriptors at once.
+    // TODO: check for nullptr
+    if (mLastDescriptors.size() == 0) {
+        status_t queryResult = queryAllDescriptors();
+        if (queryResult != OK) return queryResult;
+    }
+    if (index >= mLastDescriptors.size()) return NAME_NOT_FOUND;
+    EffectHalHidl::effectDescriptorToHal(mLastDescriptors[index], pDescriptor);
+    return OK;
+!!!602629.cpp!!!	getDescriptor(in pEffectUuid : effect_uuid_t, inout pDescriptor : effect_descriptor_t) : status_t
+    // TODO: check for nullptr
+    if (mEffectsFactory == 0) return NO_INIT;
+    Uuid hidlUuid;
+    HidlUtils::uuidFromHal(*pEffectUuid, &hidlUuid);
+    Result retval = Result::NOT_INITIALIZED;
+    Return<void> ret = mEffectsFactory->getDescriptor(hidlUuid,
+            [&](Result r, const EffectDescriptor& result) {
+                retval = r;
+                if (retval == Result::OK) {
+                    EffectHalHidl::effectDescriptorToHal(result, pDescriptor);
+                }
+            });
+    if (ret.isOk()) {
+        if (retval == Result::OK) return OK;
+        else if (retval == Result::INVALID_ARGUMENTS) return NAME_NOT_FOUND;
+        else return NO_INIT;
+    }
+    return processReturn(__FUNCTION__, ret);
+!!!602757.cpp!!!	createEffect(in pEffectUuid : effect_uuid_t, in sessionId : int32_t, in ioId : int32_t, inout effect : sp<EffectHalInterface>) : status_t
+    if (mEffectsFactory == 0) return NO_INIT;
+    Uuid hidlUuid;
+    HidlUtils::uuidFromHal(*pEffectUuid, &hidlUuid);
+    Result retval = Result::NOT_INITIALIZED;
+    Return<void> ret = mEffectsFactory->createEffect(
+            hidlUuid, sessionId, ioId,
+            [&](Result r, const sp<IEffect>& result, uint64_t effectId) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *effect = new EffectHalHidl(result, effectId);
+                }
+            });
+    if (ret.isOk()) {
+        if (retval == Result::OK) return OK;
+        else if (retval == Result::INVALID_ARGUMENTS) return NAME_NOT_FOUND;
+        else return NO_INIT;
+    }
+    return processReturn(__FUNCTION__, ret);
+!!!602885.cpp!!!	dumpEffects(in fd : int) : status_t
+    if (mEffectsFactory == 0) return NO_INIT;
+    native_handle_t* hidlHandle = native_handle_create(1, 0);
+    hidlHandle->data[0] = fd;
+    Return<void> ret = mEffectsFactory->debugDump(hidlHandle);
+    native_handle_delete(hidlHandle);
+    return processReturn(__FUNCTION__, ret);
+!!!603013.cpp!!!	EffectsFactoryHalHidl()
+    mEffectsFactory = IEffectsFactory::getService();
+    if (mEffectsFactory == 0) {
+        ALOGE("Failed to obtain IEffectsFactory service, terminating process.");
+        exit(1);
+    }
+!!!603269.cpp!!!	queryAllDescriptors() : status_t
+    if (mEffectsFactory == 0) return NO_INIT;
+    Result retval = Result::NOT_INITIALIZED;
+    Return<void> ret = mEffectsFactory->getAllDescriptors(
+            [&](Result r, const hidl_vec<EffectDescriptor>& result) {
+                retval = r;
+                if (retval == Result::OK) {
+                    mLastDescriptors = result;
+                }
+            });
+    if (ret.isOk()) {
+        return retval == Result::OK ? OK : NO_INIT;
+    }
+    mLastDescriptors.resize(0);
+    return processReturn(__FUNCTION__, ret);

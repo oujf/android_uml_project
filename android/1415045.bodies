@@ -1,0 +1,232 @@
+class ViewPostImeInputStage
+!!!8623749.java!!!	ViewPostImeInputStage(inout next : ViewRootImpl::InputStage)
+            super(next);
+!!!8623877.java!!!	onProcess(inout q : ViewRootImpl::QueuedInputEvent) : int
+            if (q.mEvent instanceof KeyEvent) {
+                return processKeyEvent(q);
+            } else {
+                final int source = q.mEvent.getSource();
+                if ((source & InputDevice.SOURCE_CLASS_POINTER) != 0) {
+                    return processPointerEvent(q);
+                } else if ((source & InputDevice.SOURCE_CLASS_TRACKBALL) != 0) {
+                    return processTrackballEvent(q);
+                } else {
+                    return processGenericMotionEvent(q);
+                }
+            }
+!!!8624005.java!!!	onDeliverToNext(inout q : ViewRootImpl::QueuedInputEvent) : void
+            if (mUnbufferedInputDispatch
+                    && q.mEvent instanceof MotionEvent
+                    && ((MotionEvent)q.mEvent).isTouchEvent()
+                    && isTerminalInputEvent(q.mEvent)) {
+                mUnbufferedInputDispatch = false;
+                scheduleConsumeBatchedInput();
+            }
+            super.onDeliverToNext(q);
+!!!8624133.java!!!	performFocusNavigation(inout event : KeyEvent) : boolean
+            int direction = 0;
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    if (event.hasNoModifiers()) {
+                        direction = View.FOCUS_LEFT;
+                    }
+                    break;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    if (event.hasNoModifiers()) {
+                        direction = View.FOCUS_RIGHT;
+                    }
+                    break;
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    if (event.hasNoModifiers()) {
+                        direction = View.FOCUS_UP;
+                    }
+                    break;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    if (event.hasNoModifiers()) {
+                        direction = View.FOCUS_DOWN;
+                    }
+                    break;
+                case KeyEvent.KEYCODE_TAB:
+                    if (event.hasNoModifiers()) {
+                        direction = View.FOCUS_FORWARD;
+                    } else if (event.hasModifiers(KeyEvent.META_SHIFT_ON)) {
+                        direction = View.FOCUS_BACKWARD;
+                    }
+                    break;
+            }
+            if (direction != 0) {
+                View focused = mView.findFocus();
+                if (focused != null) {
+                    View v = focused.focusSearch(direction);
+                    if (v != null && v != focused) {
+                        // do the math the get the interesting rect
+                        // of previous focused into the coord system of
+                        // newly focused view
+                        focused.getFocusedRect(mTempRect);
+                        if (mView instanceof ViewGroup) {
+                            ((ViewGroup) mView).offsetDescendantRectToMyCoords(
+                                    focused, mTempRect);
+                            ((ViewGroup) mView).offsetRectIntoDescendantCoords(
+                                    v, mTempRect);
+                        }
+                        if (v.requestFocus(direction, mTempRect)) {
+                            playSoundEffect(SoundEffectConstants
+                                    .getContantForFocusDirection(direction));
+                            return true;
+                        }
+                    }
+
+                    // Give the focused view a last chance to handle the dpad key.
+                    if (mView.dispatchUnhandledMove(focused, direction)) {
+                        return true;
+                    }
+                } else {
+                    if (mView.restoreDefaultFocus()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+!!!8624261.java!!!	performKeyboardGroupNavigation(in direction : int) : boolean
+            final View focused = mView.findFocus();
+            if (focused == null && mView.restoreDefaultFocus()) {
+                return true;
+            }
+            View cluster = focused == null ? keyboardNavigationClusterSearch(null, direction)
+                    : focused.keyboardNavigationClusterSearch(null, direction);
+
+            // Since requestFocus only takes "real" focus directions (and therefore also
+            // restoreFocusInCluster), convert forward/backward focus into FOCUS_DOWN.
+            int realDirection = direction;
+            if (direction == View.FOCUS_FORWARD || direction == View.FOCUS_BACKWARD) {
+                realDirection = View.FOCUS_DOWN;
+            }
+
+            if (cluster != null && cluster.isRootNamespace()) {
+                // the default cluster. Try to find a non-clustered view to focus.
+                if (cluster.restoreFocusNotInCluster()) {
+                    playSoundEffect(SoundEffectConstants.getContantForFocusDirection(direction));
+                    return true;
+                }
+                // otherwise skip to next actual cluster
+                cluster = keyboardNavigationClusterSearch(null, direction);
+            }
+
+            if (cluster != null && cluster.restoreFocusInCluster(realDirection)) {
+                playSoundEffect(SoundEffectConstants.getContantForFocusDirection(direction));
+                return true;
+            }
+
+            return false;
+!!!8624389.java!!!	processKeyEvent(inout q : ViewRootImpl::QueuedInputEvent) : int
+            final KeyEvent event = (KeyEvent)q.mEvent;
+
+            // Deliver the key to the view hierarchy.
+            if (mView.dispatchKeyEvent(event)) {
+                return FINISH_HANDLED;
+            }
+
+            if (shouldDropInputEvent(q)) {
+                return FINISH_NOT_HANDLED;
+            }
+
+            int groupNavigationDirection = 0;
+
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && event.getKeyCode() == KeyEvent.KEYCODE_TAB) {
+                if (KeyEvent.metaStateHasModifiers(event.getMetaState(), KeyEvent.META_META_ON)) {
+                    groupNavigationDirection = View.FOCUS_FORWARD;
+                } else if (KeyEvent.metaStateHasModifiers(event.getMetaState(),
+                        KeyEvent.META_META_ON | KeyEvent.META_SHIFT_ON)) {
+                    groupNavigationDirection = View.FOCUS_BACKWARD;
+                }
+            }
+
+            // If a modifier is held, try to interpret the key as a shortcut.
+            if (event.getAction() == KeyEvent.ACTION_DOWN
+                    && !KeyEvent.metaStateHasNoModifiers(event.getMetaState())
+                    && event.getRepeatCount() == 0
+                    && !KeyEvent.isModifierKey(event.getKeyCode())
+                    && groupNavigationDirection == 0) {
+                if (mView.dispatchKeyShortcutEvent(event)) {
+                    return FINISH_HANDLED;
+                }
+                if (shouldDropInputEvent(q)) {
+                    return FINISH_NOT_HANDLED;
+                }
+            }
+
+            // Apply the fallback event policy.
+            if (mFallbackEventHandler.dispatchKeyEvent(event)) {
+                return FINISH_HANDLED;
+            }
+            if (shouldDropInputEvent(q)) {
+                return FINISH_NOT_HANDLED;
+            }
+
+            // Handle automatic focus changes.
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (groupNavigationDirection != 0) {
+                    if (performKeyboardGroupNavigation(groupNavigationDirection)) {
+                        return FINISH_HANDLED;
+                    }
+                } else {
+                    if (performFocusNavigation(event)) {
+                        return FINISH_HANDLED;
+                    }
+                }
+            }
+            return FORWARD;
+!!!8624517.java!!!	processPointerEvent(inout q : ViewRootImpl::QueuedInputEvent) : int
+            final MotionEvent event = (MotionEvent)q.mEvent;
+
+            mAttachInfo.mUnbufferedDispatchRequested = false;
+            mAttachInfo.mHandlingPointerEvent = true;
+            boolean handled = mView.dispatchPointerEvent(event);
+            maybeUpdatePointerIcon(event);
+            maybeUpdateTooltip(event);
+            mAttachInfo.mHandlingPointerEvent = false;
+            if (mAttachInfo.mUnbufferedDispatchRequested && !mUnbufferedInputDispatch) {
+                mUnbufferedInputDispatch = true;
+                if (mConsumeBatchedInputScheduled) {
+                    scheduleConsumeBatchedInputImmediately();
+                }
+            }
+            return handled ? FINISH_HANDLED : FORWARD;
+!!!8624645.java!!!	maybeUpdatePointerIcon(inout event : MotionEvent) : void
+            if (event.getPointerCount() == 1 && event.isFromSource(InputDevice.SOURCE_MOUSE)) {
+                if (event.getActionMasked() == MotionEvent.ACTION_HOVER_ENTER
+                        || event.getActionMasked() == MotionEvent.ACTION_HOVER_EXIT) {
+                    // Other apps or the window manager may change the icon type outside of
+                    // this app, therefore the icon type has to be reset on enter/exit event.
+                    mPointerIconType = PointerIcon.TYPE_NOT_SPECIFIED;
+                }
+
+                if (event.getActionMasked() != MotionEvent.ACTION_HOVER_EXIT) {
+                    if (!updatePointerIcon(event) &&
+                            event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE) {
+                        mPointerIconType = PointerIcon.TYPE_NOT_SPECIFIED;
+                    }
+                }
+            }
+!!!8624773.java!!!	processTrackballEvent(inout q : ViewRootImpl::QueuedInputEvent) : int
+            final MotionEvent event = (MotionEvent)q.mEvent;
+
+            if (event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
+                if (!hasPointerCapture() || mView.dispatchCapturedPointerEvent(event)) {
+                    return FINISH_HANDLED;
+                }
+            }
+
+            if (mView.dispatchTrackballEvent(event)) {
+                return FINISH_HANDLED;
+            }
+            return FORWARD;
+!!!8624901.java!!!	processGenericMotionEvent(inout q : ViewRootImpl::QueuedInputEvent) : int
+            final MotionEvent event = (MotionEvent)q.mEvent;
+
+            // Deliver the event to the view.
+            if (mView.dispatchGenericMotionEvent(event)) {
+                return FINISH_HANDLED;
+            }
+            return FORWARD;

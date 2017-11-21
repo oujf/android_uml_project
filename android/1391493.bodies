@@ -1,0 +1,128 @@
+class ArcMotion
+!!!8367621.java!!!	ArcMotion(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.ArcMotion);
+        float minimumVerticalAngle = a.getFloat(R.styleable.ArcMotion_minimumVerticalAngle,
+                DEFAULT_MIN_ANGLE_DEGREES);
+        setMinimumVerticalAngle(minimumVerticalAngle);
+        float minimumHorizontalAngle = a.getFloat(R.styleable.ArcMotion_minimumHorizontalAngle,
+                DEFAULT_MIN_ANGLE_DEGREES);
+        setMinimumHorizontalAngle(minimumHorizontalAngle);
+        float maximumAngle = a.getFloat(R.styleable.ArcMotion_maximumAngle,
+                DEFAULT_MAX_ANGLE_DEGREES);
+        setMaximumAngle(maximumAngle);
+        a.recycle();
+!!!8367749.java!!!	setMinimumHorizontalAngle(in angleInDegrees : float) : void
+        mMinimumHorizontalAngle = angleInDegrees;
+        mMinimumHorizontalTangent = toTangent(angleInDegrees);
+!!!8367877.java!!!	getMinimumHorizontalAngle() : float
+        return mMinimumHorizontalAngle;
+!!!8368005.java!!!	setMinimumVerticalAngle(in angleInDegrees : float) : void
+        mMinimumVerticalAngle = angleInDegrees;
+        mMinimumVerticalTangent = toTangent(angleInDegrees);
+!!!8368133.java!!!	getMinimumVerticalAngle() : float
+        return mMinimumVerticalAngle;
+!!!8368261.java!!!	setMaximumAngle(in angleInDegrees : float) : void
+        mMaximumAngle = angleInDegrees;
+        mMaximumTangent = toTangent(angleInDegrees);
+!!!8368389.java!!!	getMaximumAngle() : float
+        return mMaximumAngle;
+!!!8368517.java!!!	toTangent(in arcInDegrees : float) : float
+        if (arcInDegrees < 0 || arcInDegrees > 90) {
+            throw new IllegalArgumentException("Arc must be between 0 and 90 degrees");
+        }
+        return (float) Math.tan(Math.toRadians(arcInDegrees / 2));
+!!!8368645.java!!!	getPath(in startX : float, in startY : float, in endX : float, in endY : float) : Path
+        // Here's a little ascii art to show how this is calculated:
+        // c---------- b
+        //  \        / |
+        //    \     d  |
+        //      \  /   e
+        //        a----f
+        // This diagram assumes that the horizontal distance is less than the vertical
+        // distance between The start point (a) and end point (b).
+        // d is the midpoint between a and b. c is the center point of the circle with
+        // This path is formed by assuming that start and end points are in
+        // an arc on a circle. The end point is centered in the circle vertically
+        // and start is a point on the circle.
+
+        // Triangles bfa and bde form similar right triangles. The control points
+        // for the cubic Bezier arc path are the midpoints between a and e and e and b.
+
+        Path path = new Path();
+        path.moveTo(startX, startY);
+
+        float ex;
+        float ey;
+        float deltaX = endX - startX;
+        float deltaY = endY - startY;
+
+        // hypotenuse squared.
+        float h2 = deltaX * deltaX + deltaY * deltaY;
+
+        // Midpoint between start and end
+        float dx = (startX + endX) / 2;
+        float dy = (startY + endY) / 2;
+
+        // Distance squared between end point and mid point is (1/2 hypotenuse)^2
+        float midDist2 = h2 * 0.25f;
+
+        float minimumArcDist2 = 0;
+
+        boolean isMovingUpwards = startY > endY;
+
+        if ((Math.abs(deltaX) < Math.abs(deltaY))) {
+            // Similar triangles bfa and bde mean that (ab/fb = eb/bd)
+            // Therefore, eb = ab * bd / fb
+            // ab = hypotenuse
+            // bd = hypotenuse/2
+            // fb = deltaY
+            float eDistY = Math.abs(h2 / (2 * deltaY));
+            if (isMovingUpwards) {
+                ey = endY + eDistY;
+                ex = endX;
+            } else {
+                ey = startY + eDistY;
+                ex = startX;
+            }
+
+            minimumArcDist2 = midDist2 * mMinimumVerticalTangent
+                    * mMinimumVerticalTangent;
+        } else {
+            // Same as above, but flip X & Y and account for negative eDist
+            float eDistX = h2 / (2 * deltaX);
+            if (isMovingUpwards) {
+                ex = startX + eDistX;
+                ey = startY;
+            } else {
+                ex = endX - eDistX;
+                ey = endY;
+            }
+
+            minimumArcDist2 = midDist2 * mMinimumHorizontalTangent
+                    * mMinimumHorizontalTangent;
+        }
+        float arcDistX = dx - ex;
+        float arcDistY = dy - ey;
+        float arcDist2 = arcDistX * arcDistX + arcDistY * arcDistY;
+
+        float maximumArcDist2 = midDist2 * mMaximumTangent * mMaximumTangent;
+
+        float newArcDistance2 = 0;
+        if (arcDist2 < minimumArcDist2) {
+            newArcDistance2 = minimumArcDist2;
+        } else if (arcDist2 > maximumArcDist2) {
+            newArcDistance2 = maximumArcDist2;
+        }
+        if (newArcDistance2 != 0) {
+            float ratio2 = newArcDistance2 / arcDist2;
+            float ratio = (float) Math.sqrt(ratio2);
+            ex = dx + (ratio * (ex - dx));
+            ey = dy + (ratio * (ey - dy));
+        }
+        float control1X = (startX + ex) / 2;
+        float control1Y = (startY + ey) / 2;
+        float control2X = (ex + endX) / 2;
+        float control2Y = (ey + endY) / 2;
+        path.cubicTo(control1X, control1Y, control2X, control2Y, endX, endY);
+        return path;

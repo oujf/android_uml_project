@@ -1,0 +1,86 @@
+class DisplayTransformManager
+!!!11497989.java!!!	getColorMatrix(in key : int) : float
+        synchronized (mColorMatrix) {
+            final float[] value = mColorMatrix.get(key);
+            return value == null ? null : Arrays.copyOf(value, value.length);
+        }
+!!!11498117.java!!!	setColorMatrix(in level : int, inout value : float [[]]) : void
+        if (value != null && value.length != 16) {
+            throw new IllegalArgumentException("Expected length: 16 (4x4 matrix)"
+                    + ", actual length: " + value.length);
+        }
+
+        synchronized (mColorMatrix) {
+            final float[] oldValue = mColorMatrix.get(level);
+            if (!Arrays.equals(oldValue, value)) {
+                if (value == null) {
+                    mColorMatrix.remove(level);
+                } else if (oldValue == null) {
+                    mColorMatrix.put(level, Arrays.copyOf(value, value.length));
+                } else {
+                    System.arraycopy(value, 0, oldValue, 0, value.length);
+                }
+
+                // Update the current color transform.
+                applyColorMatrix(computeColorMatrixLocked());
+            }
+        }
+!!!11498245.java!!!	computeColorMatrixLocked() : float
+        final int count = mColorMatrix.size();
+        if (count == 0) {
+            return null;
+        }
+
+        final float[][] result = mTempColorMatrix;
+        Matrix.setIdentityM(result[0], 0);
+        for (int i = 0; i < count; i++) {
+            float[] rhs = mColorMatrix.valueAt(i);
+            Matrix.multiplyMM(result[(i + 1) % 2], 0, result[i % 2], 0, rhs, 0);
+        }
+        return result[count % 2];
+!!!11498373.java!!!	getDaltonizerMode() : int
+        synchronized (mDaltonizerModeLock) {
+            return mDaltonizerMode;
+        }
+!!!11498501.java!!!	setDaltonizerMode(in mode : int) : void
+        synchronized (mDaltonizerModeLock) {
+            if (mDaltonizerMode != mode) {
+                mDaltonizerMode = mode;
+                applyDaltonizerMode(mode);
+            }
+        }
+!!!11498629.java!!!	applyColorMatrix(inout m : float [[]]) : void
+        final IBinder flinger = ServiceManager.getService("SurfaceFlinger");
+        if (flinger != null) {
+            final Parcel data = Parcel.obtain();
+            data.writeInterfaceToken("android.ui.ISurfaceComposer");
+            if (m != null) {
+                data.writeInt(1);
+                for (int i = 0; i < 16; i++) {
+                    data.writeFloat(m[i]);
+                }
+            } else {
+                data.writeInt(0);
+            }
+            try {
+                flinger.transact(1015, data, null, 0);
+            } catch (RemoteException ex) {
+                Slog.e(TAG, "Failed to set color transform", ex);
+            } finally {
+                data.recycle();
+            }
+        }
+!!!11498757.java!!!	applyDaltonizerMode(in mode : int) : void
+        final IBinder flinger = ServiceManager.getService("SurfaceFlinger");
+        if (flinger != null) {
+            final Parcel data = Parcel.obtain();
+            data.writeInterfaceToken("android.ui.ISurfaceComposer");
+            data.writeInt(mode);
+            try {
+                flinger.transact(1014, data, null, 0);
+            } catch (RemoteException ex) {
+                Slog.e(TAG, "Failed to set Daltonizer mode", ex);
+            } finally {
+                data.recycle();
+            }
+        }

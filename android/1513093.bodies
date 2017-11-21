@@ -1,0 +1,496 @@
+class PackageHelper
+!!!9898885.java!!!	getStorageManager() : IStorageManager
+        IBinder service = ServiceManager.getService("mount");
+        if (service != null) {
+            return IStorageManager.Stub.asInterface(service);
+        } else {
+            Log.e(TAG, "Can't get storagemanager service");
+            throw new RemoteException("Could not contact storagemanager service");
+        }
+!!!9899013.java!!!	createSdDir(in sizeBytes : long, in cid : String, in sdEncKey : String, in uid : int, inout isExternal : boolean) : String
+        // Round up to nearest MB, plus another MB for filesystem overhead
+        final int sizeMb = (int) ((sizeBytes + MB_IN_BYTES) / MB_IN_BYTES) + 1;
+        try {
+            IStorageManager storageManager = getStorageManager();
+
+            if (localLOGV)
+                Log.i(TAG, "Size of container " + sizeMb + " MB");
+
+            int rc = storageManager.createSecureContainer(cid, sizeMb, "ext4", sdEncKey, uid,
+                    isExternal);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.e(TAG, "Failed to create secure container " + cid);
+                return null;
+            }
+            String cachePath = storageManager.getSecureContainerPath(cid);
+            if (localLOGV) Log.i(TAG, "Created secure container " + cid +
+                    " at " + cachePath);
+                return cachePath;
+        } catch (RemoteException e) {
+            Log.e(TAG, "StorageManagerService running?");
+        }
+        return null;
+!!!9899141.java!!!	resizeSdDir(in sizeBytes : long, in cid : String, in sdEncKey : String) : boolean
+        // Round up to nearest MB, plus another MB for filesystem overhead
+        final int sizeMb = (int) ((sizeBytes + MB_IN_BYTES) / MB_IN_BYTES) + 1;
+        try {
+            IStorageManager storageManager = getStorageManager();
+            int rc = storageManager.resizeSecureContainer(cid, sizeMb, sdEncKey);
+            if (rc == StorageResultCode.OperationSucceeded) {
+                return true;
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "StorageManagerService running?");
+        }
+        Log.e(TAG, "Failed to create secure container " + cid);
+        return false;
+!!!9899269.java!!!	mountSdDir(in cid : String, in key : String, in ownerUid : int) : String
+        return mountSdDir(cid, key, ownerUid, true);
+!!!9899397.java!!!	mountSdDir(in cid : String, in key : String, in ownerUid : int, inout readOnly : boolean) : String
+        try {
+            int rc = getStorageManager().mountSecureContainer(cid, key, ownerUid, readOnly);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.i(TAG, "Failed to mount container " + cid + " rc : " + rc);
+                return null;
+            }
+            return getStorageManager().getSecureContainerPath(cid);
+        } catch (RemoteException e) {
+            Log.e(TAG, "StorageManagerService running?");
+        }
+        return null;
+!!!9899525.java!!!	unMountSdDir(in cid : String) : boolean
+    try {
+        int rc = getStorageManager().unmountSecureContainer(cid, true);
+        if (rc != StorageResultCode.OperationSucceeded) {
+            Log.e(TAG, "Failed to unmount " + cid + " with rc " + rc);
+            return false;
+        }
+        return true;
+    } catch (RemoteException e) {
+        Log.e(TAG, "StorageManagerService running?");
+    }
+        return false;
+!!!9899653.java!!!	renameSdDir(in oldId : String, in newId : String) : boolean
+       try {
+           int rc = getStorageManager().renameSecureContainer(oldId, newId);
+           if (rc != StorageResultCode.OperationSucceeded) {
+               Log.e(TAG, "Failed to rename " + oldId + " to " +
+                       newId + "with rc " + rc);
+               return false;
+           }
+           return true;
+       } catch (RemoteException e) {
+           Log.i(TAG, "Failed ot rename  " + oldId + " to " + newId +
+                   " with exception : " + e);
+       }
+       return false;
+!!!9899781.java!!!	getSdDir(in cid : String) : String
+       try {
+            return getStorageManager().getSecureContainerPath(cid);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to get container path for " + cid +
+                " with exception " + e);
+        }
+        return null;
+!!!9899909.java!!!	getSdFilesystem(in cid : String) : String
+       try {
+            return getStorageManager().getSecureContainerFilesystemPath(cid);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to get container path for " + cid +
+                " with exception " + e);
+        }
+        return null;
+!!!9900037.java!!!	finalizeSdDir(in cid : String) : boolean
+        try {
+            int rc = getStorageManager().finalizeSecureContainer(cid);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.i(TAG, "Failed to finalize container " + cid);
+                return false;
+            }
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to finalize container " + cid +
+                    " with exception " + e);
+        }
+        return false;
+!!!9900165.java!!!	destroySdDir(in cid : String) : boolean
+        try {
+            if (localLOGV) Log.i(TAG, "Forcibly destroying container " + cid);
+            int rc = getStorageManager().destroySecureContainer(cid, true);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.i(TAG, "Failed to destroy container " + cid);
+                return false;
+            }
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to destroy container " + cid +
+                    " with exception " + e);
+        }
+        return false;
+!!!9900293.java!!!	getSecureContainerList() : String
+        try {
+            return getStorageManager().getSecureContainerList();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to get secure container list with exception" +
+                    e);
+        }
+        return null;
+!!!9900421.java!!!	isContainerMounted(in cid : String) : boolean
+       try {
+           return getStorageManager().isSecureContainerMounted(cid);
+       } catch (RemoteException e) {
+           Log.e(TAG, "Failed to find out if container " + cid + " mounted");
+       }
+       return false;
+!!!9900549.java!!!	extractPublicFiles(inout apkFile : File, inout publicZipFile : File) : long
+        final FileOutputStream fstr;
+        final ZipOutputStream publicZipOutStream;
+
+        if (publicZipFile == null) {
+            fstr = null;
+            publicZipOutStream = null;
+        } else {
+            fstr = new FileOutputStream(publicZipFile);
+            publicZipOutStream = new ZipOutputStream(fstr);
+            Log.d(TAG, "Extracting " + apkFile + " to " + publicZipFile);
+        }
+
+        long size = 0L;
+
+        try {
+            final ZipFile privateZip = new ZipFile(apkFile.getAbsolutePath());
+            try {
+                // Copy manifest, resources.arsc and res directory to public zip
+                for (final ZipEntry zipEntry : Collections.list(privateZip.entries())) {
+                    final String zipEntryName = zipEntry.getName();
+                    if ("AndroidManifest.xml".equals(zipEntryName)
+                            || "resources.arsc".equals(zipEntryName)
+                            || zipEntryName.startsWith("res/")) {
+                        size += zipEntry.getSize();
+                        if (publicZipFile != null) {
+                            copyZipEntry(zipEntry, privateZip, publicZipOutStream);
+                        }
+                    }
+                }
+            } finally {
+                try { privateZip.close(); } catch (IOException e) {}
+            }
+
+            if (publicZipFile != null) {
+                publicZipOutStream.finish();
+                publicZipOutStream.flush();
+                FileUtils.sync(fstr);
+                publicZipOutStream.close();
+                FileUtils.setPermissions(publicZipFile.getAbsolutePath(), FileUtils.S_IRUSR
+                        | FileUtils.S_IWUSR | FileUtils.S_IRGRP | FileUtils.S_IROTH, -1, -1);
+            }
+        } finally {
+            IoUtils.closeQuietly(publicZipOutStream);
+        }
+
+        return size;
+!!!9900677.java!!!	copyZipEntry(inout zipEntry : ZipEntry, inout inZipFile : ZipFile, inout outZipStream : ZipOutputStream) : void
+        byte[] buffer = new byte[4096];
+        int num;
+
+        ZipEntry newEntry;
+        if (zipEntry.getMethod() == ZipEntry.STORED) {
+            // Preserve the STORED method of the input entry.
+            newEntry = new ZipEntry(zipEntry);
+        } else {
+            // Create a new entry so that the compressed len is recomputed.
+            newEntry = new ZipEntry(zipEntry.getName());
+        }
+        outZipStream.putNextEntry(newEntry);
+
+        final InputStream data = inZipFile.getInputStream(zipEntry);
+        try {
+            while ((num = data.read(buffer)) > 0) {
+                outZipStream.write(buffer, 0, num);
+            }
+            outZipStream.flush();
+        } finally {
+            IoUtils.closeQuietly(data);
+        }
+!!!9900805.java!!!	fixSdPermissions(in cid : String, in gid : int, in filename : String) : boolean
+        try {
+            int rc = getStorageManager().fixPermissionsSecureContainer(cid, gid, filename);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.i(TAG, "Failed to fixperms container " + cid);
+                return false;
+            }
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to fixperms container " + cid + " with exception " + e);
+        }
+        return false;
+!!!9901701.java!!!	getDefaultTestableInterface() : PackageHelper::TestableInterface
+        if (sDefaultTestableInterface == null) {
+            sDefaultTestableInterface = new TestableInterface() {
+                @Override
+                public StorageManager getStorageManager(Context context) {
+                    return context.getSystemService(StorageManager.class);
+                }
+
+                @Override
+                public boolean getForceAllowOnExternalSetting(Context context) {
+                    return Settings.Global.getInt(context.getContentResolver(),
+                            Settings.Global.FORCE_ALLOW_ON_EXTERNAL, 0) != 0;
+                }
+
+                @Override
+                public boolean getAllow3rdPartyOnInternalConfig(Context context) {
+                    return context.getResources().getBoolean(
+                            com.android.internal.R.bool.config_allow3rdPartyAppOnInternal);
+                }
+
+                @Override
+                public ApplicationInfo getExistingAppInfo(Context context, String packageName) {
+                    ApplicationInfo existingInfo = null;
+                    try {
+                        existingInfo = context.getPackageManager().getApplicationInfo(packageName,
+                                PackageManager.MATCH_ANY_USER);
+                    } catch (NameNotFoundException ignored) {
+                    }
+                    return existingInfo;
+                }
+
+                @Override
+                public File getDataDirectory() {
+                    return Environment.getDataDirectory();
+                }
+            };
+        }
+        return sDefaultTestableInterface;
+!!!9901829.java!!!	resolveInstallVolume(inout context : Context, in packageName : String, in installLocation : int, in sizeBytes : long, inout testInterface : PackageHelper::TestableInterface) : String
+        final SessionParams params = new SessionParams(SessionParams.MODE_INVALID);
+        params.appPackageName = packageName;
+        params.installLocation = installLocation;
+        params.sizeBytes = sizeBytes;
+        return resolveInstallVolume(context, params, testInterface);
+!!!9901957.java!!!	resolveInstallVolume(inout context : Context, inout params : PackageInstaller::SessionParams) : String
+        TestableInterface testableInterface = getDefaultTestableInterface();
+        return resolveInstallVolume(context, params.appPackageName, params.installLocation,
+                params.sizeBytes, testableInterface);
+!!!9902085.java!!!	resolveInstallVolume(inout context : Context, inout params : PackageInstaller::SessionParams, inout testInterface : PackageHelper::TestableInterface) : String
+        final boolean forceAllowOnExternal = testInterface.getForceAllowOnExternalSetting(context);
+        final boolean allow3rdPartyOnInternal =
+                testInterface.getAllow3rdPartyOnInternalConfig(context);
+        // TODO: handle existing apps installed in ASEC; currently assumes
+        // they'll end up back on internal storage
+        ApplicationInfo existingInfo = testInterface.getExistingAppInfo(context,
+                params.appPackageName);
+
+        final boolean fitsOnInternal = testInterface.fitsOnInternalStorage(context, params);
+        final StorageManager storageManager =
+                testInterface.getStorageManager(context);
+
+        // System apps always forced to internal storage
+        if (existingInfo != null && existingInfo.isSystemApp()) {
+            if (fitsOnInternal) {
+                return StorageManager.UUID_PRIVATE_INTERNAL;
+            } else {
+                throw new IOException("Not enough space on existing volume "
+                        + existingInfo.volumeUuid + " for system app " + params.appPackageName
+                        + " upgrade");
+            }
+        }
+
+        // Now deal with non-system apps.
+        final ArraySet<String> allCandidates = new ArraySet<>();
+        VolumeInfo bestCandidate = null;
+        long bestCandidateAvailBytes = Long.MIN_VALUE;
+        for (VolumeInfo vol : storageManager.getVolumes()) {
+            boolean isInternalStorage = ID_PRIVATE_INTERNAL.equals(vol.id);
+            if (vol.type == VolumeInfo.TYPE_PRIVATE && vol.isMountedWritable()
+                    && (!isInternalStorage || allow3rdPartyOnInternal)) {
+                final long availBytes = storageManager.getAllocatableBytes(new File(vol.path),
+                        translateAllocateFlags(params.installFlags));
+                if (availBytes >= params.sizeBytes) {
+                    allCandidates.add(vol.fsUuid);
+                }
+                if (availBytes >= bestCandidateAvailBytes) {
+                    bestCandidate = vol;
+                    bestCandidateAvailBytes = availBytes;
+                }
+            }
+        }
+
+        // If app expresses strong desire for internal storage, honor it
+        if (!forceAllowOnExternal
+                && params.installLocation == PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY) {
+            if (existingInfo != null && !Objects.equals(existingInfo.volumeUuid,
+                    StorageManager.UUID_PRIVATE_INTERNAL)) {
+                throw new IOException("Cannot automatically move " + params.appPackageName
+                        + " from " + existingInfo.volumeUuid + " to internal storage");
+            }
+
+            if (!allow3rdPartyOnInternal) {
+                throw new IOException("Not allowed to install non-system apps on internal storage");
+            }
+
+            if (fitsOnInternal) {
+                return StorageManager.UUID_PRIVATE_INTERNAL;
+            } else {
+                throw new IOException("Requested internal only, but not enough space");
+            }
+        }
+
+        // If app already exists somewhere, we must stay on that volume
+        if (existingInfo != null) {
+            if (Objects.equals(existingInfo.volumeUuid, StorageManager.UUID_PRIVATE_INTERNAL)
+                    && fitsOnInternal) {
+                return StorageManager.UUID_PRIVATE_INTERNAL;
+            } else if (allCandidates.contains(existingInfo.volumeUuid)) {
+                return existingInfo.volumeUuid;
+            } else {
+                throw new IOException("Not enough space on existing volume "
+                        + existingInfo.volumeUuid + " for " + params.appPackageName + " upgrade");
+            }
+        }
+
+        // We're left with new installations with either preferring external or auto, so just pick
+        // volume with most space
+        if (bestCandidate != null) {
+            return bestCandidate.fsUuid;
+        } else {
+            throw new IOException("No special requests, but no room on allowed volumes. "
+                + " allow3rdPartyOnInternal? " + allow3rdPartyOnInternal);
+        }
+!!!9902213.java!!!	fitsOnInternal(inout context : Context, inout params : PackageInstaller::SessionParams) : boolean
+        final StorageManager storage = context.getSystemService(StorageManager.class);
+        final File target = Environment.getDataDirectory();
+        return (params.sizeBytes <= storage.getAllocatableBytes(target,
+                translateAllocateFlags(params.installFlags)));
+!!!9902341.java!!!	fitsOnExternal(inout context : Context, inout params : PackageInstaller::SessionParams) : boolean
+        final StorageManager storage = context.getSystemService(StorageManager.class);
+        final StorageVolume primary = storage.getPrimaryVolume();
+        return (params.sizeBytes > 0) && !primary.isEmulated()
+                && Environment.MEDIA_MOUNTED.equals(primary.getState())
+                && params.sizeBytes <= storage.getStorageBytesUntilLow(primary.getPathFile());
+!!!9902469.java!!!	resolveInstallLocation(inout context : Context, in packageName : String, in installLocation : int, in sizeBytes : long, in installFlags : int) : int
+        final SessionParams params = new SessionParams(SessionParams.MODE_INVALID);
+        params.appPackageName = packageName;
+        params.installLocation = installLocation;
+        params.sizeBytes = sizeBytes;
+        params.installFlags = installFlags;
+        try {
+            return resolveInstallLocation(context, params);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+!!!9902597.java!!!	resolveInstallLocation(inout context : Context, inout params : PackageInstaller::SessionParams) : int
+        ApplicationInfo existingInfo = null;
+        try {
+            existingInfo = context.getPackageManager().getApplicationInfo(params.appPackageName,
+                    PackageManager.MATCH_ANY_USER);
+        } catch (NameNotFoundException ignored) {
+        }
+
+        final int prefer;
+        final boolean checkBoth;
+        boolean ephemeral = false;
+        if ((params.installFlags & PackageManager.INSTALL_INSTANT_APP) != 0) {
+            prefer = RECOMMEND_INSTALL_INTERNAL;
+            ephemeral = true;
+            checkBoth = false;
+        } else if ((params.installFlags & PackageManager.INSTALL_INTERNAL) != 0) {
+            prefer = RECOMMEND_INSTALL_INTERNAL;
+            checkBoth = false;
+        } else if ((params.installFlags & PackageManager.INSTALL_EXTERNAL) != 0) {
+            prefer = RECOMMEND_INSTALL_EXTERNAL;
+            checkBoth = false;
+        } else if (params.installLocation == PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY) {
+            prefer = RECOMMEND_INSTALL_INTERNAL;
+            checkBoth = false;
+        } else if (params.installLocation == PackageInfo.INSTALL_LOCATION_PREFER_EXTERNAL) {
+            prefer = RECOMMEND_INSTALL_EXTERNAL;
+            checkBoth = true;
+        } else if (params.installLocation == PackageInfo.INSTALL_LOCATION_AUTO) {
+            // When app is already installed, prefer same medium
+            if (existingInfo != null) {
+                // TODO: distinguish if this is external ASEC
+                if ((existingInfo.flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) {
+                    prefer = RECOMMEND_INSTALL_EXTERNAL;
+                } else {
+                    prefer = RECOMMEND_INSTALL_INTERNAL;
+                }
+            } else {
+                prefer = RECOMMEND_INSTALL_INTERNAL;
+            }
+            checkBoth = true;
+        } else {
+            prefer = RECOMMEND_INSTALL_INTERNAL;
+            checkBoth = false;
+        }
+
+        boolean fitsOnInternal = false;
+        if (checkBoth || prefer == RECOMMEND_INSTALL_INTERNAL) {
+            fitsOnInternal = fitsOnInternal(context, params);
+        }
+
+        boolean fitsOnExternal = false;
+        if (checkBoth || prefer == RECOMMEND_INSTALL_EXTERNAL) {
+            fitsOnExternal = fitsOnExternal(context, params);
+        }
+
+        if (prefer == RECOMMEND_INSTALL_INTERNAL) {
+            // The ephemeral case will either fit and return EPHEMERAL, or will not fit
+            // and will fall through to return INSUFFICIENT_STORAGE
+            if (fitsOnInternal) {
+                return (ephemeral)
+                        ? PackageHelper.RECOMMEND_INSTALL_EPHEMERAL
+                        : PackageHelper.RECOMMEND_INSTALL_INTERNAL;
+            }
+        } else if (prefer == RECOMMEND_INSTALL_EXTERNAL) {
+            if (fitsOnExternal) {
+                return PackageHelper.RECOMMEND_INSTALL_EXTERNAL;
+            }
+        }
+
+        if (checkBoth) {
+            if (fitsOnInternal) {
+                return PackageHelper.RECOMMEND_INSTALL_INTERNAL;
+            } else if (fitsOnExternal) {
+                return PackageHelper.RECOMMEND_INSTALL_EXTERNAL;
+            }
+        }
+
+        return PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE;
+!!!9902725.java!!!	calculateInstalledSize(inout pkg : PackageParser::PackageLite, inout isForwardLocked : boolean, in abiOverride : String) : long
+        NativeLibraryHelper.Handle handle = null;
+        try {
+            handle = NativeLibraryHelper.Handle.create(pkg);
+            return calculateInstalledSize(pkg, handle, isForwardLocked, abiOverride);
+        } finally {
+            IoUtils.closeQuietly(handle);
+        }
+!!!9902853.java!!!	calculateInstalledSize(inout pkg : PackageParser::PackageLite, inout handle : NativeLibraryHelper::Handle, inout isForwardLocked : boolean, in abiOverride : String) : long
+        long sizeBytes = 0;
+
+        // Include raw APKs, and possibly unpacked resources
+        for (String codePath : pkg.getAllCodePaths()) {
+            final File codeFile = new File(codePath);
+            sizeBytes += codeFile.length();
+
+            if (isForwardLocked) {
+                sizeBytes += PackageHelper.extractPublicFiles(codeFile, null);
+            }
+        }
+
+        // Include all relevant native code
+        sizeBytes += NativeLibraryHelper.sumNativeBinariesWithOverride(handle, abiOverride);
+
+        return sizeBytes;
+!!!9902981.java!!!	replaceEnd(in str : String, in before : String, in after : String) : String
+        if (!str.endsWith(before)) {
+            throw new IllegalArgumentException(
+                    "Expected " + str + " to end with " + before);
+        }
+        return str.substring(0, str.length() - before.length()) + after;
+!!!9903109.java!!!	translateAllocateFlags(in installFlags : int) : int
+        if ((installFlags & PackageManager.INSTALL_ALLOCATE_AGGRESSIVE) != 0) {
+            return StorageManager.FLAG_ALLOCATE_AGGRESSIVE;
+        } else {
+            return 0;
+        }

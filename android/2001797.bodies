@@ -1,0 +1,293 @@
+class Composer
+!!!14227845.cpp!!!	openGlobalTransactionImpl() : void
+    { // scope for the lock
+        Mutex::Autolock _l(mLock);
+        mTransactionNestCount += 1;
+    }
+!!!14227973.cpp!!!	closeGlobalTransactionImpl(in synchronous : bool) : void
+    sp<ISurfaceComposer> sm(ComposerService::getComposerService());
+
+    Vector<ComposerState> transaction;
+    Vector<DisplayState> displayTransaction;
+    uint32_t flags = 0;
+
+    { // scope for the lock
+        Mutex::Autolock _l(mLock);
+        mForceSynchronous |= synchronous;
+        if (!mTransactionNestCount) {
+            ALOGW("At least one call to closeGlobalTransaction() was not matched by a prior "
+                    "call to openGlobalTransaction().");
+        } else if (--mTransactionNestCount) {
+            return;
+        }
+
+        transaction = mComposerStates;
+        mComposerStates.clear();
+
+        displayTransaction = mDisplayStates;
+        mDisplayStates.clear();
+
+        if (mForceSynchronous) {
+            flags |= ISurfaceComposer::eSynchronous;
+        }
+        if (mAnimation) {
+            flags |= ISurfaceComposer::eAnimation;
+        }
+
+        mForceSynchronous = false;
+        mAnimation = false;
+    }
+
+   sm->setTransactionState(transaction, displayTransaction, flags);
+!!!14228101.cpp!!!	setAnimationTransactionImpl() : void
+    Mutex::Autolock _l(mLock);
+    mAnimation = true;
+!!!14228229.cpp!!!	enableVSyncInjectionsImpl(in enable : bool) : status_t
+    sp<ISurfaceComposer> sm(ComposerService::getComposerService());
+    return sm->enableVSyncInjections(enable);
+!!!14228357.cpp!!!	injectVSyncImpl(in when : nsecs_t) : status_t
+    sp<ISurfaceComposer> sm(ComposerService::getComposerService());
+    return sm->injectVSync(when);
+!!!14228485.cpp!!!	getLayerStateLocked(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>) : layer_state_t
+
+    ComposerState s;
+    s.client = client->mClient;
+    s.state.surface = id;
+
+    ssize_t index = mComposerStates.indexOf(s);
+    if (index < 0) {
+        // we don't have it, add an initialized layer_state to our list
+        index = mComposerStates.add(s);
+    }
+
+    ComposerState* const out = mComposerStates.editArray();
+    return &(out[index].state);
+!!!14228613.cpp!!!	getDisplayStateLocked(in token : sp<IBinder>) : DisplayState
+    DisplayState s;
+    s.token = token;
+    ssize_t index = mDisplayStates.indexOf(s);
+    if (index < 0) {
+        // we don't have it, add an initialized layer_state to our list
+        s.what = 0;
+        index = mDisplayStates.add(s);
+    }
+    return mDisplayStates.editItemAt(static_cast<size_t>(index));
+!!!14228741.cpp!!!	createDisplay(in displayName : String8, in secure : bool) : sp<IBinder>
+    return ComposerService::getComposerService()->createDisplay(displayName,
+            secure);
+!!!14228869.cpp!!!	destroyDisplay(in display : sp<IBinder>) : void
+    return ComposerService::getComposerService()->destroyDisplay(display);
+!!!14228997.cpp!!!	getBuiltInDisplay(in id : int32_t) : sp<IBinder>
+    return ComposerService::getComposerService()->getBuiltInDisplay(id);
+!!!14229125.cpp!!!	setPosition(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in x : float, in y : float) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::ePositionChanged;
+    s->x = x;
+    s->y = y;
+    return NO_ERROR;
+!!!14229253.cpp!!!	setSize(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in w : uint32_t, in h : uint32_t) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eSizeChanged;
+    s->w = w;
+    s->h = h;
+
+    // Resizing a surface makes the transaction synchronous.
+    mForceSynchronous = true;
+
+    return NO_ERROR;
+!!!14229381.cpp!!!	setLayer(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in z : int32_t) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eLayerChanged;
+    s->z = z;
+    return NO_ERROR;
+!!!14229509.cpp!!!	setRelativeLayer(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in relativeTo : sp<IBinder>, in z : int32_t) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eRelativeLayerChanged;
+    s->relativeLayerHandle = relativeTo;
+    s->z = z;
+    return NO_ERROR;
+!!!14229637.cpp!!!	setFlags(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in flags : uint32_t, in mask : uint32_t) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    if ((mask & layer_state_t::eLayerOpaque) ||
+            (mask & layer_state_t::eLayerHidden) ||
+            (mask & layer_state_t::eLayerSecure)) {
+        s->what |= layer_state_t::eFlagsChanged;
+    }
+    s->flags &= ~mask;
+    s->flags |= (flags & mask);
+    s->mask |= mask;
+    return NO_ERROR;
+!!!14229765.cpp!!!	setTransparentRegionHint(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in transparentRegion : Region) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eTransparentRegionChanged;
+    s->transparentRegion = transparentRegion;
+    return NO_ERROR;
+!!!14229893.cpp!!!	setAlpha(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in alpha : float) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eAlphaChanged;
+    s->alpha = alpha;
+    return NO_ERROR;
+!!!14230021.cpp!!!	setMatrix(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in dsdx : float, in dtdx : float, in dtdy : float, in dsdy : float) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eMatrixChanged;
+    layer_state_t::matrix22_t matrix;
+    matrix.dsdx = dsdx;
+    matrix.dtdx = dtdx;
+    matrix.dsdy = dsdy;
+    matrix.dtdy = dtdy;
+    s->matrix = matrix;
+    return NO_ERROR;
+!!!14230277.cpp!!!	setCrop(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in crop : Rect) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eCropChanged;
+    s->crop = crop;
+    return NO_ERROR;
+!!!14230405.cpp!!!	setFinalCrop(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in crop : Rect) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eFinalCropChanged;
+    s->finalCrop = crop;
+    return NO_ERROR;
+!!!14230533.cpp!!!	setLayerStack(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in layerStack : uint32_t) : status_t
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s)
+        return BAD_INDEX;
+    s->what |= layer_state_t::eLayerStackChanged;
+    s->layerStack = layerStack;
+    return NO_ERROR;
+!!!14230661.cpp!!!	deferTransactionUntil(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in handle : sp<IBinder>, in frameNumber : uint64_t) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDeferTransaction;
+    s->barrierHandle = handle;
+    s->frameNumber = frameNumber;
+    return NO_ERROR;
+!!!14230789.cpp!!!	deferTransactionUntil(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in barrierSurface : sp<Surface>, in frameNumber : uint64_t) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDeferTransaction;
+    s->barrierGbp = barrierSurface->getIGraphicBufferProducer();
+    s->frameNumber = frameNumber;
+    return NO_ERROR;
+!!!14230917.cpp!!!	reparentChildren(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in newParentHandle : sp<IBinder>) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eReparentChildren;
+    s->reparentHandle = newParentHandle;
+    return NO_ERROR;
+!!!14231045.cpp!!!	detachChildren(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDetachChildren;
+    return NO_ERROR;
+!!!14231173.cpp!!!	setOverrideScalingMode(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>, in overrideScalingMode : int32_t) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+
+    switch (overrideScalingMode) {
+        case NATIVE_WINDOW_SCALING_MODE_FREEZE:
+        case NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW:
+        case NATIVE_WINDOW_SCALING_MODE_SCALE_CROP:
+        case NATIVE_WINDOW_SCALING_MODE_NO_SCALE_CROP:
+        case -1:
+            break;
+        default:
+            ALOGE("unknown scaling mode: %d",
+                    overrideScalingMode);
+            return BAD_VALUE;
+    }
+
+    s->what |= layer_state_t::eOverrideScalingModeChanged;
+    s->overrideScalingMode = overrideScalingMode;
+    return NO_ERROR;
+!!!14231301.cpp!!!	setGeometryAppliesWithResize(in client : sp<SurfaceComposerClient>, in id : sp<IBinder>) : status_t
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eGeometryAppliesWithResize;
+    return NO_ERROR;
+!!!14231429.cpp!!!	setDisplaySurface(in token : sp<IBinder>, in bufferProducer : sp<IGraphicBufferProducer>) : status_t
+    if (bufferProducer.get() != nullptr) {
+        // Make sure that composition can never be stalled by a virtual display
+        // consumer that isn't processing buffers fast enough.
+        status_t err = bufferProducer->setAsyncMode(true);
+        if (err != NO_ERROR) {
+            ALOGE("Composer::setDisplaySurface Failed to enable async mode on the "
+                    "BufferQueue. This BufferQueue cannot be used for virtual "
+                    "display. (%d)", err);
+            return err;
+        }
+    }
+    Mutex::Autolock _l(mLock);
+    DisplayState& s(getDisplayStateLocked(token));
+    s.surface = bufferProducer;
+    s.what |= DisplayState::eSurfaceChanged;
+    return NO_ERROR;
+!!!14231557.cpp!!!	setDisplayLayerStack(in token : sp<IBinder>, in layerStack : uint32_t) : void
+    Mutex::Autolock _l(mLock);
+    DisplayState& s(getDisplayStateLocked(token));
+    s.layerStack = layerStack;
+    s.what |= DisplayState::eLayerStackChanged;
+!!!14231685.cpp!!!	setDisplayProjection(in token : sp<IBinder>, in orientation : uint32_t, in layerStackRect : Rect, in displayRect : Rect) : void
+    Mutex::Autolock _l(mLock);
+    DisplayState& s(getDisplayStateLocked(token));
+    s.orientation = orientation;
+    s.viewport = layerStackRect;
+    s.frame = displayRect;
+    s.what |= DisplayState::eDisplayProjectionChanged;
+    mForceSynchronous = true; // TODO: do we actually still need this?
+!!!14231813.cpp!!!	setDisplaySize(in token : sp<IBinder>, in width : uint32_t, in height : uint32_t) : void
+    Mutex::Autolock _l(mLock);
+    DisplayState& s(getDisplayStateLocked(token));
+    s.width = width;
+    s.height = height;
+    s.what |= DisplayState::eDisplaySizeChanged;

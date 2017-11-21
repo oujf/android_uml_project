@@ -1,0 +1,102 @@
+class MediaBuffer
+!!!1271173.cpp!!!	MediaBuffer(in size : size_t)
+    if (size < kSharedMemThreshold
+            || std::atomic_load_explicit(&mUseSharedMemory, std::memory_order_seq_cst) == 0) {
+        mData = malloc(size);
+    } else {
+        ALOGV("creating memoryDealer");
+        sp<MemoryDealer> memoryDealer =
+                new MemoryDealer(size + sizeof(SharedControl), "MediaBuffer");
+        mMemory = memoryDealer->allocate(size + sizeof(SharedControl));
+        if (mMemory == NULL) {
+            ALOGW("Failed to allocate shared memory, trying regular allocation!");
+            mData = malloc(size);
+            if (mData == NULL) {
+                ALOGE("Out of memory");
+            }
+        } else {
+            getSharedControl()->clear();
+            mData = (uint8_t *)mMemory->pointer() + sizeof(SharedControl);
+            ALOGV("Allocated shared mem buffer of size %zu @ %p", size, mData);
+        }
+    }
+!!!1271685.cpp!!!	release() : void
+    if (mObserver == NULL) {
+        // Legacy contract for MediaBuffer without a MediaBufferGroup.
+        CHECK_EQ(mRefCount, 0);
+        delete this;
+        return;
+    }
+
+    int prevCount = __sync_fetch_and_sub(&mRefCount, 1);
+    if (prevCount == 1) {
+        if (mObserver == NULL) {
+            delete this;
+            return;
+        }
+
+        mObserver->signalBufferReturned(this);
+    }
+    CHECK(prevCount > 0);
+!!!1271813.cpp!!!	add_ref() : void
+    (void) __sync_fetch_and_add(&mRefCount, 1);
+!!!1271941.cpp!!!	data() : void
+    CHECK(mGraphicBuffer == NULL);
+    return mData;
+!!!1272069.cpp!!!	size() : size_t
+    CHECK(mGraphicBuffer == NULL);
+    return mSize;
+!!!1272197.cpp!!!	range_offset() : size_t
+    return mRangeOffset;
+!!!1272325.cpp!!!	range_length() : size_t
+    return mRangeLength;
+!!!1272453.cpp!!!	set_range(in offset : size_t, in length : size_t) : void
+    if ((mGraphicBuffer == NULL) && (offset + length > mSize)) {
+        ALOGE("offset = %zu, length = %zu, mSize = %zu", offset, length, mSize);
+    }
+    CHECK((mGraphicBuffer != NULL) || (offset + length <= mSize));
+
+    mRangeOffset = offset;
+    mRangeLength = length;
+!!!1272581.cpp!!!	graphicBuffer() : sp<GraphicBuffer>
+    return mGraphicBuffer;
+!!!1272709.cpp!!!	meta_data() : sp<MetaData>
+    return mMetaData;
+!!!1272837.cpp!!!	reset() : void
+    mMetaData->clear();
+    set_range(0, mSize);
+!!!1272965.cpp!!!	setObserver(inout observer : MediaBufferObserver) : void
+    CHECK(observer == NULL || mObserver == NULL);
+    mObserver = observer;
+!!!1273093.cpp!!!	clone() : MediaBuffer
+    CHECK(mGraphicBuffer == NULL);
+
+    MediaBuffer *buffer = new MediaBuffer(mData, mSize);
+    buffer->set_range(mRangeOffset, mRangeLength);
+    buffer->mMetaData = new MetaData(*mMetaData.get());
+
+    add_ref();
+    buffer->mOriginal = this;
+
+    return buffer;
+!!!1274245.cpp!!!	~MediaBuffer()
+    CHECK(mObserver == NULL);
+
+    if (mOwnsData && mData != NULL && mMemory == NULL) {
+        free(mData);
+        mData = NULL;
+    }
+
+    if (mOriginal != NULL) {
+        mOriginal->release();
+        mOriginal = NULL;
+    }
+
+   if (mMemory.get() != nullptr) {
+       getSharedControl()->setDeadObject();
+   }
+!!!1274373.cpp!!!	claim() : void
+    CHECK(mObserver != NULL);
+    CHECK_EQ(mRefCount, 1);
+
+    mRefCount = 0;

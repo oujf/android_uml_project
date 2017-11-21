@@ -1,0 +1,116 @@
+class Builder
+!!!7275525.java!!!	Builder()
+            mConfig.user = VpnService.this.getClass().getName();
+!!!7275653.java!!!	setSession(in session : String) : VpnService::Builder
+            mConfig.session = session;
+            return this;
+!!!7275781.java!!!	setConfigureIntent(inout intent : PendingIntent) : VpnService::Builder
+            mConfig.configureIntent = intent;
+            return this;
+!!!7275909.java!!!	setMtu(in mtu : int) : VpnService::Builder
+            if (mtu <= 0) {
+                throw new IllegalArgumentException("Bad mtu");
+            }
+            mConfig.mtu = mtu;
+            return this;
+!!!7276037.java!!!	addAddress(inout address : InetAddress, in prefixLength : int) : VpnService::Builder
+            check(address, prefixLength);
+
+            if (address.isAnyLocalAddress()) {
+                throw new IllegalArgumentException("Bad address");
+            }
+            mAddresses.add(new LinkAddress(address, prefixLength));
+            mConfig.updateAllowedFamilies(address);
+            return this;
+!!!7276165.java!!!	addAddress(in address : String, in prefixLength : int) : VpnService::Builder
+            return addAddress(InetAddress.parseNumericAddress(address), prefixLength);
+!!!7276293.java!!!	addRoute(inout address : InetAddress, in prefixLength : int) : VpnService::Builder
+            check(address, prefixLength);
+
+            int offset = prefixLength / 8;
+            byte[] bytes = address.getAddress();
+            if (offset < bytes.length) {
+                for (bytes[offset] <<= prefixLength % 8; offset < bytes.length; ++offset) {
+                    if (bytes[offset] != 0) {
+                        throw new IllegalArgumentException("Bad address");
+                    }
+                }
+            }
+            mRoutes.add(new RouteInfo(new IpPrefix(address, prefixLength), null));
+            mConfig.updateAllowedFamilies(address);
+            return this;
+!!!7276421.java!!!	addRoute(in address : String, in prefixLength : int) : VpnService::Builder
+            return addRoute(InetAddress.parseNumericAddress(address), prefixLength);
+!!!7276549.java!!!	addDnsServer(inout address : InetAddress) : VpnService::Builder
+            if (address.isLoopbackAddress() || address.isAnyLocalAddress()) {
+                throw new IllegalArgumentException("Bad address");
+            }
+            if (mConfig.dnsServers == null) {
+                mConfig.dnsServers = new ArrayList<String>();
+            }
+            mConfig.dnsServers.add(address.getHostAddress());
+            return this;
+!!!7276677.java!!!	addDnsServer(in address : String) : VpnService::Builder
+            return addDnsServer(InetAddress.parseNumericAddress(address));
+!!!7276805.java!!!	addSearchDomain(in domain : String) : VpnService::Builder
+            if (mConfig.searchDomains == null) {
+                mConfig.searchDomains = new ArrayList<String>();
+            }
+            mConfig.searchDomains.add(domain);
+            return this;
+!!!7276933.java!!!	allowFamily(in family : int) : VpnService::Builder
+            if (family == AF_INET) {
+                mConfig.allowIPv4 = true;
+            } else if (family == AF_INET6) {
+                mConfig.allowIPv6 = true;
+            } else {
+                throw new IllegalArgumentException(family + " is neither " + AF_INET + " nor " +
+                        AF_INET6);
+            }
+            return this;
+!!!7277061.java!!!	verifyApp(in packageName : String) : void
+            IPackageManager pm = IPackageManager.Stub.asInterface(
+                    ServiceManager.getService("package"));
+            try {
+                pm.getApplicationInfo(packageName, 0, UserHandle.getCallingUserId());
+            } catch (RemoteException e) {
+                throw new IllegalStateException(e);
+            }
+!!!7277189.java!!!	addAllowedApplication(in packageName : String) : VpnService::Builder
+            if (mConfig.disallowedApplications != null) {
+                throw new UnsupportedOperationException("addDisallowedApplication already called");
+            }
+            verifyApp(packageName);
+            if (mConfig.allowedApplications == null) {
+                mConfig.allowedApplications = new ArrayList<String>();
+            }
+            mConfig.allowedApplications.add(packageName);
+            return this;
+!!!7277317.java!!!	addDisallowedApplication(in packageName : String) : VpnService::Builder
+            if (mConfig.allowedApplications != null) {
+                throw new UnsupportedOperationException("addAllowedApplication already called");
+            }
+            verifyApp(packageName);
+            if (mConfig.disallowedApplications == null) {
+                mConfig.disallowedApplications = new ArrayList<String>();
+            }
+            mConfig.disallowedApplications.add(packageName);
+            return this;
+!!!7277445.java!!!	allowBypass() : VpnService::Builder
+            mConfig.allowBypass = true;
+            return this;
+!!!7277573.java!!!	setBlocking(inout blocking : boolean) : VpnService::Builder
+            mConfig.blocking = blocking;
+            return this;
+!!!7277701.java!!!	setUnderlyingNetworks(inout networks : Network [[]]) : VpnService::Builder
+            mConfig.underlyingNetworks = networks != null ? networks.clone() : null;
+            return this;
+!!!7277829.java!!!	establish() : ParcelFileDescriptor
+            mConfig.addresses = mAddresses;
+            mConfig.routes = mRoutes;
+
+            try {
+                return getService().establishVpn(mConfig);
+            } catch (RemoteException e) {
+                throw new IllegalStateException(e);
+            }

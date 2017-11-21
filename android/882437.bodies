@@ -1,0 +1,144 @@
+class BluetoothControllerImpl
+!!!4110853.java!!!	BluetoothControllerImpl(inout context : Context, inout bgLooper : Looper)
+        mLocalBluetoothManager = Dependency.get(LocalBluetoothManager.class);
+        mBgHandler = new Handler(bgLooper);
+        if (mLocalBluetoothManager != null) {
+            mLocalBluetoothManager.getEventManager().setReceiverHandler(mBgHandler);
+            mLocalBluetoothManager.getEventManager().registerCallback(this);
+            onBluetoothStateChanged(
+                    mLocalBluetoothManager.getBluetoothAdapter().getBluetoothState());
+        }
+        mUserManager = (UserManager) context.getSystemService(Context.USER_SERVICE);
+        mCurrentUser = ActivityManager.getCurrentUser();
+!!!4110981.java!!!	canConfigBluetooth() : boolean
+        return !mUserManager.hasUserRestriction(UserManager.DISALLOW_CONFIG_BLUETOOTH,
+                UserHandle.of(mCurrentUser));
+!!!4111109.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.println("BluetoothController state:");
+        pw.print("  mLocalBluetoothManager="); pw.println(mLocalBluetoothManager);
+        if (mLocalBluetoothManager == null) {
+            return;
+        }
+        pw.print("  mEnabled="); pw.println(mEnabled);
+        pw.print("  mConnectionState="); pw.println(stateToString(mConnectionState));
+        pw.print("  mLastDevice="); pw.println(mLastDevice);
+        pw.print("  mCallbacks.size="); pw.println(mHandler.mCallbacks.size());
+        pw.println("  Bluetooth Devices:");
+        for (CachedBluetoothDevice device :
+                mLocalBluetoothManager.getCachedDeviceManager().getCachedDevicesCopy()) {
+            pw.println("    " + getDeviceString(device));
+        }
+!!!4111237.java!!!	stateToString(in state : int) : String
+        switch (state) {
+            case BluetoothAdapter.STATE_CONNECTED:
+                return "CONNECTED";
+            case BluetoothAdapter.STATE_CONNECTING:
+                return "CONNECTING";
+            case BluetoothAdapter.STATE_DISCONNECTED:
+                return "DISCONNECTED";
+            case BluetoothAdapter.STATE_DISCONNECTING:
+                return "DISCONNECTING";
+        }
+        return "UNKNOWN(" + state + ")";
+!!!4111365.java!!!	getDeviceString(inout device : CachedBluetoothDevice) : String
+        return device.getName() + " " + device.getBondState() + " " + device.isConnected();
+!!!4111493.java!!!	getBondState(inout device : CachedBluetoothDevice) : int
+        return getCachedState(device).mBondState;
+!!!4111621.java!!!	getMaxConnectionState(inout device : CachedBluetoothDevice) : int
+        return getCachedState(device).mMaxConnectionState;
+!!!4111749.java!!!	addCallback(inout cb : BluetoothController::Callback) : void
+        mHandler.obtainMessage(H.MSG_ADD_CALLBACK, cb).sendToTarget();
+        mHandler.sendEmptyMessage(H.MSG_STATE_CHANGED);
+!!!4111877.java!!!	removeCallback(inout cb : BluetoothController::Callback) : void
+        mHandler.obtainMessage(H.MSG_REMOVE_CALLBACK, cb).sendToTarget();
+!!!4112005.java!!!	isBluetoothEnabled() : boolean
+        return mEnabled;
+!!!4112133.java!!!	getBluetoothState() : int
+        return mState;
+!!!4112261.java!!!	isBluetoothConnected() : boolean
+        return mConnectionState == BluetoothAdapter.STATE_CONNECTED;
+!!!4112389.java!!!	isBluetoothConnecting() : boolean
+        return mConnectionState == BluetoothAdapter.STATE_CONNECTING;
+!!!4112517.java!!!	setBluetoothEnabled(inout enabled : boolean) : void
+        if (mLocalBluetoothManager != null) {
+            mLocalBluetoothManager.getBluetoothAdapter().setBluetoothEnabled(enabled);
+        }
+!!!4112645.java!!!	isBluetoothSupported() : boolean
+        return mLocalBluetoothManager != null;
+!!!4112773.java!!!	connect(in device : CachedBluetoothDevice) : void
+        if (mLocalBluetoothManager == null || device == null) return;
+        device.connect(true);
+!!!4112901.java!!!	disconnect(inout device : CachedBluetoothDevice) : void
+        if (mLocalBluetoothManager == null || device == null) return;
+        device.disconnect();
+!!!4113029.java!!!	getLastDeviceName() : String
+        return mLastDevice != null ? mLastDevice.getName() : null;
+!!!4113157.java!!!	getDevices() : Collection<CachedBluetoothDevice>
+        return mLocalBluetoothManager != null
+                ? mLocalBluetoothManager.getCachedDeviceManager().getCachedDevicesCopy()
+                : null;
+!!!4113285.java!!!	updateConnected() : void
+        // Make sure our connection state is up to date.
+        int state = mLocalBluetoothManager.getBluetoothAdapter().getConnectionState();
+        if (mLastDevice != null && !mLastDevice.isConnected()) {
+            // Clear out last device if no longer connected.
+            mLastDevice = null;
+        }
+        // If any of the devices are in a higher state than the adapter, move the adapter into
+        // that state.
+        for (CachedBluetoothDevice device : getDevices()) {
+            int maxDeviceState = device.getMaxConnectionState();
+            if (maxDeviceState > state) {
+                state = maxDeviceState;
+            }
+            if (mLastDevice == null && device.isConnected()) {
+                // Set as last connected device only if we don't have one.
+                mLastDevice = device;
+            }
+        }
+
+        if (mLastDevice == null && state == BluetoothAdapter.STATE_CONNECTED) {
+            // If somehow we think we are connected, but have no connected devices, we aren't
+            // connected.
+            state = BluetoothAdapter.STATE_DISCONNECTED;
+        }
+        if (state != mConnectionState) {
+            mConnectionState = state;
+            mHandler.sendEmptyMessage(H.MSG_STATE_CHANGED);
+        }
+!!!4113413.java!!!	onBluetoothStateChanged(in bluetoothState : int) : void
+        mEnabled = bluetoothState == BluetoothAdapter.STATE_ON
+                || bluetoothState == BluetoothAdapter.STATE_TURNING_ON;
+        mState = bluetoothState;
+        mHandler.sendEmptyMessage(H.MSG_STATE_CHANGED);
+!!!4113541.java!!!	onScanningStateChanged(inout started : boolean) : void
+        // Don't care.
+!!!4113669.java!!!	onDeviceAdded(inout cachedDevice : CachedBluetoothDevice) : void
+        cachedDevice.registerCallback(this);
+        updateConnected();
+        mHandler.sendEmptyMessage(H.MSG_PAIRED_DEVICES_CHANGED);
+!!!4113797.java!!!	onDeviceDeleted(inout cachedDevice : CachedBluetoothDevice) : void
+        mCachedState.remove(cachedDevice);
+        updateConnected();
+        mHandler.sendEmptyMessage(H.MSG_PAIRED_DEVICES_CHANGED);
+!!!4113925.java!!!	onDeviceBondStateChanged(inout cachedDevice : CachedBluetoothDevice, in bondState : int) : void
+        mCachedState.remove(cachedDevice);
+        updateConnected();
+        mHandler.sendEmptyMessage(H.MSG_PAIRED_DEVICES_CHANGED);
+!!!4114053.java!!!	onDeviceAttributesChanged() : void
+        updateConnected();
+        mHandler.sendEmptyMessage(H.MSG_PAIRED_DEVICES_CHANGED);
+!!!4114181.java!!!	onConnectionStateChanged(inout cachedDevice : CachedBluetoothDevice, in state : int) : void
+        mCachedState.remove(cachedDevice);
+        mLastDevice = cachedDevice;
+        updateConnected();
+        mHandler.sendEmptyMessage(H.MSG_STATE_CHANGED);
+!!!4114309.java!!!	getCachedState(inout device : CachedBluetoothDevice) : BluetoothControllerImpl::ActuallyCachedState
+        ActuallyCachedState state = mCachedState.get(device);
+        if (state == null) {
+            state = new ActuallyCachedState(device, mHandler);
+            mBgHandler.post(state);
+            mCachedState.put(device, state);
+            return state;
+        }
+        return state;

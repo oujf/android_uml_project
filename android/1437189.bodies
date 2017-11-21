@@ -1,0 +1,156 @@
+class PopupDecorView
+!!!9029381.java!!!	PopupDecorView(inout context : Context)
+            super(context);
+!!!9029509.java!!!	dispatchKeyEvent(inout event : KeyEvent) : boolean
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                if (getKeyDispatcherState() == null) {
+                    return super.dispatchKeyEvent(event);
+                }
+
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    final KeyEvent.DispatcherState state = getKeyDispatcherState();
+                    if (state != null) {
+                        state.startTracking(event, this);
+                    }
+                    return true;
+                } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                    final KeyEvent.DispatcherState state = getKeyDispatcherState();
+                    if (state != null && state.isTracking(event) && !event.isCanceled()) {
+                        dismiss();
+                        return true;
+                    }
+                }
+                return super.dispatchKeyEvent(event);
+            } else {
+                return super.dispatchKeyEvent(event);
+            }
+!!!9029637.java!!!	dispatchTouchEvent(inout ev : MotionEvent) : boolean
+            if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this, ev)) {
+                return true;
+            }
+            return super.dispatchTouchEvent(ev);
+!!!9029765.java!!!	onTouchEvent(inout event : MotionEvent) : boolean
+            final int x = (int) event.getX();
+            final int y = (int) event.getY();
+
+            if ((event.getAction() == MotionEvent.ACTION_DOWN)
+                    && ((x < 0) || (x >= getWidth()) || (y < 0) || (y >= getHeight()))) {
+                dismiss();
+                return true;
+            } else if (event.getAction() == MotionEvent.ACTION_OUTSIDE) {
+                dismiss();
+                return true;
+            } else {
+                return super.onTouchEvent(event);
+            }
+!!!9029893.java!!!	requestEnterTransition(inout transition : Transition) : void
+            final ViewTreeObserver observer = getViewTreeObserver();
+            if (observer != null && transition != null) {
+                final Transition enterTransition = transition.clone();
+
+                // Postpone the enter transition after the first layout pass.
+                observer.addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        final ViewTreeObserver observer = getViewTreeObserver();
+                        if (observer != null) {
+                            observer.removeOnGlobalLayoutListener(this);
+                        }
+
+                        final Rect epicenter = getTransitionEpicenter();
+                        enterTransition.setEpicenterCallback(new EpicenterCallback() {
+                            @Override
+                            public Rect onGetEpicenter(Transition transition) {
+                                return epicenter;
+                            }
+                        });
+                        startEnterTransition(enterTransition);
+                    }
+                });
+            }
+!!!9030021.java!!!	startEnterTransition(inout enterTransition : Transition) : void
+            final int count = getChildCount();
+            for (int i = 0; i < count; i++) {
+                final View child = getChildAt(i);
+                enterTransition.addTarget(child);
+                child.setVisibility(View.INVISIBLE);
+            }
+
+            TransitionManager.beginDelayedTransition(this, enterTransition);
+
+            for (int i = 0; i < count; i++) {
+                final View child = getChildAt(i);
+                child.setVisibility(View.VISIBLE);
+            }
+!!!9030149.java!!!	startExitTransition(inout transition : Transition, in anchorRoot : View, in epicenter : Rect, in listener : Transition::TransitionListener) : void
+            if (transition == null) {
+                return;
+            }
+
+            // The anchor view's window may go away while we're executing our
+            // transition, in which case we need to end the transition
+            // immediately and execute the listener to remove the popup.
+            if (anchorRoot != null) {
+                anchorRoot.addOnAttachStateChangeListener(mOnAnchorRootDetachedListener);
+            }
+
+            // The cleanup runnable MUST be called even if the transition is
+            // canceled before it starts (and thus can't call onTransitionEnd).
+            mCleanupAfterExit = () -> {
+                listener.onTransitionEnd(transition);
+
+                if (anchorRoot != null) {
+                    anchorRoot.removeOnAttachStateChangeListener(mOnAnchorRootDetachedListener);
+                }
+
+                // The listener was called. Our job here is done.
+                mCleanupAfterExit = null;
+            };
+
+            final Transition exitTransition = transition.clone();
+            exitTransition.addListener(new TransitionListenerAdapter() {
+                @Override
+                public void onTransitionEnd(Transition t) {
+                    t.removeListener(this);
+
+                    // This null check shouldn't be necessary, but it's easier
+                    // to check here than it is to test every possible case.
+                    if (mCleanupAfterExit != null) {
+                        mCleanupAfterExit.run();
+                    }
+                }
+            });
+            exitTransition.setEpicenterCallback(new EpicenterCallback() {
+                @Override
+                public Rect onGetEpicenter(Transition transition) {
+                    return epicenter;
+                }
+            });
+
+            final int count = getChildCount();
+            for (int i = 0; i < count; i++) {
+                final View child = getChildAt(i);
+                exitTransition.addTarget(child);
+            }
+
+            TransitionManager.beginDelayedTransition(this, exitTransition);
+
+            for (int i = 0; i < count; i++) {
+                final View child = getChildAt(i);
+                child.setVisibility(View.INVISIBLE);
+            }
+!!!9030277.java!!!	cancelTransitions() : void
+            TransitionManager.endTransitions(this);
+
+            // If the cleanup runnable is still around, that means the
+            // transition never started. We should run it now to clean up.
+            if (mCleanupAfterExit != null) {
+                mCleanupAfterExit.run();
+            }
+!!!9030405.java!!!	requestKeyboardShortcuts(inout list : List<KeyboardShortcutGroup>, in deviceId : int) : void
+            if (mParentRootView != null) {
+                View parentRoot = mParentRootView.get();
+                if (parentRoot != null) {
+                    parentRoot.requestKeyboardShortcuts(list, deviceId);
+                }
+            }

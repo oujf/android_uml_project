@@ -1,0 +1,74 @@
+class AAudioEndpointManager
+!!!529541.cpp!!!	openEndpoint(inout audioService : AAudioService, in deviceId : int32_t, in direction : aaudio_direction_t) : AAudioServiceEndpoint
+    AAudioServiceEndpoint *endpoint = nullptr;
+    std::lock_guard<std::mutex> lock(mLock);
+
+    // Try to find an existing endpoint.
+    switch (direction) {
+        case AAUDIO_DIRECTION_INPUT:
+            endpoint = mInputs[deviceId];
+            break;
+        case AAUDIO_DIRECTION_OUTPUT:
+            endpoint = mOutputs[deviceId];
+            break;
+        default:
+            assert(false); // There are only two possible directions.
+            break;
+    }
+    ALOGD("AAudioEndpointManager::openEndpoint(), found %p for device = %d, dir = %d",
+          endpoint, deviceId, (int)direction);
+
+    // If we can't find an existing one then open a new one.
+    if (endpoint == nullptr) {
+        if (direction == AAUDIO_DIRECTION_INPUT) {
+            AAudioServiceEndpointCapture *capture = new AAudioServiceEndpointCapture(audioService);
+            if (capture->open(deviceId) != AAUDIO_OK) {
+                ALOGE("AAudioEndpointManager::openEndpoint(), open failed");
+                delete capture;
+            } else {
+                mInputs[deviceId] = capture;
+                endpoint = capture;
+            }
+        } else if (direction == AAUDIO_DIRECTION_OUTPUT) {
+            AAudioServiceEndpointPlay *player = new AAudioServiceEndpointPlay(audioService);
+            if (player->open(deviceId) != AAUDIO_OK) {
+                ALOGE("AAudioEndpointManager::openEndpoint(), open failed");
+                delete player;
+            } else {
+                mOutputs[deviceId] = player;
+                endpoint = player;
+            }
+        }
+
+    }
+
+    if (endpoint != nullptr) {
+        // Increment the reference count under this lock.
+        endpoint->setReferenceCount(endpoint->getReferenceCount() + 1);
+    }
+    return endpoint;
+!!!529669.cpp!!!	closeEndpoint(inout serviceEndpoint : AAudioServiceEndpoint) : void
+    std::lock_guard<std::mutex> lock(mLock);
+    if (serviceEndpoint == nullptr) {
+        return;
+    }
+
+    // Decrement the reference count under this lock.
+    int32_t newRefCount = serviceEndpoint->getReferenceCount() - 1;
+    serviceEndpoint->setReferenceCount(newRefCount);
+    if (newRefCount <= 0) {
+        aaudio_direction_t direction = serviceEndpoint->getDirection();
+        int32_t deviceId = serviceEndpoint->getDeviceId();
+
+        switch (direction) {
+            case AAUDIO_DIRECTION_INPUT:
+                mInputs.erase(deviceId);
+                break;
+            case AAUDIO_DIRECTION_OUTPUT:
+                mOutputs.erase(deviceId);
+                break;
+        }
+
+        serviceEndpoint->close();
+        delete serviceEndpoint;
+    }

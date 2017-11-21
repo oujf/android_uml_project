@@ -1,0 +1,100 @@
+class ConsumerFrameEventHistory
+!!!14278405.cpp!!!	onDisconnect() : void
+    mCurrentConnectId++;
+    mProducerWantsEvents = false;
+!!!14278533.cpp!!!	initializeCompositorTiming(in compositorTiming : CompositorTiming) : void
+    mCompositorTiming = compositorTiming;
+!!!14278661.cpp!!!	addQueue(in newEntry : NewFrameEventsEntry) : void
+    // Overwrite all fields of the frame with default values unless set here.
+    FrameEvents newTimestamps;
+    newTimestamps.connectId = mCurrentConnectId;
+    newTimestamps.frameNumber = newEntry.frameNumber;
+    newTimestamps.postedTime = newEntry.postedTime;
+    newTimestamps.requestedPresentTime = newEntry.requestedPresentTime;
+    newTimestamps.acquireFence = newEntry.acquireFence;
+    newTimestamps.valid = true;
+    mFrames[mQueueOffset] = newTimestamps;
+
+    // Note: We avoid sending the acquire fence back to the caller since
+    // they have the original one already, so there is no need to set the
+    // acquire dirty bit.
+    mFramesDirty[mQueueOffset].setDirty<FrameEvent::POSTED>();
+
+    mQueueOffset = (mQueueOffset + 1) % mFrames.size();
+!!!14278789.cpp!!!	addLatch(in frameNumber : uint64_t, in latchTime : nsecs_t) : void
+    FrameEvents* frame = getFrame(frameNumber, &mCompositionOffset);
+    if (frame == nullptr) {
+        ALOGE_IF(mProducerWantsEvents, "addLatch: Did not find frame.");
+        return;
+    }
+    frame->latchTime = latchTime;
+    mFramesDirty[mCompositionOffset].setDirty<FrameEvent::LATCH>();
+!!!14278917.cpp!!!	addPreComposition(in frameNumber : uint64_t, in refreshStartTime : nsecs_t) : void
+    FrameEvents* frame = getFrame(frameNumber, &mCompositionOffset);
+    if (frame == nullptr) {
+        ALOGE_IF(mProducerWantsEvents,
+                "addPreComposition: Did not find frame.");
+        return;
+    }
+    frame->lastRefreshStartTime = refreshStartTime;
+    mFramesDirty[mCompositionOffset].setDirty<FrameEvent::LAST_REFRESH_START>();
+    if (!FrameEvents::isValidTimestamp(frame->firstRefreshStartTime)) {
+        frame->firstRefreshStartTime = refreshStartTime;
+        mFramesDirty[mCompositionOffset].setDirty<FrameEvent::FIRST_REFRESH_START>();
+    }
+!!!14279045.cpp!!!	addPostComposition(in frameNumber : uint64_t, in gpuCompositionDone : std::shared_ptr<FenceTime>, in displayPresent : std::shared_ptr<FenceTime>, in compositorTiming : CompositorTiming) : void
+    mCompositorTiming = compositorTiming;
+
+    FrameEvents* frame = getFrame(frameNumber, &mCompositionOffset);
+    if (frame == nullptr) {
+        ALOGE_IF(mProducerWantsEvents,
+                "addPostComposition: Did not find frame.");
+        return;
+    }
+    // Only get GPU and present info for the first composite.
+    if (!frame->addPostCompositeCalled) {
+        frame->addPostCompositeCalled = true;
+        frame->gpuCompositionDoneFence = gpuCompositionDone;
+        mFramesDirty[mCompositionOffset].setDirty<FrameEvent::GPU_COMPOSITION_DONE>();
+        if (!frame->displayPresentFence->isValid()) {
+            frame->displayPresentFence = displayPresent;
+            mFramesDirty[mCompositionOffset].setDirty<FrameEvent::DISPLAY_PRESENT>();
+        }
+    }
+!!!14279173.cpp!!!	addRelease(in frameNumber : uint64_t, in dequeueReadyTime : nsecs_t, inout release : std::shared_ptr<FenceTime>) : void
+    FrameEvents* frame = getFrame(frameNumber, &mReleaseOffset);
+    if (frame == nullptr) {
+        ALOGE_IF(mProducerWantsEvents, "addRelease: Did not find frame.");
+        return;
+    }
+    frame->addReleaseCalled = true;
+    frame->dequeueReadyTime = dequeueReadyTime;
+    frame->releaseFence = std::move(release);
+    mFramesDirty[mReleaseOffset].setDirty<FrameEvent::RELEASE>();
+!!!14279301.cpp!!!	getAndResetDelta(inout delta : FrameEventHistoryDelta) : void
+    mProducerWantsEvents = true;
+    delta->mCompositorTiming = mCompositorTiming;
+
+    // Write these in order of frame number so that it is easy to
+    // add them to a FenceTimeline in the proper order producer side.
+    delta->mDeltas.reserve(mFramesDirty.size());
+    auto earliestFrame = std::min_element(
+            mFrames.begin(), mFrames.end(), &FrameNumberLessThan);
+    for (auto frame = earliestFrame; frame != mFrames.end(); ++frame) {
+        getFrameDelta(delta, frame);
+    }
+    for (auto frame = mFrames.begin(); frame != earliestFrame; ++frame) {
+        getFrameDelta(delta, frame);
+    }
+!!!14279429.cpp!!!	getFrameDelta(inout delta : FrameEventHistoryDelta, in frame : std::array<FrameEvents, MAX_FRAME_HISTORY>::iterator) : void
+    mProducerWantsEvents = true;
+    size_t i = static_cast<size_t>(std::distance(mFrames.begin(), frame));
+    if (mFramesDirty[i].anyDirty()) {
+        // Make sure only to send back deltas for the current connection
+        // since the producer won't have the correct state to apply a delta
+        // from a previous connection.
+        if (mFrames[i].connectId == mCurrentConnectId) {
+            delta->mDeltas.emplace_back(i, *frame, mFramesDirty[i]);
+        }
+        mFramesDirty[i].reset();
+    }

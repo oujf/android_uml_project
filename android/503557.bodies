@@ -1,0 +1,88 @@
+class ATSParser::CasManager
+!!!1450885.cpp!!!	setMediaCas(in cas : sp<ICas>) : status_t
+    if (cas == NULL) {
+        ALOGE("setMediaCas: received NULL object");
+        return BAD_VALUE;
+    }
+    if (mICas != NULL) {
+        ALOGW("setMediaCas: already set");
+        return ALREADY_EXISTS;
+    }
+    for (size_t index = 0; index < mProgramCasMap.size(); index++) {
+        status_t err;
+        if ((err = mProgramCasMap.editValueAt(
+                index)->setMediaCas(cas, mCAPidToSessionIdMap)) != OK) {
+            return err;
+        }
+    }
+    mICas = cas;
+    return OK;
+!!!1451013.cpp!!!	addProgram(in programNumber : uint, in descriptor : CADescriptor) : bool
+    if (!setSystemId(descriptor.mSystemID)) {
+        return false;
+    }
+
+    ssize_t index = mProgramCasMap.indexOfKey(programNumber);
+    if (index < 0) {
+        ALOGV("addProgram: programNumber=%d, CA_system_ID=0x%x",
+                programNumber, descriptor.mSystemID);
+        mProgramCasMap.add(programNumber,
+                new ProgramCasManager(programNumber, descriptor));
+        mCAPidSet.insert(descriptor.mPID);
+    }
+    return true;
+!!!1451141.cpp!!!	addStream(in programNumber : uint, in elementaryPID : uint, in descriptor : CADescriptor) : bool
+    if (!setSystemId(descriptor.mSystemID)) {
+        return false;
+    }
+
+    ssize_t index = mProgramCasMap.indexOfKey(programNumber);
+    sp<ProgramCasManager> programCasManager;
+    if (index < 0) {
+        ALOGV("addProgram (no CADescriptor): programNumber=%d", programNumber);
+        programCasManager = new ProgramCasManager(programNumber);
+        mProgramCasMap.add(programNumber, programCasManager);
+    } else {
+        programCasManager = mProgramCasMap.editValueAt(index);
+    }
+    if (programCasManager->addStream(elementaryPID, descriptor)) {
+        mCAPidSet.insert(descriptor.mPID);
+    }
+    return true;
+!!!1451269.cpp!!!	getCasInfo(in programNumber : uint, in elementaryPID : uint, inout systemId : int32_t, inout descrambler : sp<IDescrambler>, inout sessionId : std::vector<uint8_t>) : bool
+    ssize_t index = mProgramCasMap.indexOfKey(programNumber);
+    if (index < 0) {
+        return false;
+    }
+    *systemId = mSystemId;
+    return mProgramCasMap[index]->getCasSession(
+            elementaryPID, descrambler, sessionId);
+!!!1451397.cpp!!!	isCAPid(in pid : uint) : bool
+    return mCAPidSet.find(pid) != mCAPidSet.end();
+!!!1451525.cpp!!!	parsePID(inout br : ABitReader, in pid : uint) : bool
+    ssize_t index = mCAPidToSessionIdMap.indexOfKey(pid);
+    if (index < 0) {
+        return false;
+    }
+    MediaCas::ParcelableCasData ecm(br->data(), br->numBitsLeft() / 8);
+    Status status = mICas->processEcm(mCAPidToSessionIdMap[index], ecm);
+    if (!status.isOk()) {
+        ALOGE("Failed to process ECM: exception=%d, error=%d",
+                status.exceptionCode(), status.serviceSpecificErrorCode());
+    }
+    return true; // handled
+!!!1451653.cpp!!!	setSystemId(in CA_system_ID : int32_t) : bool
+    if (mSystemId == -1) {
+        // Verify the CA_system_ID is within range on the first program
+        if (CA_system_ID < 0 || CA_system_ID > 0xffff) {
+            ALOGE("Invalid CA_system_id: %d", CA_system_ID);
+            return false;
+        }
+        mSystemId = CA_system_ID;
+    } else if (mSystemId != CA_system_ID) {
+        // All sessions need to be under the same CA system
+        ALOGE("Multiple CA systems not allowed: %d vs %d",
+                mSystemId, CA_system_ID);
+        return false;
+    }
+    return true;

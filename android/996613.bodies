@@ -1,0 +1,2433 @@
+class FragmentManagerImpl
+!!!5229317.java!!!	throwException(inout ex : RuntimeException) : void
+        Log.e(TAG, ex.getMessage());
+        LogWriter logw = new LogWriter(Log.ERROR, TAG);
+        PrintWriter pw = new FastPrintWriter(logw, false, 1024);
+        if (mHost != null) {
+            Log.e(TAG, "Activity state:");
+            try {
+                mHost.onDump("  ", null, pw, new String[] { });
+            } catch (Exception e) {
+                pw.flush();
+                Log.e(TAG, "Failed dumping state", e);
+            }
+        } else {
+            Log.e(TAG, "Fragment manager state:");
+            try {
+                dump("  ", null, pw, new String[] { });
+            } catch (Exception e) {
+                pw.flush();
+                Log.e(TAG, "Failed dumping state", e);
+            }
+        }
+        pw.flush();
+        throw ex;
+!!!5229445.java!!!	modifiesAlpha(inout anim : Animator) : boolean
+        if (anim == null) {
+            return false;
+        }
+        if (anim instanceof ValueAnimator) {
+            ValueAnimator valueAnim = (ValueAnimator) anim;
+            PropertyValuesHolder[] values = valueAnim.getValues();
+            for (int i = 0; i < values.length; i++) {
+                if (("alpha").equals(values[i].getPropertyName())) {
+                    return true;
+                }
+            }
+        } else if (anim instanceof AnimatorSet) {
+            List<Animator> animList = ((AnimatorSet) anim).getChildAnimations();
+            for (int i = 0; i < animList.size(); i++) {
+                if (modifiesAlpha(animList.get(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!5229573.java!!!	shouldRunOnHWLayer(inout v : View, inout anim : Animator) : boolean
+        if (v == null || anim == null) {
+            return false;
+        }
+        return v.getLayerType() == View.LAYER_TYPE_NONE
+                && v.hasOverlappingRendering()
+                && modifiesAlpha(anim);
+!!!5229701.java!!!	setHWLayerAnimListenerIfAlpha(in v : View, inout anim : Animator) : void
+        if (v == null || anim == null) {
+            return;
+        }
+        if (shouldRunOnHWLayer(v, anim)) {
+            anim.addListener(new AnimateOnHWLayerIfNeededListener(v));
+        }
+!!!5229829.java!!!	beginTransaction() : FragmentTransaction
+        return new BackStackRecord(this);
+!!!5229957.java!!!	executePendingTransactions() : boolean
+        boolean updates = execPendingActions();
+        forcePostponedTransactions();
+        return updates;
+!!!5230085.java!!!	popBackStack() : void
+        enqueueAction(new PopBackStackState(null, -1, 0), false);
+!!!5230213.java!!!	popBackStackImmediate() : boolean
+        checkStateLoss();
+        return popBackStackImmediate(null, -1, 0);
+!!!5230341.java!!!	popBackStack(in name : String, in flags : int) : void
+        enqueueAction(new PopBackStackState(name, -1, flags), false);
+!!!5230469.java!!!	popBackStackImmediate(in name : String, in flags : int) : boolean
+        checkStateLoss();
+        return popBackStackImmediate(name, -1, flags);
+!!!5230597.java!!!	popBackStack(in id : int, in flags : int) : void
+        if (id < 0) {
+            throw new IllegalArgumentException("Bad id: " + id);
+        }
+        enqueueAction(new PopBackStackState(null, id, flags), false);
+!!!5230725.java!!!	popBackStackImmediate(in id : int, in flags : int) : boolean
+        checkStateLoss();
+        if (id < 0) {
+            throw new IllegalArgumentException("Bad id: " + id);
+        }
+        return popBackStackImmediate(null, id, flags);
+!!!5230853.java!!!	popBackStackImmediate(in name : String, in id : int, in flags : int) : boolean
+        execPendingActions();
+        ensureExecReady(true);
+
+        if (mPrimaryNav != null // We have a primary nav fragment
+                && id < 0 // No valid id (since they're local)
+                && name == null) { // no name to pop to (since they're local)
+            final FragmentManager childManager = mPrimaryNav.mChildFragmentManager;
+            if (childManager != null && childManager.popBackStackImmediate()) {
+                // We did something, just not to this specific FragmentManager. Return true.
+                return true;
+            }
+        }
+
+        boolean executePop = popBackStackState(mTmpRecords, mTmpIsPop, name, id, flags);
+        if (executePop) {
+            mExecutingActions = true;
+            try {
+                removeRedundantOperationsAndExecute(mTmpRecords, mTmpIsPop);
+            } finally {
+                cleanupExec();
+            }
+        }
+
+        doPendingDeferredStart();
+        burpActive();
+        return executePop;
+!!!5230981.java!!!	getBackStackEntryCount() : int
+        return mBackStack != null ? mBackStack.size() : 0;
+!!!5231109.java!!!	getBackStackEntryAt(in index : int) : FragmentManager::BackStackEntry
+        return mBackStack.get(index);
+!!!5231237.java!!!	addOnBackStackChangedListener(inout listener : FragmentManager::OnBackStackChangedListener) : void
+        if (mBackStackChangeListeners == null) {
+            mBackStackChangeListeners = new ArrayList<OnBackStackChangedListener>();
+        }
+        mBackStackChangeListeners.add(listener);
+!!!5231365.java!!!	removeOnBackStackChangedListener(inout listener : FragmentManager::OnBackStackChangedListener) : void
+        if (mBackStackChangeListeners != null) {
+            mBackStackChangeListeners.remove(listener);
+        }
+!!!5231493.java!!!	putFragment(inout bundle : Bundle, in key : String, inout fragment : Fragment) : void
+        if (fragment.mIndex < 0) {
+            throwException(new IllegalStateException("Fragment " + fragment
+                    + " is not currently in the FragmentManager"));
+        }
+        bundle.putInt(key, fragment.mIndex);
+!!!5231621.java!!!	getFragment(inout bundle : Bundle, in key : String) : Fragment
+        int index = bundle.getInt(key, -1);
+        if (index == -1) {
+            return null;
+        }
+        Fragment f = mActive.get(index);
+        if (f == null) {
+            throwException(new IllegalStateException("Fragment no longer exists for key "
+                    + key + ": index " + index));
+        }
+        return f;
+!!!5231749.java!!!	getFragments() : Fragment
+        if (mAdded == null) {
+            return Collections.EMPTY_LIST;
+        }
+        synchronized (mAdded) {
+            return (List<Fragment>) mAdded.clone();
+        }
+!!!5231877.java!!!	saveFragmentInstanceState(inout fragment : Fragment) : Fragment::SavedState
+        if (fragment.mIndex < 0) {
+            throwException(new IllegalStateException("Fragment " + fragment
+                    + " is not currently in the FragmentManager"));
+        }
+        if (fragment.mState > Fragment.INITIALIZING) {
+            Bundle result = saveFragmentBasicState(fragment);
+            return result != null ? new Fragment.SavedState(result) : null;
+        }
+        return null;
+!!!5232005.java!!!	isDestroyed() : boolean
+        return mDestroyed;
+!!!5232133.java!!!	toString() : String
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("FragmentManager{");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(" in ");
+        if (mParent != null) {
+            DebugUtils.buildShortClassTag(mParent, sb);
+        } else {
+            DebugUtils.buildShortClassTag(mHost, sb);
+        }
+        sb.append("}}");
+        return sb.toString();
+!!!5232261.java!!!	dump(in prefix : String, inout fd : FileDescriptor, inout writer : PrintWriter, inout args : String [[]]) : void
+        String innerPrefix = prefix + "    ";
+
+        int N;
+        if (mActive != null) {
+            N = mActive.size();
+            if (N > 0) {
+                writer.print(prefix); writer.print("Active Fragments in ");
+                        writer.print(Integer.toHexString(System.identityHashCode(this)));
+                        writer.println(":");
+                for (int i=0; i<N; i++) {
+                    Fragment f = mActive.valueAt(i);
+                    writer.print(prefix); writer.print("  #"); writer.print(i);
+                            writer.print(": "); writer.println(f);
+                    if (f != null) {
+                        f.dump(innerPrefix, fd, writer, args);
+                    }
+                }
+            }
+        }
+
+        if (mAdded != null) {
+            N = mAdded.size();
+            if (N > 0) {
+                writer.print(prefix); writer.println("Added Fragments:");
+                for (int i=0; i<N; i++) {
+                    Fragment f = mAdded.get(i);
+                    writer.print(prefix); writer.print("  #"); writer.print(i);
+                            writer.print(": "); writer.println(f.toString());
+                }
+            }
+        }
+
+        if (mCreatedMenus != null) {
+            N = mCreatedMenus.size();
+            if (N > 0) {
+                writer.print(prefix); writer.println("Fragments Created Menus:");
+                for (int i=0; i<N; i++) {
+                    Fragment f = mCreatedMenus.get(i);
+                    writer.print(prefix); writer.print("  #"); writer.print(i);
+                            writer.print(": "); writer.println(f.toString());
+                }
+            }
+        }
+
+        if (mBackStack != null) {
+            N = mBackStack.size();
+            if (N > 0) {
+                writer.print(prefix); writer.println("Back Stack:");
+                for (int i=0; i<N; i++) {
+                    BackStackRecord bs = mBackStack.get(i);
+                    writer.print(prefix); writer.print("  #"); writer.print(i);
+                            writer.print(": "); writer.println(bs.toString());
+                    bs.dump(innerPrefix, fd, writer, args);
+                }
+            }
+        }
+
+        synchronized (this) {
+            if (mBackStackIndices != null) {
+                N = mBackStackIndices.size();
+                if (N > 0) {
+                    writer.print(prefix); writer.println("Back Stack Indices:");
+                    for (int i=0; i<N; i++) {
+                        BackStackRecord bs = mBackStackIndices.get(i);
+                        writer.print(prefix); writer.print("  #"); writer.print(i);
+                                writer.print(": "); writer.println(bs);
+                    }
+                }
+            }
+
+            if (mAvailBackStackIndices != null && mAvailBackStackIndices.size() > 0) {
+                writer.print(prefix); writer.print("mAvailBackStackIndices: ");
+                        writer.println(Arrays.toString(mAvailBackStackIndices.toArray()));
+            }
+        }
+
+        if (mPendingActions != null) {
+            N = mPendingActions.size();
+            if (N > 0) {
+                writer.print(prefix); writer.println("Pending Actions:");
+                for (int i=0; i<N; i++) {
+                    OpGenerator r = mPendingActions.get(i);
+                    writer.print(prefix); writer.print("  #"); writer.print(i);
+                            writer.print(": "); writer.println(r);
+                }
+            }
+        }
+
+        writer.print(prefix); writer.println("FragmentManager misc state:");
+        writer.print(prefix); writer.print("  mHost="); writer.println(mHost);
+        writer.print(prefix); writer.print("  mContainer="); writer.println(mContainer);
+        if (mParent != null) {
+            writer.print(prefix); writer.print("  mParent="); writer.println(mParent);
+        }
+        writer.print(prefix); writer.print("  mCurState="); writer.print(mCurState);
+                writer.print(" mStateSaved="); writer.print(mStateSaved);
+                writer.print(" mDestroyed="); writer.println(mDestroyed);
+        if (mNeedMenuInvalidate) {
+            writer.print(prefix); writer.print("  mNeedMenuInvalidate=");
+                    writer.println(mNeedMenuInvalidate);
+        }
+        if (mNoTransactionsBecause != null) {
+            writer.print(prefix); writer.print("  mNoTransactionsBecause=");
+                    writer.println(mNoTransactionsBecause);
+        }
+!!!5232389.java!!!	loadAnimator(inout fragment : Fragment, in transit : int, inout enter : boolean, in transitionStyle : int) : Animator
+        Animator animObj = fragment.onCreateAnimator(transit, enter, fragment.getNextAnim());
+        if (animObj != null) {
+            return animObj;
+        }
+        
+        if (fragment.getNextAnim() != 0) {
+            Animator anim = AnimatorInflater.loadAnimator(mHost.getContext(),
+                    fragment.getNextAnim());
+            if (anim != null) {
+                return anim;
+            }
+        }
+        
+        if (transit == 0) {
+            return null;
+        }
+        
+        int styleIndex = transitToStyleIndex(transit, enter);
+        if (styleIndex < 0) {
+            return null;
+        }
+        
+        if (transitionStyle == 0 && mHost.onHasWindowAnimations()) {
+            transitionStyle = mHost.onGetWindowAnimations();
+        }
+        if (transitionStyle == 0) {
+            return null;
+        }
+        
+        TypedArray attrs = mHost.getContext().obtainStyledAttributes(transitionStyle,
+                com.android.internal.R.styleable.FragmentAnimation);
+        int anim = attrs.getResourceId(styleIndex, 0);
+        attrs.recycle();
+        
+        if (anim == 0) {
+            return null;
+        }
+        
+        return AnimatorInflater.loadAnimator(mHost.getContext(), anim);
+!!!5232517.java!!!	performPendingDeferredStart(inout f : Fragment) : void
+        if (f.mDeferStart) {
+            if (mExecutingActions) {
+                // Wait until we're done executing our pending transactions
+                mHavePendingDeferredStart = true;
+                return;
+            }
+            f.mDeferStart = false;
+            moveToState(f, mCurState, 0, 0, false);
+        }
+!!!5232645.java!!!	isStateAtLeast(in state : int) : boolean
+        return mCurState >= state;
+!!!5232773.java!!!	moveToState(inout f : Fragment, in newState : int, in transit : int, in transitionStyle : int, inout keepActive : boolean) : void
+        if (DEBUG && false) Log.v(TAG, "moveToState: " + f
+            + " oldState=" + f.mState + " newState=" + newState
+            + " mRemoving=" + f.mRemoving + " Callers=" + Debug.getCallers(5));
+
+        // Fragments that are not currently added will sit in the onCreate() state.
+        if ((!f.mAdded || f.mDetached) && newState > Fragment.CREATED) {
+            newState = Fragment.CREATED;
+        }
+        if (f.mRemoving && newState > f.mState) {
+            if (f.mState == Fragment.INITIALIZING && f.isInBackStack()) {
+                // Allow the fragment to be created so that it can be saved later.
+                newState = Fragment.CREATED;
+            } else {
+                // While removing a fragment, we can't change it to a higher state.
+                newState = f.mState;
+            }
+        }
+        // Defer start if requested; don't allow it to move to STARTED or higher
+        // if it's not already started.
+        if (f.mDeferStart && f.mState < Fragment.STARTED && newState > Fragment.STOPPED) {
+            newState = Fragment.STOPPED;
+        }
+        if (f.mState <= newState) {
+            // For fragments that are created from a layout, when restoring from
+            // state we don't want to allow them to be created until they are
+            // being reloaded from the layout.
+            if (f.mFromLayout && !f.mInLayout) {
+                return;
+            }
+            if (f.getAnimatingAway() != null) {
+                // The fragment is currently being animated...  but!  Now we
+                // want to move our state back up.  Give up on waiting for the
+                // animation, move to whatever the final state should be once
+                // the animation is done, and then we can proceed from there.
+                f.setAnimatingAway(null);
+                moveToState(f, f.getStateAfterAnimating(), 0, 0, true);
+            }
+            switch (f.mState) {
+                case Fragment.INITIALIZING:
+                    if (newState > Fragment.INITIALIZING) {
+                        if (DEBUG) Log.v(TAG, "moveto CREATED: " + f);
+                        if (f.mSavedFragmentState != null) {
+                            f.mSavedViewState = f.mSavedFragmentState.getSparseParcelableArray(
+                                    FragmentManagerImpl.VIEW_STATE_TAG);
+                            f.mTarget = getFragment(f.mSavedFragmentState,
+                                    FragmentManagerImpl.TARGET_STATE_TAG);
+                            if (f.mTarget != null) {
+                                f.mTargetRequestCode = f.mSavedFragmentState.getInt(
+                                        FragmentManagerImpl.TARGET_REQUEST_CODE_STATE_TAG, 0);
+                            }
+                            f.mUserVisibleHint = f.mSavedFragmentState.getBoolean(
+                                    FragmentManagerImpl.USER_VISIBLE_HINT_TAG, true);
+                            if (!f.mUserVisibleHint) {
+                                f.mDeferStart = true;
+                                if (newState > Fragment.STOPPED) {
+                                    newState = Fragment.STOPPED;
+                                }
+                            }
+                        }
+
+                        f.mHost = mHost;
+                        f.mParentFragment = mParent;
+                        f.mFragmentManager = mParent != null
+                                ? mParent.mChildFragmentManager : mHost.getFragmentManagerImpl();
+
+                        // If we have a target fragment, push it along to at least CREATED
+                        // so that this one can rely on it as an initialized dependency.
+                        if (f.mTarget != null) {
+                            if (mActive.get(f.mTarget.mIndex) != f.mTarget) {
+                                throw new IllegalStateException("Fragment " + f
+                                        + " declared target fragment " + f.mTarget
+                                        + " that does not belong to this FragmentManager!");
+                            }
+                            if (f.mTarget.mState < Fragment.CREATED) {
+                                moveToState(f.mTarget, Fragment.CREATED, 0, 0, true);
+                            }
+                        }
+
+                        dispatchOnFragmentPreAttached(f, mHost.getContext(), false);
+                        f.mCalled = false;
+                        f.onAttach(mHost.getContext());
+                        if (!f.mCalled) {
+                            throw new SuperNotCalledException("Fragment " + f
+                                    + " did not call through to super.onAttach()");
+                        }
+                        if (f.mParentFragment == null) {
+                            mHost.onAttachFragment(f);
+                        } else {
+                            f.mParentFragment.onAttachFragment(f);
+                        }
+                        dispatchOnFragmentAttached(f, mHost.getContext(), false);
+
+                        if (!f.mRetaining) {
+                            dispatchOnFragmentPreCreated(f, f.mSavedFragmentState, false);
+                            f.performCreate(f.mSavedFragmentState);
+                            dispatchOnFragmentCreated(f, f.mSavedFragmentState, false);
+                        } else {
+                            f.restoreChildFragmentState(f.mSavedFragmentState, true);
+                            f.mState = Fragment.CREATED;
+                        }
+                        f.mRetaining = false;
+                    }
+                    // fall through
+                case Fragment.CREATED:
+                    // This is outside the if statement below on purpose; we want this to run
+                    // even if we do a moveToState from CREATED => *, CREATED => CREATED, and
+                    // * => CREATED as part of the case fallthrough above.
+                    ensureInflatedFragmentView(f);
+
+                    if (newState > Fragment.CREATED) {
+                        if (DEBUG) Log.v(TAG, "moveto ACTIVITY_CREATED: " + f);
+                        if (!f.mFromLayout) {
+                            ViewGroup container = null;
+                            if (f.mContainerId != 0) {
+                                if (f.mContainerId == View.NO_ID) {
+                                    throwException(new IllegalArgumentException(
+                                            "Cannot create fragment "
+                                                    + f
+                                                    + " for a container view with no id"));
+                                }
+                                container = mContainer.onFindViewById(f.mContainerId);
+                                if (container == null && !f.mRestored) {
+                                    String resName;
+                                    try {
+                                        resName = f.getResources().getResourceName(f.mContainerId);
+                                    } catch (NotFoundException e) {
+                                        resName = "unknown";
+                                    }
+                                    throwException(new IllegalArgumentException(
+                                            "No view found for id 0x"
+                                            + Integer.toHexString(f.mContainerId) + " ("
+                                            + resName
+                                            + ") for fragment " + f));
+                                }
+                            }
+                            f.mContainer = container;
+                            f.mView = f.performCreateView(f.performGetLayoutInflater(
+                                    f.mSavedFragmentState), container, f.mSavedFragmentState);
+                            if (f.mView != null) {
+                                f.mView.setSaveFromParentEnabled(false);
+                                if (container != null) {
+                                    container.addView(f.mView);
+                                }
+                                if (f.mHidden) {
+                                    f.mView.setVisibility(View.GONE);
+                                }
+                                f.onViewCreated(f.mView, f.mSavedFragmentState);
+                                dispatchOnFragmentViewCreated(f, f.mView, f.mSavedFragmentState,
+                                        false);
+                                // Only animate the view if it is visible. This is done after
+                                // dispatchOnFragmentViewCreated in case visibility is changed
+                                f.mIsNewlyAdded = (f.mView.getVisibility() == View.VISIBLE)
+                                        && f.mContainer != null;
+                            }
+                        }
+
+                        f.performActivityCreated(f.mSavedFragmentState);
+                        dispatchOnFragmentActivityCreated(f, f.mSavedFragmentState, false);
+                        if (f.mView != null) {
+                            f.restoreViewState(f.mSavedFragmentState);
+                        }
+                        f.mSavedFragmentState = null;
+                    }
+                    // fall through
+                case Fragment.ACTIVITY_CREATED:
+                    if (newState > Fragment.ACTIVITY_CREATED) {
+                        f.mState = Fragment.STOPPED;
+                    }
+                    // fall through
+                case Fragment.STOPPED:
+                    if (newState > Fragment.STOPPED) {
+                        if (DEBUG) Log.v(TAG, "moveto STARTED: " + f);
+                        f.performStart();
+                        dispatchOnFragmentStarted(f, false);
+                    }
+                    // fall through
+                case Fragment.STARTED:
+                    if (newState > Fragment.STARTED) {
+                        if (DEBUG) Log.v(TAG, "moveto RESUMED: " + f);
+                        f.performResume();
+                        dispatchOnFragmentResumed(f, false);
+                        // Get rid of this in case we saved it and never needed it.
+                        f.mSavedFragmentState = null;
+                        f.mSavedViewState = null;
+                    }
+            }
+        } else if (f.mState > newState) {
+            switch (f.mState) {
+                case Fragment.RESUMED:
+                    if (newState < Fragment.RESUMED) {
+                        if (DEBUG) Log.v(TAG, "movefrom RESUMED: " + f);
+                        f.performPause();
+                        dispatchOnFragmentPaused(f, false);
+                    }
+                    // fall through
+                case Fragment.STARTED:
+                    if (newState < Fragment.STARTED) {
+                        if (DEBUG) Log.v(TAG, "movefrom STARTED: " + f);
+                        f.performStop();
+                        dispatchOnFragmentStopped(f, false);
+                    }
+                    // fall through
+                case Fragment.STOPPED:
+                case Fragment.ACTIVITY_CREATED:
+                    if (newState < Fragment.ACTIVITY_CREATED) {
+                        if (DEBUG) Log.v(TAG, "movefrom ACTIVITY_CREATED: " + f);
+                        if (f.mView != null) {
+                            // Need to save the current view state if not
+                            // done already.
+                            if (mHost.onShouldSaveFragmentState(f) && f.mSavedViewState == null) {
+                                saveFragmentViewState(f);
+                            }
+                        }
+                        f.performDestroyView();
+                        dispatchOnFragmentViewDestroyed(f, false);
+                        if (f.mView != null && f.mContainer != null) {
+                            if (getTargetSdk() >= Build.VERSION_CODES.O) {
+                                // Stop any current animations:
+                                f.mView.clearAnimation();
+                                f.mContainer.endViewTransition(f.mView);
+                            }
+                            Animator anim = null;
+                            if (mCurState > Fragment.INITIALIZING && !mDestroyed
+                                    && f.mView.getVisibility() == View.VISIBLE
+                                    && f.mView.getTransitionAlpha() > 0) {
+                                anim = loadAnimator(f, transit, false,
+                                        transitionStyle);
+                            }
+                            f.mView.setTransitionAlpha(1f);
+                            if (anim != null) {
+                                final ViewGroup container = f.mContainer;
+                                final View view = f.mView;
+                                final Fragment fragment = f;
+                                container.startViewTransition(view);
+                                f.setAnimatingAway(anim);
+                                f.setStateAfterAnimating(newState);
+                                anim.addListener(new AnimatorListenerAdapter() {
+                                    @Override
+                                    public void onAnimationEnd(Animator anim) {
+                                        container.endViewTransition(view);
+                                        if (fragment.getAnimatingAway() != null) {
+                                            fragment.setAnimatingAway(null);
+                                            moveToState(fragment, fragment.getStateAfterAnimating(),
+                                                    0, 0, false);
+                                        }
+                                    }
+                                });
+                                anim.setTarget(f.mView);
+                                setHWLayerAnimListenerIfAlpha(f.mView, anim);
+                                anim.start();
+
+                            }
+                            f.mContainer.removeView(f.mView);
+                        }
+                        f.mContainer = null;
+                        f.mView = null;
+                        f.mInLayout = false;
+                    }
+                    // fall through
+                case Fragment.CREATED:
+                    if (newState < Fragment.CREATED) {
+                        if (mDestroyed) {
+                            if (f.getAnimatingAway() != null) {
+                                // The fragment's containing activity is
+                                // being destroyed, but this fragment is
+                                // currently animating away.  Stop the
+                                // animation right now -- it is not needed,
+                                // and we can't wait any more on destroying
+                                // the fragment.
+                                Animator anim = f.getAnimatingAway();
+                                f.setAnimatingAway(null);
+                                anim.cancel();
+                            }
+                        }
+                        if (f.getAnimatingAway() != null) {
+                            // We are waiting for the fragment's view to finish
+                            // animating away.  Just make a note of the state
+                            // the fragment now should move to once the animation
+                            // is done.
+                            f.setStateAfterAnimating(newState);
+                            newState = Fragment.CREATED;
+                        } else {
+                            if (DEBUG) Log.v(TAG, "movefrom CREATED: " + f);
+                            if (!f.mRetaining) {
+                                f.performDestroy();
+                                dispatchOnFragmentDestroyed(f, false);
+                            } else {
+                                f.mState = Fragment.INITIALIZING;
+                            }
+
+                            f.performDetach();
+                            dispatchOnFragmentDetached(f, false);
+                            if (!keepActive) {
+                                if (!f.mRetaining) {
+                                    makeInactive(f);
+                                } else {
+                                    f.mHost = null;
+                                    f.mParentFragment = null;
+                                    f.mFragmentManager = null;
+                                }
+                            }
+                        }
+                    }
+            }
+        }
+        
+        if (f.mState != newState) {
+            Log.w(TAG, "moveToState: Fragment state for " + f + " not updated inline; "
+                    + "expected state " + newState + " found " + f.mState);
+            f.mState = newState;
+        }
+!!!5232901.java!!!	moveToState(inout f : Fragment) : void
+        moveToState(f, mCurState, 0, 0, false);
+!!!5233029.java!!!	ensureInflatedFragmentView(inout f : Fragment) : void
+        if (f.mFromLayout && !f.mPerformedCreateView) {
+            f.mView = f.performCreateView(f.performGetLayoutInflater(
+                    f.mSavedFragmentState), null, f.mSavedFragmentState);
+            if (f.mView != null) {
+                f.mView.setSaveFromParentEnabled(false);
+                if (f.mHidden) f.mView.setVisibility(View.GONE);
+                f.onViewCreated(f.mView, f.mSavedFragmentState);
+                dispatchOnFragmentViewCreated(f, f.mView, f.mSavedFragmentState, false);
+            }
+        }
+!!!5233157.java!!!	completeShowHideFragment(in fragment : Fragment) : void
+        if (fragment.mView != null) {
+            Animator anim = loadAnimator(fragment, fragment.getNextTransition(), !fragment.mHidden,
+                    fragment.getNextTransitionStyle());
+            if (anim != null) {
+                anim.setTarget(fragment.mView);
+                if (fragment.mHidden) {
+                    if (fragment.isHideReplaced()) {
+                        fragment.setHideReplaced(false);
+                    } else {
+                        final ViewGroup container = fragment.mContainer;
+                        final View animatingView = fragment.mView;
+                        if (container != null) {
+                            container.startViewTransition(animatingView);
+                        }
+                        // Delay the actual hide operation until the animation finishes, otherwise
+                        // the fragment will just immediately disappear
+                        anim.addListener(new AnimatorListenerAdapter() {
+                            @Override
+                            public void onAnimationEnd(Animator animation) {
+                                if (container != null) {
+                                    container.endViewTransition(animatingView);
+                                }
+                                animation.removeListener(this);
+                                animatingView.setVisibility(View.GONE);
+                            }
+                        });
+                    }
+                } else {
+                    fragment.mView.setVisibility(View.VISIBLE);
+                }
+                setHWLayerAnimListenerIfAlpha(fragment.mView, anim);
+                anim.start();
+            } else {
+                final int visibility = fragment.mHidden && !fragment.isHideReplaced()
+                        ? View.GONE
+                        : View.VISIBLE;
+                fragment.mView.setVisibility(visibility);
+                if (fragment.isHideReplaced()) {
+                    fragment.setHideReplaced(false);
+                }
+            }
+        }
+        if (fragment.mAdded && fragment.mHasMenu && fragment.mMenuVisible) {
+            mNeedMenuInvalidate = true;
+        }
+        fragment.mHiddenChanged = false;
+        fragment.onHiddenChanged(fragment.mHidden);
+!!!5233285.java!!!	moveFragmentToExpectedState(in f : Fragment) : void
+        if (f == null) {
+            return;
+        }
+        int nextState = mCurState;
+        if (f.mRemoving) {
+            if (f.isInBackStack()) {
+                nextState = Math.min(nextState, Fragment.CREATED);
+            } else {
+                nextState = Math.min(nextState, Fragment.INITIALIZING);
+            }
+        }
+
+        moveToState(f, nextState, f.getNextTransition(), f.getNextTransitionStyle(), false);
+
+        if (f.mView != null) {
+            // Move the view if it is out of order
+            Fragment underFragment = findFragmentUnder(f);
+            if (underFragment != null) {
+                final View underView = underFragment.mView;
+                // make sure this fragment is in the right order.
+                final ViewGroup container = f.mContainer;
+                int underIndex = container.indexOfChild(underView);
+                int viewIndex = container.indexOfChild(f.mView);
+                if (viewIndex < underIndex) {
+                    container.removeViewAt(viewIndex);
+                    container.addView(f.mView, underIndex);
+                }
+            }
+            if (f.mIsNewlyAdded && f.mContainer != null) {
+                // Make it visible and run the animations
+                f.mView.setTransitionAlpha(1f);
+                f.mIsNewlyAdded = false;
+                // run animations:
+                Animator anim = loadAnimator(f, f.getNextTransition(), true, f.getNextTransitionStyle());
+                if (anim != null) {
+                    anim.setTarget(f.mView);
+                    setHWLayerAnimListenerIfAlpha(f.mView, anim);
+                    anim.start();
+                }
+            }
+        }
+        if (f.mHiddenChanged) {
+            completeShowHideFragment(f);
+        }
+!!!5233413.java!!!	moveToState(in newState : int, inout always : boolean) : void
+        if (mHost == null && newState != Fragment.INITIALIZING) {
+            throw new IllegalStateException("No activity");
+        }
+
+        if (!always && mCurState == newState) {
+            return;
+        }
+
+        mCurState = newState;
+
+        if (mActive != null) {
+            boolean loadersRunning = false;
+
+            // Must add them in the proper order. mActive fragments may be out of order
+            if (mAdded != null) {
+                final int numAdded = mAdded.size();
+                for (int i = 0; i < numAdded; i++) {
+                    Fragment f = mAdded.get(i);
+                    moveFragmentToExpectedState(f);
+                    if (f.mLoaderManager != null) {
+                        loadersRunning |= f.mLoaderManager.hasRunningLoaders();
+                    }
+                }
+            }
+
+            // Now iterate through all active fragments. These will include those that are removed
+            // and detached.
+            final int numActive = mActive.size();
+            for (int i = 0; i < numActive; i++) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null && (f.mRemoving || f.mDetached) && !f.mIsNewlyAdded) {
+                    moveFragmentToExpectedState(f);
+                    if (f.mLoaderManager != null) {
+                        loadersRunning |= f.mLoaderManager.hasRunningLoaders();
+                    }
+                }
+            }
+
+            if (!loadersRunning) {
+                startPendingDeferredFragments();
+            }
+
+            if (mNeedMenuInvalidate && mHost != null && mCurState == Fragment.RESUMED) {
+                mHost.onInvalidateOptionsMenu();
+                mNeedMenuInvalidate = false;
+            }
+        }
+!!!5233541.java!!!	startPendingDeferredFragments() : void
+        if (mActive == null) return;
+
+        for (int i=0; i<mActive.size(); i++) {
+            Fragment f = mActive.valueAt(i);
+            if (f != null) {
+                performPendingDeferredStart(f);
+            }
+        }
+!!!5233669.java!!!	makeActive(inout f : Fragment) : void
+        if (f.mIndex >= 0) {
+            return;
+        }
+
+        f.setIndex(mNextFragmentIndex++, mParent);
+        if (mActive == null) {
+            mActive = new SparseArray<>();
+        }
+        mActive.put(f.mIndex, f);
+        if (DEBUG) Log.v(TAG, "Allocated fragment index " + f);
+!!!5233797.java!!!	makeInactive(inout f : Fragment) : void
+        if (f.mIndex < 0) {
+            return;
+        }
+        
+        if (DEBUG) Log.v(TAG, "Freeing fragment index " + f);
+        // Don't remove yet. That happens in burpActive(). This prevents
+        // concurrent modification while iterating over mActive
+        mActive.put(f.mIndex, null);
+        mHost.inactivateFragment(f.mWho);
+        f.initState();
+!!!5233925.java!!!	addFragment(inout fragment : Fragment, inout moveToStateNow : boolean) : void
+        if (mAdded == null) {
+            mAdded = new ArrayList<Fragment>();
+        }
+        if (DEBUG) Log.v(TAG, "add: " + fragment);
+        makeActive(fragment);
+        if (!fragment.mDetached) {
+            if (mAdded.contains(fragment)) {
+                throw new IllegalStateException("Fragment already added: " + fragment);
+            }
+            synchronized (mAdded) {
+                mAdded.add(fragment);
+            }
+            fragment.mAdded = true;
+            fragment.mRemoving = false;
+            if (fragment.mView == null) {
+                fragment.mHiddenChanged = false;
+            }
+            if (fragment.mHasMenu && fragment.mMenuVisible) {
+                mNeedMenuInvalidate = true;
+            }
+            if (moveToStateNow) {
+                moveToState(fragment);
+            }
+        }
+!!!5234053.java!!!	removeFragment(inout fragment : Fragment) : void
+        if (DEBUG) Log.v(TAG, "remove: " + fragment + " nesting=" + fragment.mBackStackNesting);
+        final boolean inactive = !fragment.isInBackStack();
+        if (!fragment.mDetached || inactive) {
+            if (false) {
+                // Would be nice to catch a bad remove here, but we need
+                // time to test this to make sure we aren't crashes cases
+                // where it is not a problem.
+                if (!mAdded.contains(fragment)) {
+                    throw new IllegalStateException("Fragment not added: " + fragment);
+                }
+            }
+            if (mAdded != null) {
+                synchronized (mAdded) {
+                    mAdded.remove(fragment);
+                }
+            }
+            if (fragment.mHasMenu && fragment.mMenuVisible) {
+                mNeedMenuInvalidate = true;
+            }
+            fragment.mAdded = false;
+            fragment.mRemoving = true;
+        }
+!!!5234181.java!!!	hideFragment(inout fragment : Fragment) : void
+        if (DEBUG) Log.v(TAG, "hide: " + fragment);
+        if (!fragment.mHidden) {
+            fragment.mHidden = true;
+            // Toggle hidden changed so that if a fragment goes through show/hide/show
+            // it doesn't go through the animation.
+            fragment.mHiddenChanged = !fragment.mHiddenChanged;
+        }
+!!!5234309.java!!!	showFragment(inout fragment : Fragment) : void
+        if (DEBUG) Log.v(TAG, "show: " + fragment);
+        if (fragment.mHidden) {
+            fragment.mHidden = false;
+            // Toggle hidden changed so that if a fragment goes through show/hide/show
+            // it doesn't go through the animation.
+            fragment.mHiddenChanged = !fragment.mHiddenChanged;
+        }
+!!!5234437.java!!!	detachFragment(inout fragment : Fragment) : void
+        if (DEBUG) Log.v(TAG, "detach: " + fragment);
+        if (!fragment.mDetached) {
+            fragment.mDetached = true;
+            if (fragment.mAdded) {
+                // We are not already in back stack, so need to remove the fragment.
+                if (mAdded != null) {
+                    if (DEBUG) Log.v(TAG, "remove from detach: " + fragment);
+                    synchronized (mAdded) {
+                        mAdded.remove(fragment);
+                    }
+                }
+                if (fragment.mHasMenu && fragment.mMenuVisible) {
+                    mNeedMenuInvalidate = true;
+                }
+                fragment.mAdded = false;
+            }
+        }
+!!!5234565.java!!!	attachFragment(inout fragment : Fragment) : void
+        if (DEBUG) Log.v(TAG, "attach: " + fragment);
+        if (fragment.mDetached) {
+            fragment.mDetached = false;
+            if (!fragment.mAdded) {
+                if (mAdded == null) {
+                    mAdded = new ArrayList<Fragment>();
+                }
+                if (mAdded.contains(fragment)) {
+                    throw new IllegalStateException("Fragment already added: " + fragment);
+                }
+                if (DEBUG) Log.v(TAG, "add from attach: " + fragment);
+                synchronized (mAdded) {
+                    mAdded.add(fragment);
+                }
+                fragment.mAdded = true;
+                if (fragment.mHasMenu && fragment.mMenuVisible) {
+                    mNeedMenuInvalidate = true;
+                }
+            }
+        }
+!!!5234693.java!!!	findFragmentById(in id : int) : Fragment
+        if (mAdded != null) {
+            // First look through added fragments.
+            for (int i=mAdded.size()-1; i>=0; i--) {
+                Fragment f = mAdded.get(i);
+                if (f != null && f.mFragmentId == id) {
+                    return f;
+                }
+            }
+        }
+        if (mActive != null) {
+            // Now for any known fragment.
+            for (int i=mActive.size()-1; i>=0; i--) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null && f.mFragmentId == id) {
+                    return f;
+                }
+            }
+        }
+        return null;
+!!!5234821.java!!!	findFragmentByTag(in tag : String) : Fragment
+        if (mAdded != null && tag != null) {
+            // First look through added fragments.
+            for (int i=mAdded.size()-1; i>=0; i--) {
+                Fragment f = mAdded.get(i);
+                if (f != null && tag.equals(f.mTag)) {
+                    return f;
+                }
+            }
+        }
+        if (mActive != null && tag != null) {
+            // Now for any known fragment.
+            for (int i=mActive.size()-1; i>=0; i--) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null && tag.equals(f.mTag)) {
+                    return f;
+                }
+            }
+        }
+        return null;
+!!!5234949.java!!!	findFragmentByWho(in who : String) : Fragment
+        if (mActive != null && who != null) {
+            for (int i=mActive.size()-1; i>=0; i--) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null && (f=f.findFragmentByWho(who)) != null) {
+                    return f;
+                }
+            }
+        }
+        return null;
+!!!5235077.java!!!	checkStateLoss() : void
+        if (mStateSaved) {
+            throw new IllegalStateException(
+                    "Can not perform this action after onSaveInstanceState");
+        }
+        if (mNoTransactionsBecause != null) {
+            throw new IllegalStateException(
+                    "Can not perform this action inside of " + mNoTransactionsBecause);
+        }
+!!!5235205.java!!!	isStateSaved() : boolean
+        return mStateSaved;
+!!!5235333.java!!!	enqueueAction(inout action : FragmentManagerImpl::OpGenerator, inout allowStateLoss : boolean) : void
+        if (!allowStateLoss) {
+            checkStateLoss();
+        }
+        synchronized (this) {
+            if (mDestroyed || mHost == null) {
+                if (allowStateLoss) {
+                    // This FragmentManager isn't attached, so drop the entire transaction.
+                    return;
+                }
+                throw new IllegalStateException("Activity has been destroyed");
+            }
+            if (mPendingActions == null) {
+                mPendingActions = new ArrayList<>();
+            }
+            mPendingActions.add(action);
+            scheduleCommit();
+        }
+!!!5235461.java!!!	scheduleCommit() : void
+        synchronized (this) {
+            boolean postponeReady =
+                    mPostponedTransactions != null && !mPostponedTransactions.isEmpty();
+            boolean pendingReady = mPendingActions != null && mPendingActions.size() == 1;
+            if (postponeReady || pendingReady) {
+                mHost.getHandler().removeCallbacks(mExecCommit);
+                mHost.getHandler().post(mExecCommit);
+            }
+        }
+!!!5235589.java!!!	allocBackStackIndex(inout bse : BackStackRecord) : int
+        synchronized (this) {
+            if (mAvailBackStackIndices == null || mAvailBackStackIndices.size() <= 0) {
+                if (mBackStackIndices == null) {
+                    mBackStackIndices = new ArrayList<BackStackRecord>();
+                }
+                int index = mBackStackIndices.size();
+                if (DEBUG) Log.v(TAG, "Setting back stack index " + index + " to " + bse);
+                mBackStackIndices.add(bse);
+                return index;
+
+            } else {
+                int index = mAvailBackStackIndices.remove(mAvailBackStackIndices.size()-1);
+                if (DEBUG) Log.v(TAG, "Adding back stack index " + index + " with " + bse);
+                mBackStackIndices.set(index, bse);
+                return index;
+            }
+        }
+!!!5235717.java!!!	setBackStackIndex(in index : int, inout bse : BackStackRecord) : void
+        synchronized (this) {
+            if (mBackStackIndices == null) {
+                mBackStackIndices = new ArrayList<BackStackRecord>();
+            }
+            int N = mBackStackIndices.size();
+            if (index < N) {
+                if (DEBUG) Log.v(TAG, "Setting back stack index " + index + " to " + bse);
+                mBackStackIndices.set(index, bse);
+            } else {
+                while (N < index) {
+                    mBackStackIndices.add(null);
+                    if (mAvailBackStackIndices == null) {
+                        mAvailBackStackIndices = new ArrayList<Integer>();
+                    }
+                    if (DEBUG) Log.v(TAG, "Adding available back stack index " + N);
+                    mAvailBackStackIndices.add(N);
+                    N++;
+                }
+                if (DEBUG) Log.v(TAG, "Adding back stack index " + index + " with " + bse);
+                mBackStackIndices.add(bse);
+            }
+        }
+!!!5235845.java!!!	freeBackStackIndex(in index : int) : void
+        synchronized (this) {
+            mBackStackIndices.set(index, null);
+            if (mAvailBackStackIndices == null) {
+                mAvailBackStackIndices = new ArrayList<Integer>();
+            }
+            if (DEBUG) Log.v(TAG, "Freeing back stack index " + index);
+            mAvailBackStackIndices.add(index);
+        }
+!!!5235973.java!!!	ensureExecReady(inout allowStateLoss : boolean) : void
+        if (mExecutingActions) {
+            throw new IllegalStateException("FragmentManager is already executing transactions");
+        }
+
+        if (Looper.myLooper() != mHost.getHandler().getLooper()) {
+            throw new IllegalStateException("Must be called from main thread of fragment host");
+        }
+
+        if (!allowStateLoss) {
+            checkStateLoss();
+        }
+
+        if (mTmpRecords == null) {
+            mTmpRecords = new ArrayList<>();
+            mTmpIsPop = new ArrayList<>();
+        }
+        mExecutingActions = true;
+        try {
+            executePostponedTransaction(null, null);
+        } finally {
+            mExecutingActions = false;
+        }
+!!!5236101.java!!!	execSingleAction(inout action : FragmentManagerImpl::OpGenerator, inout allowStateLoss : boolean) : void
+        if (allowStateLoss && (mHost == null || mDestroyed)) {
+            // This FragmentManager isn't attached, so drop the entire transaction.
+            return;
+        }
+        ensureExecReady(allowStateLoss);
+        if (action.generateOps(mTmpRecords, mTmpIsPop)) {
+            mExecutingActions = true;
+            try {
+                removeRedundantOperationsAndExecute(mTmpRecords, mTmpIsPop);
+            } finally {
+                cleanupExec();
+            }
+        }
+
+        doPendingDeferredStart();
+        burpActive();
+!!!5236229.java!!!	cleanupExec() : void
+        mExecutingActions = false;
+        mTmpIsPop.clear();
+        mTmpRecords.clear();
+!!!5236357.java!!!	execPendingActions() : boolean
+        ensureExecReady(true);
+
+        boolean didSomething = false;
+        while (generateOpsForPendingActions(mTmpRecords, mTmpIsPop)) {
+            mExecutingActions = true;
+            try {
+                removeRedundantOperationsAndExecute(mTmpRecords, mTmpIsPop);
+            } finally {
+                cleanupExec();
+            }
+            didSomething = true;
+        }
+
+        doPendingDeferredStart();
+        burpActive();
+
+        return didSomething;
+!!!5236485.java!!!	executePostponedTransaction(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>) : void
+        int numPostponed = mPostponedTransactions == null ? 0 : mPostponedTransactions.size();
+        for (int i = 0; i < numPostponed; i++) {
+            StartEnterTransitionListener listener = mPostponedTransactions.get(i);
+            if (records != null && !listener.mIsBack) {
+                int index = records.indexOf(listener.mRecord);
+                if (index != -1 && isRecordPop.get(index)) {
+                    listener.cancelTransaction();
+                    continue;
+                }
+            }
+            if (listener.isReady() || (records != null &&
+                    listener.mRecord.interactsWith(records, 0, records.size()))) {
+                mPostponedTransactions.remove(i);
+                i--;
+                numPostponed--;
+                int index;
+                if (records != null && !listener.mIsBack &&
+                        (index = records.indexOf(listener.mRecord)) != -1 &&
+                        isRecordPop.get(index)) {
+                    // This is popping a postponed transaction
+                    listener.cancelTransaction();
+                } else {
+                    listener.completeTransaction();
+                }
+            }
+        }
+!!!5236613.java!!!	removeRedundantOperationsAndExecute(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>) : void
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+
+        if (isRecordPop == null || records.size() != isRecordPop.size()) {
+            throw new IllegalStateException("Internal error with the back stack records");
+        }
+
+        // Force start of any postponed transactions that interact with scheduled transactions:
+        executePostponedTransaction(records, isRecordPop);
+
+        final int numRecords = records.size();
+        int startIndex = 0;
+        for (int recordNum = 0; recordNum < numRecords; recordNum++) {
+            final boolean canReorder = records.get(recordNum).mReorderingAllowed;
+            if (!canReorder) {
+                // execute all previous transactions
+                if (startIndex != recordNum) {
+                    executeOpsTogether(records, isRecordPop, startIndex, recordNum);
+                }
+                // execute all pop operations that don't allow reordering together or
+                // one add operation
+                int reorderingEnd = recordNum + 1;
+                if (isRecordPop.get(recordNum)) {
+                    while (reorderingEnd < numRecords
+                            && isRecordPop.get(reorderingEnd)
+                            && !records.get(reorderingEnd).mReorderingAllowed) {
+                        reorderingEnd++;
+                    }
+                }
+                executeOpsTogether(records, isRecordPop, recordNum, reorderingEnd);
+                startIndex = reorderingEnd;
+                recordNum = reorderingEnd - 1;
+            }
+        }
+        if (startIndex != numRecords) {
+            executeOpsTogether(records, isRecordPop, startIndex, numRecords);
+        }
+!!!5236741.java!!!	executeOpsTogether(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>, in startIndex : int, in endIndex : int) : void
+        final boolean allowReordering = records.get(startIndex).mReorderingAllowed;
+        boolean addToBackStack = false;
+        if (mTmpAddedFragments == null) {
+            mTmpAddedFragments = new ArrayList<>();
+        } else {
+            mTmpAddedFragments.clear();
+        }
+        if (mAdded != null) {
+            mTmpAddedFragments.addAll(mAdded);
+        }
+        Fragment oldPrimaryNav = getPrimaryNavigationFragment();
+        for (int recordNum = startIndex; recordNum < endIndex; recordNum++) {
+            final BackStackRecord record = records.get(recordNum);
+            final boolean isPop = isRecordPop.get(recordNum);
+            if (!isPop) {
+                oldPrimaryNav = record.expandOps(mTmpAddedFragments, oldPrimaryNav);
+            } else {
+                record.trackAddedFragmentsInPop(mTmpAddedFragments);
+            }
+            addToBackStack = addToBackStack || record.mAddToBackStack;
+        }
+        mTmpAddedFragments.clear();
+
+        if (!allowReordering) {
+            FragmentTransition.startTransitions(this, records, isRecordPop, startIndex, endIndex,
+                    false);
+        }
+        executeOps(records, isRecordPop, startIndex, endIndex);
+
+        int postponeIndex = endIndex;
+        if (allowReordering) {
+            ArraySet<Fragment> addedFragments = new ArraySet<>();
+            addAddedFragments(addedFragments);
+            postponeIndex = postponePostponableTransactions(records, isRecordPop,
+                    startIndex, endIndex, addedFragments);
+            makeRemovedFragmentsInvisible(addedFragments);
+        }
+
+        if (postponeIndex != startIndex && allowReordering) {
+            // need to run something now
+            FragmentTransition.startTransitions(this, records, isRecordPop, startIndex,
+                    postponeIndex, true);
+            moveToState(mCurState, true);
+        }
+
+        for (int recordNum = startIndex; recordNum < endIndex; recordNum++) {
+            final BackStackRecord record = records.get(recordNum);
+            final boolean isPop = isRecordPop.get(recordNum);
+            if (isPop && record.mIndex >= 0) {
+                freeBackStackIndex(record.mIndex);
+                record.mIndex = -1;
+            }
+            record.runOnCommitRunnables();
+        }
+
+        if (addToBackStack) {
+            reportBackStackChanged();
+        }
+!!!5236869.java!!!	makeRemovedFragmentsInvisible(inout fragments : ArraySet) : void
+        final int numAdded = fragments.size();
+        for (int i = 0; i < numAdded; i++) {
+            final Fragment fragment = fragments.valueAt(i);
+            if (!fragment.mAdded) {
+                final View view = fragment.getView();
+                view.setTransitionAlpha(0f);
+            }
+        }
+!!!5236997.java!!!	postponePostponableTransactions(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>, in startIndex : int, in endIndex : int, inout added : ArraySet) : int
+        int postponeIndex = endIndex;
+        for (int i = endIndex - 1; i >= startIndex; i--) {
+            final BackStackRecord record = records.get(i);
+            final boolean isPop = isRecordPop.get(i);
+            boolean isPostponed = record.isPostponed() &&
+                    !record.interactsWith(records, i + 1, endIndex);
+            if (isPostponed) {
+                if (mPostponedTransactions == null) {
+                    mPostponedTransactions = new ArrayList<>();
+                }
+                StartEnterTransitionListener listener =
+                        new StartEnterTransitionListener(record, isPop);
+                mPostponedTransactions.add(listener);
+                record.setOnStartPostponedListener(listener);
+
+                // roll back the transaction
+                if (isPop) {
+                    record.executeOps();
+                } else {
+                    record.executePopOps(false);
+                }
+
+                // move to the end
+                postponeIndex--;
+                if (i != postponeIndex) {
+                    records.remove(i);
+                    records.add(postponeIndex, record);
+                }
+
+                // different views may be visible now
+                addAddedFragments(added);
+            }
+        }
+        return postponeIndex;
+!!!5237125.java!!!	completeExecute(inout record : BackStackRecord, inout isPop : boolean, inout runTransitions : boolean, inout moveToState : boolean) : void
+        if (isPop) {
+            record.executePopOps(moveToState);
+        } else {
+            record.executeOps();
+        }
+        ArrayList<BackStackRecord> records = new ArrayList<>(1);
+        ArrayList<Boolean> isRecordPop = new ArrayList<>(1);
+        records.add(record);
+        isRecordPop.add(isPop);
+        if (runTransitions) {
+            FragmentTransition.startTransitions(this, records, isRecordPop, 0, 1, true);
+        }
+        if (moveToState) {
+            moveToState(mCurState, true);
+        }
+
+        if (mActive != null) {
+            final int numActive = mActive.size();
+            for (int i = 0; i < numActive; i++) {
+                // Allow added fragments to be removed during the pop since we aren't going
+                // to move them to the final state with moveToState(mCurState).
+                Fragment fragment = mActive.valueAt(i);
+                if (fragment != null && fragment.mView != null && fragment.mIsNewlyAdded
+                        && record.interactsWith(fragment.mContainerId)) {
+                    fragment.mIsNewlyAdded = false;
+                }
+            }
+        }
+!!!5237253.java!!!	findFragmentUnder(inout f : Fragment) : Fragment
+        final ViewGroup container = f.mContainer;
+        final View view = f.mView;
+
+        if (container == null || view == null) {
+            return null;
+        }
+
+        final int fragmentIndex = mAdded.indexOf(f);
+        for (int i = fragmentIndex - 1; i >= 0; i--) {
+            Fragment underFragment = mAdded.get(i);
+            if (underFragment.mContainer == container && underFragment.mView != null) {
+                // Found the fragment under this one
+                return underFragment;
+            }
+        }
+        return null;
+!!!5237381.java!!!	executeOps(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>, in startIndex : int, in endIndex : int) : void
+        for (int i = startIndex; i < endIndex; i++) {
+            final BackStackRecord record = records.get(i);
+            final boolean isPop = isRecordPop.get(i);
+            if (isPop) {
+                record.bumpBackStackNesting(-1);
+                // Only execute the add operations at the end of
+                // all transactions.
+                boolean moveToState = i == (endIndex - 1);
+                record.executePopOps(moveToState);
+            } else {
+                record.bumpBackStackNesting(1);
+                record.executeOps();
+            }
+        }
+!!!5237509.java!!!	addAddedFragments(inout added : ArraySet) : void
+        if (mCurState < Fragment.CREATED) {
+            return;
+        }
+        // We want to leave the fragment in the started state
+        final int state = Math.min(mCurState, Fragment.STARTED);
+        final int numAdded = mAdded == null ? 0 : mAdded.size();
+        for (int i = 0; i < numAdded; i++) {
+            Fragment fragment = mAdded.get(i);
+            if (fragment.mState < state) {
+                moveToState(fragment, state, fragment.getNextAnim(), fragment.getNextTransition(), false);
+                if (fragment.mView != null && !fragment.mHidden && fragment.mIsNewlyAdded) {
+                    added.add(fragment);
+                }
+            }
+        }
+!!!5237637.java!!!	forcePostponedTransactions() : void
+        if (mPostponedTransactions != null) {
+            while (!mPostponedTransactions.isEmpty()) {
+                mPostponedTransactions.remove(0).completeTransaction();
+            }
+        }
+!!!5237765.java!!!	endAnimatingAwayFragments() : void
+        final int numFragments = mActive == null ? 0 : mActive.size();
+        for (int i = 0; i < numFragments; i++) {
+            Fragment fragment = mActive.valueAt(i);
+            if (fragment != null && fragment.getAnimatingAway() != null) {
+                // Give up waiting for the animation and just end it.
+                fragment.getAnimatingAway().end();
+            }
+        }
+!!!5237893.java!!!	generateOpsForPendingActions(inout records : ArrayList<BackStackRecord>, inout isPop : ArrayList<Boolean>) : boolean
+        boolean didSomething = false;
+        synchronized (this) {
+            if (mPendingActions == null || mPendingActions.size() == 0) {
+                return false;
+            }
+
+            final int numActions = mPendingActions.size();
+            for (int i = 0; i < numActions; i++) {
+                didSomething |= mPendingActions.get(i).generateOps(records, isPop);
+            }
+            mPendingActions.clear();
+            mHost.getHandler().removeCallbacks(mExecCommit);
+        }
+        return didSomething;
+!!!5238021.java!!!	doPendingDeferredStart() : void
+        if (mHavePendingDeferredStart) {
+            boolean loadersRunning = false;
+            for (int i=0; i<mActive.size(); i++) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null && f.mLoaderManager != null) {
+                    loadersRunning |= f.mLoaderManager.hasRunningLoaders();
+                }
+            }
+            if (!loadersRunning) {
+                mHavePendingDeferredStart = false;
+                startPendingDeferredFragments();
+            }
+        }
+!!!5238149.java!!!	reportBackStackChanged() : void
+        if (mBackStackChangeListeners != null) {
+            for (int i=0; i<mBackStackChangeListeners.size(); i++) {
+                mBackStackChangeListeners.get(i).onBackStackChanged();
+            }
+        }
+!!!5238277.java!!!	addBackStackState(inout state : BackStackRecord) : void
+        if (mBackStack == null) {
+            mBackStack = new ArrayList<BackStackRecord>();
+        }
+        mBackStack.add(state);
+!!!5238405.java!!!	popBackStackState(inout records : ArrayList<BackStackRecord>, inout isRecordPop : ArrayList<Boolean>, in name : String, in id : int, in flags : int) : boolean
+        if (mBackStack == null) {
+            return false;
+        }
+        if (name == null && id < 0 && (flags & POP_BACK_STACK_INCLUSIVE) == 0) {
+            int last = mBackStack.size() - 1;
+            if (last < 0) {
+                return false;
+            }
+            records.add(mBackStack.remove(last));
+            isRecordPop.add(true);
+        } else {
+            int index = -1;
+            if (name != null || id >= 0) {
+                // If a name or ID is specified, look for that place in
+                // the stack.
+                index = mBackStack.size()-1;
+                while (index >= 0) {
+                    BackStackRecord bss = mBackStack.get(index);
+                    if (name != null && name.equals(bss.getName())) {
+                        break;
+                    }
+                    if (id >= 0 && id == bss.mIndex) {
+                        break;
+                    }
+                    index--;
+                }
+                if (index < 0) {
+                    return false;
+                }
+                if ((flags&POP_BACK_STACK_INCLUSIVE) != 0) {
+                    index--;
+                    // Consume all following entries that match.
+                    while (index >= 0) {
+                        BackStackRecord bss = mBackStack.get(index);
+                        if ((name != null && name.equals(bss.getName()))
+                                || (id >= 0 && id == bss.mIndex)) {
+                            index--;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            if (index == mBackStack.size()-1) {
+                return false;
+            }
+            for (int i = mBackStack.size() - 1; i > index; i--) {
+                records.add(mBackStack.remove(i));
+                isRecordPop.add(true);
+            }
+        }
+        return true;
+!!!5238533.java!!!	retainNonConfig() : FragmentManagerNonConfig
+        setRetaining(mSavedNonConfig);
+        return mSavedNonConfig;
+!!!5238661.java!!!	setRetaining(inout nonConfig : FragmentManagerNonConfig) : void
+        if (nonConfig == null) {
+            return;
+        }
+        List<Fragment> fragments = nonConfig.getFragments();
+        if (fragments != null) {
+            for (Fragment fragment : fragments) {
+                fragment.mRetaining = true;
+            }
+        }
+        List<FragmentManagerNonConfig> children = nonConfig.getChildNonConfigs();
+        if (children != null) {
+            for (FragmentManagerNonConfig child : children) {
+                setRetaining(child);
+            }
+        }
+!!!5238789.java!!!	saveNonConfig() : void
+        ArrayList<Fragment> fragments = null;
+        ArrayList<FragmentManagerNonConfig> childFragments = null;
+        if (mActive != null) {
+            for (int i=0; i<mActive.size(); i++) {
+                Fragment f = mActive.valueAt(i);
+                if (f != null) {
+                    if (f.mRetainInstance) {
+                        if (fragments == null) {
+                            fragments = new ArrayList<>();
+                        }
+                        fragments.add(f);
+                        f.mTargetIndex = f.mTarget != null ? f.mTarget.mIndex : -1;
+                        if (DEBUG) Log.v(TAG, "retainNonConfig: keeping retained " + f);
+                    }
+                    FragmentManagerNonConfig child;
+                    if (f.mChildFragmentManager != null) {
+                        f.mChildFragmentManager.saveNonConfig();
+                        child = f.mChildFragmentManager.mSavedNonConfig;
+                    } else {
+                        // f.mChildNonConfig may be not null, when the parent fragment is
+                        // in the backstack.
+                        child = f.mChildNonConfig;
+                    }
+
+                    if (childFragments == null && child != null) {
+                        childFragments = new ArrayList<>(mActive.size());
+                        for (int j = 0; j < i; j++) {
+                            childFragments.add(null);
+                        }
+                    }
+
+                    if (childFragments != null) {
+                        childFragments.add(child);
+                    }
+                }
+            }
+        }
+        if (fragments == null && childFragments == null) {
+            mSavedNonConfig = null;
+        } else {
+            mSavedNonConfig = new FragmentManagerNonConfig(fragments, childFragments);
+        }
+!!!5238917.java!!!	saveFragmentViewState(inout f : Fragment) : void
+        if (f.mView == null) {
+            return;
+        }
+        if (mStateArray == null) {
+            mStateArray = new SparseArray<Parcelable>();
+        } else {
+            mStateArray.clear();
+        }
+        f.mView.saveHierarchyState(mStateArray);
+        if (mStateArray.size() > 0) {
+            f.mSavedViewState = mStateArray;
+            mStateArray = null;
+        }
+!!!5239045.java!!!	saveFragmentBasicState(inout f : Fragment) : Bundle
+        Bundle result = null;
+
+        if (mStateBundle == null) {
+            mStateBundle = new Bundle();
+        }
+        f.performSaveInstanceState(mStateBundle);
+        dispatchOnFragmentSaveInstanceState(f, mStateBundle, false);
+        if (!mStateBundle.isEmpty()) {
+            result = mStateBundle;
+            mStateBundle = null;
+        }
+
+        if (f.mView != null) {
+            saveFragmentViewState(f);
+        }
+        if (f.mSavedViewState != null) {
+            if (result == null) {
+                result = new Bundle();
+            }
+            result.putSparseParcelableArray(
+                    FragmentManagerImpl.VIEW_STATE_TAG, f.mSavedViewState);
+        }
+        if (!f.mUserVisibleHint) {
+            if (result == null) {
+                result = new Bundle();
+            }
+            // Only add this if it's not the default value
+            result.putBoolean(FragmentManagerImpl.USER_VISIBLE_HINT_TAG, f.mUserVisibleHint);
+        }
+
+        return result;
+!!!5239173.java!!!	saveAllState() : Parcelable
+        // Make sure all pending operations have now been executed to get
+        // our state update-to-date.
+        forcePostponedTransactions();
+        endAnimatingAwayFragments();
+        execPendingActions();
+
+        mStateSaved = true;
+        mSavedNonConfig = null;
+
+        if (mActive == null || mActive.size() <= 0) {
+            return null;
+        }
+        
+        // First collect all active fragments.
+        int N = mActive.size();
+        FragmentState[] active = new FragmentState[N];
+        boolean haveFragments = false;
+        for (int i=0; i<N; i++) {
+            Fragment f = mActive.valueAt(i);
+            if (f != null) {
+                if (f.mIndex < 0) {
+                    throwException(new IllegalStateException(
+                            "Failure saving state: active " + f
+                            + " has cleared index: " + f.mIndex));
+                }
+
+                haveFragments = true;
+
+                FragmentState fs = new FragmentState(f);
+                active[i] = fs;
+                
+                if (f.mState > Fragment.INITIALIZING && fs.mSavedFragmentState == null) {
+                    fs.mSavedFragmentState = saveFragmentBasicState(f);
+
+                    if (f.mTarget != null) {
+                        if (f.mTarget.mIndex < 0) {
+                            throwException(new IllegalStateException(
+                                    "Failure saving state: " + f
+                                    + " has target not in fragment manager: " + f.mTarget));
+                        }
+                        if (fs.mSavedFragmentState == null) {
+                            fs.mSavedFragmentState = new Bundle();
+                        }
+                        putFragment(fs.mSavedFragmentState,
+                                FragmentManagerImpl.TARGET_STATE_TAG, f.mTarget);
+                        if (f.mTargetRequestCode != 0) {
+                            fs.mSavedFragmentState.putInt(
+                                    FragmentManagerImpl.TARGET_REQUEST_CODE_STATE_TAG,
+                                    f.mTargetRequestCode);
+                        }
+                    }
+
+                } else {
+                    fs.mSavedFragmentState = f.mSavedFragmentState;
+                }
+                
+                if (DEBUG) Log.v(TAG, "Saved state of " + f + ": "
+                        + fs.mSavedFragmentState);
+            }
+        }
+        
+        if (!haveFragments) {
+            if (DEBUG) Log.v(TAG, "saveAllState: no fragments!");
+            return null;
+        }
+        
+        int[] added = null;
+        BackStackState[] backStack = null;
+        
+        // Build list of currently added fragments.
+        if (mAdded != null) {
+            N = mAdded.size();
+            if (N > 0) {
+                added = new int[N];
+                for (int i=0; i<N; i++) {
+                    added[i] = mAdded.get(i).mIndex;
+                    if (added[i] < 0) {
+                        throwException(new IllegalStateException(
+                                "Failure saving state: active " + mAdded.get(i)
+                                + " has cleared index: " + added[i]));
+                    }
+                    if (DEBUG) Log.v(TAG, "saveAllState: adding fragment #" + i
+                            + ": " + mAdded.get(i));
+                }
+            }
+        }
+        
+        // Now save back stack.
+        if (mBackStack != null) {
+            N = mBackStack.size();
+            if (N > 0) {
+                backStack = new BackStackState[N];
+                for (int i=0; i<N; i++) {
+                    backStack[i] = new BackStackState(this, mBackStack.get(i));
+                    if (DEBUG) Log.v(TAG, "saveAllState: adding back stack #" + i
+                            + ": " + mBackStack.get(i));
+                }
+            }
+        }
+        
+        FragmentManagerState fms = new FragmentManagerState();
+        fms.mActive = active;
+        fms.mAdded = added;
+        fms.mBackStack = backStack;
+        fms.mNextFragmentIndex = mNextFragmentIndex;
+        if (mPrimaryNav != null) {
+            fms.mPrimaryNavActiveIndex = mPrimaryNav.mIndex;
+        }
+        saveNonConfig();
+        return fms;
+!!!5239301.java!!!	restoreAllState(inout state : Parcelable, inout nonConfig : FragmentManagerNonConfig) : void
+        // If there is no saved state at all, then there can not be
+        // any nonConfig fragments either, so that is that.
+        if (state == null) return;
+        FragmentManagerState fms = (FragmentManagerState)state;
+        if (fms.mActive == null) return;
+
+        List<FragmentManagerNonConfig> childNonConfigs = null;
+
+        // First re-attach any non-config instances we are retaining back
+        // to their saved state, so we don't try to instantiate them again.
+        if (nonConfig != null) {
+            List<Fragment> nonConfigFragments = nonConfig.getFragments();
+            childNonConfigs = nonConfig.getChildNonConfigs();
+            final int count = nonConfigFragments != null ? nonConfigFragments.size() : 0;
+            for (int i = 0; i < count; i++) {
+                Fragment f = nonConfigFragments.get(i);
+                if (DEBUG) Log.v(TAG, "restoreAllState: re-attaching retained " + f);
+                int index = 0; // index of f in fms.mActive
+                while (index < fms.mActive.length && fms.mActive[index].mIndex != f.mIndex) {
+                    index++;
+                }
+                if (index == fms.mActive.length) {
+                    throwException(new IllegalStateException("Could not find active fragment "
+                            + "with index " + f.mIndex));
+                }
+                FragmentState fs = fms.mActive[index];
+                fs.mInstance = f;
+                f.mSavedViewState = null;
+                f.mBackStackNesting = 0;
+                f.mInLayout = false;
+                f.mAdded = false;
+                f.mTarget = null;
+                if (fs.mSavedFragmentState != null) {
+                    fs.mSavedFragmentState.setClassLoader(mHost.getContext().getClassLoader());
+                    f.mSavedViewState = fs.mSavedFragmentState.getSparseParcelableArray(
+                            FragmentManagerImpl.VIEW_STATE_TAG);
+                    f.mSavedFragmentState = fs.mSavedFragmentState;
+                }
+            }
+        }
+        
+        // Build the full list of active fragments, instantiating them from
+        // their saved state.
+        mActive = new SparseArray<>(fms.mActive.length);
+        for (int i=0; i<fms.mActive.length; i++) {
+            FragmentState fs = fms.mActive[i];
+            if (fs != null) {
+                FragmentManagerNonConfig childNonConfig = null;
+                if (childNonConfigs != null && i < childNonConfigs.size()) {
+                    childNonConfig = childNonConfigs.get(i);
+                }
+                Fragment f = fs.instantiate(mHost, mContainer, mParent, childNonConfig);
+                if (DEBUG) Log.v(TAG, "restoreAllState: active #" + i + ": " + f);
+                mActive.put(f.mIndex, f);
+                // Now that the fragment is instantiated (or came from being
+                // retained above), clear mInstance in case we end up re-restoring
+                // from this FragmentState again.
+                fs.mInstance = null;
+            }
+        }
+        
+        // Update the target of all retained fragments.
+        if (nonConfig != null) {
+            List<Fragment> nonConfigFragments = nonConfig.getFragments();
+            final int count = nonConfigFragments != null ? nonConfigFragments.size() : 0;
+            for (int i = 0; i < count; i++) {
+                Fragment f = nonConfigFragments.get(i);
+                if (f.mTargetIndex >= 0) {
+                    f.mTarget = mActive.get(f.mTargetIndex);
+                    if (f.mTarget == null) {
+                        Log.w(TAG, "Re-attaching retained fragment " + f
+                                + " target no longer exists: " + f.mTargetIndex);
+                        f.mTarget = null;
+                    }
+                }
+            }
+        }
+
+        // Build the list of currently added fragments.
+        if (fms.mAdded != null) {
+            mAdded = new ArrayList<Fragment>(fms.mAdded.length);
+            for (int i=0; i<fms.mAdded.length; i++) {
+                Fragment f = mActive.get(fms.mAdded[i]);
+                if (f == null) {
+                    throwException(new IllegalStateException(
+                            "No instantiated fragment for index #" + fms.mAdded[i]));
+                }
+                f.mAdded = true;
+                if (DEBUG) Log.v(TAG, "restoreAllState: added #" + i + ": " + f);
+                if (mAdded.contains(f)) {
+                    throw new IllegalStateException("Already added!");
+                }
+                synchronized (mAdded) {
+                    mAdded.add(f);
+                }
+            }
+        } else {
+            mAdded = null;
+        }
+        
+        // Build the back stack.
+        if (fms.mBackStack != null) {
+            mBackStack = new ArrayList<BackStackRecord>(fms.mBackStack.length);
+            for (int i=0; i<fms.mBackStack.length; i++) {
+                BackStackRecord bse = fms.mBackStack[i].instantiate(this);
+                if (DEBUG) {
+                    Log.v(TAG, "restoreAllState: back stack #" + i
+                        + " (index " + bse.mIndex + "): " + bse);
+                    LogWriter logw = new LogWriter(Log.VERBOSE, TAG);
+                    PrintWriter pw = new FastPrintWriter(logw, false, 1024);
+                    bse.dump("  ", pw, false);
+                    pw.flush();
+                }
+                mBackStack.add(bse);
+                if (bse.mIndex >= 0) {
+                    setBackStackIndex(bse.mIndex, bse);
+                }
+            }
+        } else {
+            mBackStack = null;
+        }
+
+        if (fms.mPrimaryNavActiveIndex >= 0) {
+            mPrimaryNav = mActive.get(fms.mPrimaryNavActiveIndex);
+        }
+
+        mNextFragmentIndex = fms.mNextFragmentIndex;
+!!!5239429.java!!!	burpActive() : void
+        if (mActive != null) {
+            for (int i = mActive.size() - 1; i >= 0; i--) {
+                if (mActive.valueAt(i) == null) {
+                    mActive.delete(mActive.keyAt(i));
+                }
+            }
+        }
+!!!5239557.java!!!	attachController(inout host : FragmentHostCallback, inout container : FragmentContainer, inout parent : Fragment) : void
+        if (mHost != null) throw new IllegalStateException("Already attached");
+        mHost = host;
+        mContainer = container;
+        mParent = parent;
+        mAllowOldReentrantBehavior = getTargetSdk() <= Build.VERSION_CODES.N_MR1;
+!!!5239685.java!!!	getTargetSdk() : int
+        if (mHost != null) {
+            Context context = mHost.getContext();
+            if (context != null) {
+                ApplicationInfo info = context.getApplicationInfo();
+                if (info != null) {
+                    return info.targetSdkVersion;
+                }
+            }
+        }
+        return 0;
+!!!5239813.java!!!	noteStateNotSaved() : void
+        mSavedNonConfig = null;
+        mStateSaved = false;
+        final int addedCount = mAdded == null ? 0 : mAdded.size();
+        for (int i = 0; i < addedCount; i++) {
+            Fragment fragment = mAdded.get(i);
+            if (fragment != null) {
+                fragment.noteStateNotSaved();
+            }
+        }
+!!!5239941.java!!!	dispatchCreate() : void
+        mStateSaved = false;
+        dispatchMoveToState(Fragment.CREATED);
+!!!5240069.java!!!	dispatchActivityCreated() : void
+        mStateSaved = false;
+        dispatchMoveToState(Fragment.ACTIVITY_CREATED);
+!!!5240197.java!!!	dispatchStart() : void
+        mStateSaved = false;
+        dispatchMoveToState(Fragment.STARTED);
+!!!5240325.java!!!	dispatchResume() : void
+        mStateSaved = false;
+        dispatchMoveToState(Fragment.RESUMED);
+!!!5240453.java!!!	dispatchPause() : void
+        dispatchMoveToState(Fragment.STARTED);
+!!!5240581.java!!!	dispatchStop() : void
+        dispatchMoveToState(Fragment.STOPPED);
+!!!5240709.java!!!	dispatchDestroyView() : void
+        dispatchMoveToState(Fragment.CREATED);
+!!!5240837.java!!!	dispatchDestroy() : void
+        mDestroyed = true;
+        execPendingActions();
+        dispatchMoveToState(Fragment.INITIALIZING);
+        mHost = null;
+        mContainer = null;
+        mParent = null;
+!!!5240965.java!!!	dispatchMoveToState(in state : int) : void
+        if (mAllowOldReentrantBehavior) {
+            moveToState(state, false);
+        } else {
+            try {
+                mExecutingActions = true;
+                moveToState(state, false);
+            } finally {
+                mExecutingActions = false;
+            }
+        }
+        execPendingActions();
+!!!5241093.java!!!	dispatchMultiWindowModeChanged(inout isInMultiWindowMode : boolean) : void
+        if (mAdded == null) {
+            return;
+        }
+        for (int i = mAdded.size() - 1; i >= 0; --i) {
+            final Fragment f = mAdded.get(i);
+            if (f != null) {
+                f.performMultiWindowModeChanged(isInMultiWindowMode);
+            }
+        }
+!!!5241221.java!!!	dispatchMultiWindowModeChanged(inout isInMultiWindowMode : boolean, inout newConfig : Configuration) : void
+        if (mAdded == null) {
+            return;
+        }
+        for (int i = mAdded.size() - 1; i >= 0; --i) {
+            final Fragment f = mAdded.get(i);
+            if (f != null) {
+                f.performMultiWindowModeChanged(isInMultiWindowMode, newConfig);
+            }
+        }
+!!!5241349.java!!!	dispatchPictureInPictureModeChanged(inout isInPictureInPictureMode : boolean) : void
+        if (mAdded == null) {
+            return;
+        }
+        for (int i = mAdded.size() - 1; i >= 0; --i) {
+            final Fragment f = mAdded.get(i);
+            if (f != null) {
+                f.performPictureInPictureModeChanged(isInPictureInPictureMode);
+            }
+        }
+!!!5241477.java!!!	dispatchPictureInPictureModeChanged(inout isInPictureInPictureMode : boolean, inout newConfig : Configuration) : void
+        if (mAdded == null) {
+            return;
+        }
+        for (int i = mAdded.size() - 1; i >= 0; --i) {
+            final Fragment f = mAdded.get(i);
+            if (f != null) {
+                f.performPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+            }
+        }
+!!!5241605.java!!!	dispatchConfigurationChanged(inout newConfig : Configuration) : void
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    f.performConfigurationChanged(newConfig);
+                }
+            }
+        }
+!!!5241733.java!!!	dispatchLowMemory() : void
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    f.performLowMemory();
+                }
+            }
+        }
+!!!5241861.java!!!	dispatchTrimMemory(in level : int) : void
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    f.performTrimMemory(level);
+                }
+            }
+        }
+!!!5241989.java!!!	dispatchCreateOptionsMenu(inout menu : Menu, inout inflater : MenuInflater) : boolean
+        boolean show = false;
+        ArrayList<Fragment> newMenus = null;
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    if (f.performCreateOptionsMenu(menu, inflater)) {
+                        show = true;
+                        if (newMenus == null) {
+                            newMenus = new ArrayList<Fragment>();
+                        }
+                        newMenus.add(f);
+                    }
+                }
+            }
+        }
+        
+        if (mCreatedMenus != null) {
+            for (int i=0; i<mCreatedMenus.size(); i++) {
+                Fragment f = mCreatedMenus.get(i);
+                if (newMenus == null || !newMenus.contains(f)) {
+                    f.onDestroyOptionsMenu();
+                }
+            }
+        }
+        
+        mCreatedMenus = newMenus;
+        
+        return show;
+!!!5242117.java!!!	dispatchPrepareOptionsMenu(inout menu : Menu) : boolean
+        boolean show = false;
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    if (f.performPrepareOptionsMenu(menu)) {
+                        show = true;
+                    }
+                }
+            }
+        }
+        return show;
+!!!5242245.java!!!	dispatchOptionsItemSelected(inout item : MenuItem) : boolean
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    if (f.performOptionsItemSelected(item)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+!!!5242373.java!!!	dispatchContextItemSelected(inout item : MenuItem) : boolean
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    if (f.performContextItemSelected(item)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+!!!5242501.java!!!	dispatchOptionsMenuClosed(inout menu : Menu) : void
+        if (mAdded != null) {
+            for (int i=0; i<mAdded.size(); i++) {
+                Fragment f = mAdded.get(i);
+                if (f != null) {
+                    f.performOptionsMenuClosed(menu);
+                }
+            }
+        }
+!!!5242629.java!!!	setPrimaryNavigationFragment(inout f : Fragment) : void
+        if (f != null && (mActive.get(f.mIndex) != f
+                || (f.mHost != null && f.getFragmentManager() != this))) {
+            throw new IllegalArgumentException("Fragment " + f
+                    + " is not an active fragment of FragmentManager " + this);
+        }
+        mPrimaryNav = f;
+!!!5242757.java!!!	getPrimaryNavigationFragment() : Fragment
+        return mPrimaryNav;
+!!!5242885.java!!!	registerFragmentLifecycleCallbacks(inout cb : FragmentManager::FragmentLifecycleCallbacks, inout recursive : boolean) : void
+        if (mLifecycleCallbacks == null) {
+            mLifecycleCallbacks = new CopyOnWriteArrayList<>();
+        }
+        mLifecycleCallbacks.add(new Pair(cb, recursive));
+!!!5243013.java!!!	unregisterFragmentLifecycleCallbacks(inout cb : FragmentManager::FragmentLifecycleCallbacks) : void
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+
+        synchronized (mLifecycleCallbacks) {
+            for (int i = 0, N = mLifecycleCallbacks.size(); i < N; i++) {
+                if (mLifecycleCallbacks.get(i).first == cb) {
+                    mLifecycleCallbacks.remove(i);
+                    break;
+                }
+            }
+        }
+!!!5243141.java!!!	dispatchOnFragmentPreAttached(inout f : Fragment, inout context : Context, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentPreAttached(f, context, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentPreAttached(this, f, context);
+            }
+        }
+!!!5243269.java!!!	dispatchOnFragmentAttached(inout f : Fragment, inout context : Context, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentAttached(f, context, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentAttached(this, f, context);
+            }
+        }
+!!!5243397.java!!!	dispatchOnFragmentPreCreated(inout f : Fragment, inout savedInstanceState : Bundle, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentPreCreated(f, savedInstanceState, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentPreCreated(this, f, savedInstanceState);
+            }
+        }
+!!!5243525.java!!!	dispatchOnFragmentCreated(inout f : Fragment, inout savedInstanceState : Bundle, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentCreated(f, savedInstanceState, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentCreated(this, f, savedInstanceState);
+            }
+        }
+!!!5243653.java!!!	dispatchOnFragmentActivityCreated(inout f : Fragment, inout savedInstanceState : Bundle, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentActivityCreated(f, savedInstanceState, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentActivityCreated(this, f, savedInstanceState);
+            }
+        }
+!!!5243781.java!!!	dispatchOnFragmentViewCreated(inout f : Fragment, inout v : View, inout savedInstanceState : Bundle, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentViewCreated(f, v, savedInstanceState, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentViewCreated(this, f, v, savedInstanceState);
+            }
+        }
+!!!5243909.java!!!	dispatchOnFragmentStarted(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentStarted(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentStarted(this, f);
+            }
+        }
+!!!5244037.java!!!	dispatchOnFragmentResumed(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentResumed(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentResumed(this, f);
+            }
+        }
+!!!5244165.java!!!	dispatchOnFragmentPaused(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentPaused(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentPaused(this, f);
+            }
+        }
+!!!5244293.java!!!	dispatchOnFragmentStopped(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentStopped(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentStopped(this, f);
+            }
+        }
+!!!5244421.java!!!	dispatchOnFragmentSaveInstanceState(inout f : Fragment, inout outState : Bundle, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentSaveInstanceState(f, outState, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentSaveInstanceState(this, f, outState);
+            }
+        }
+!!!5244549.java!!!	dispatchOnFragmentViewDestroyed(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentViewDestroyed(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentViewDestroyed(this, f);
+            }
+        }
+!!!5244677.java!!!	dispatchOnFragmentDestroyed(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentDestroyed(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentDestroyed(this, f);
+            }
+        }
+!!!5244805.java!!!	dispatchOnFragmentDetached(inout f : Fragment, inout onlyRecursive : boolean) : void
+        if (mParent != null) {
+            FragmentManager parentManager = mParent.getFragmentManager();
+            if (parentManager instanceof FragmentManagerImpl) {
+                ((FragmentManagerImpl) parentManager)
+                        .dispatchOnFragmentDetached(f, true);
+            }
+        }
+        if (mLifecycleCallbacks == null) {
+            return;
+        }
+        for (Pair<FragmentLifecycleCallbacks, Boolean> p : mLifecycleCallbacks) {
+            if (!onlyRecursive || p.second) {
+                p.first.onFragmentDetached(this, f);
+            }
+        }
+!!!5244933.java!!!	invalidateOptionsMenu() : void
+        if (mHost != null && mCurState == Fragment.RESUMED) {
+            mHost.onInvalidateOptionsMenu();
+        } else {
+            mNeedMenuInvalidate = true;
+        }
+!!!5245061.java!!!	reverseTransit(in transit : int) : int
+        int rev = 0;
+        switch (transit) {
+            case FragmentTransaction.TRANSIT_FRAGMENT_OPEN:
+                rev = FragmentTransaction.TRANSIT_FRAGMENT_CLOSE;
+                break;
+            case FragmentTransaction.TRANSIT_FRAGMENT_CLOSE:
+                rev = FragmentTransaction.TRANSIT_FRAGMENT_OPEN;
+                break;
+            case FragmentTransaction.TRANSIT_FRAGMENT_FADE:
+                rev = FragmentTransaction.TRANSIT_FRAGMENT_FADE;
+                break;
+        }
+        return rev;
+        
+!!!5245189.java!!!	transitToStyleIndex(in transit : int, inout enter : boolean) : int
+        int animAttr = -1;
+        switch (transit) {
+            case FragmentTransaction.TRANSIT_FRAGMENT_OPEN:
+                animAttr = enter
+                    ? com.android.internal.R.styleable.FragmentAnimation_fragmentOpenEnterAnimation
+                    : com.android.internal.R.styleable.FragmentAnimation_fragmentOpenExitAnimation;
+                break;
+            case FragmentTransaction.TRANSIT_FRAGMENT_CLOSE:
+                animAttr = enter
+                    ? com.android.internal.R.styleable.FragmentAnimation_fragmentCloseEnterAnimation
+                    : com.android.internal.R.styleable.FragmentAnimation_fragmentCloseExitAnimation;
+                break;
+            case FragmentTransaction.TRANSIT_FRAGMENT_FADE:
+                animAttr = enter
+                    ? com.android.internal.R.styleable.FragmentAnimation_fragmentFadeEnterAnimation
+                    : com.android.internal.R.styleable.FragmentAnimation_fragmentFadeExitAnimation;
+                break;
+        }
+        return animAttr;
+!!!5245317.java!!!	onCreateView(inout parent : View, in name : String, inout context : Context, inout attrs : AttributeSet) : View
+        if (!"fragment".equals(name)) {
+            return null;
+        }
+
+        String fname = attrs.getAttributeValue(null, "class");
+        TypedArray a =
+                context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.Fragment);
+        if (fname == null) {
+            fname = a.getString(com.android.internal.R.styleable.Fragment_name);
+        }
+        int id = a.getResourceId(com.android.internal.R.styleable.Fragment_id, View.NO_ID);
+        String tag = a.getString(com.android.internal.R.styleable.Fragment_tag);
+        a.recycle();
+
+        int containerId = parent != null ? parent.getId() : 0;
+        if (containerId == View.NO_ID && id == View.NO_ID && tag == null) {
+            throw new IllegalArgumentException(attrs.getPositionDescription()
+                    + ": Must specify unique android:id, android:tag, or have a parent with"
+                    + " an id for " + fname);
+        }
+
+        // If we restored from a previous state, we may already have
+        // instantiated this fragment from the state and should use
+        // that instance instead of making a new one.
+        Fragment fragment = id != View.NO_ID ? findFragmentById(id) : null;
+        if (fragment == null && tag != null) {
+            fragment = findFragmentByTag(tag);
+        }
+        if (fragment == null && containerId != View.NO_ID) {
+            fragment = findFragmentById(containerId);
+        }
+
+        if (FragmentManagerImpl.DEBUG) Log.v(TAG, "onCreateView: id=0x"
+                + Integer.toHexString(id) + " fname=" + fname
+                + " existing=" + fragment);
+        if (fragment == null) {
+            fragment = mContainer.instantiate(context, fname, null);
+            fragment.mFromLayout = true;
+            fragment.mFragmentId = id != 0 ? id : containerId;
+            fragment.mContainerId = containerId;
+            fragment.mTag = tag;
+            fragment.mInLayout = true;
+            fragment.mFragmentManager = this;
+            fragment.mHost = mHost;
+            fragment.onInflate(mHost.getContext(), attrs, fragment.mSavedFragmentState);
+            addFragment(fragment, true);
+        } else if (fragment.mInLayout) {
+            // A fragment already exists and it is not one we restored from
+            // previous state.
+            throw new IllegalArgumentException(attrs.getPositionDescription()
+                    + ": Duplicate id 0x" + Integer.toHexString(id)
+                    + ", tag " + tag + ", or parent id 0x" + Integer.toHexString(containerId)
+                    + " with another fragment for " + fname);
+        } else {
+            // This fragment was retained from a previous instance; get it
+            // going now.
+            fragment.mInLayout = true;
+            fragment.mHost = mHost;
+            // If this fragment is newly instantiated (either right now, or
+            // from last saved state), then give it the attributes to
+            // initialize itself.
+            if (!fragment.mRetaining) {
+                fragment.onInflate(mHost.getContext(), attrs, fragment.mSavedFragmentState);
+            }
+        }
+
+        // If we haven't finished entering the CREATED state ourselves yet,
+        // push the inflated child fragment along. This will ensureInflatedFragmentView
+        // at the right phase of the lifecycle so that we will have mView populated
+        // for compliant fragments below.
+        if (mCurState < Fragment.CREATED && fragment.mFromLayout) {
+            moveToState(fragment, Fragment.CREATED, 0, 0, false);
+        } else {
+            moveToState(fragment);
+        }
+
+        if (fragment.mView == null) {
+            throw new IllegalStateException("Fragment " + fname
+                    + " did not create a view.");
+        }
+        if (id != 0) {
+            fragment.mView.setId(id);
+        }
+        if (fragment.mView.getTag() == null) {
+            fragment.mView.setTag(tag);
+        }
+        return fragment.mView;
+!!!5245445.java!!!	onCreateView(in name : String, inout context : Context, inout attrs : AttributeSet) : View
+        return null;
+!!!5245573.java!!!	getLayoutInflaterFactory() : LayoutInflater::Factory2
+        return this;

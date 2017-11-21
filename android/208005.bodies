@@ -1,0 +1,194 @@
+class MetricsSummarizer
+!!!517893.cpp!!!	MetricsSummarizer(in key : char)
+    ALOGV("MetricsSummarizer::MetricsSummarizer");
+
+    if (key == NULL) {
+        mKey = key;
+    } else {
+        mKey = strdup(key);
+    }
+
+    mSummaries = new List<MediaAnalyticsItem *>();
+!!!518021.cpp!!!	~MetricsSummarizer()
+    ALOGV("MetricsSummarizer::~MetricsSummarizer");
+    if (mKey) {
+        free((void *)mKey);
+        mKey = NULL;
+    }
+
+    // clear the list of items we have saved
+    while (mSummaries->size() > 0) {
+        MediaAnalyticsItem * oitem = *(mSummaries->begin());
+        if (DEBUG_QUEUE) {
+            ALOGD("zap old record: key %s sessionID %" PRId64 " ts %" PRId64 "",
+                oitem->getKey().c_str(), oitem->getSessionID(),
+                oitem->getTimestamp());
+        }
+        mSummaries->erase(mSummaries->begin());
+        delete oitem;
+    }
+!!!518149.cpp!!!	getKey() : char
+    const char *value = mKey;
+    if (value == NULL) {
+        value = "unknown";
+    }
+    return value;
+!!!518277.cpp!!!	isMine(inout item : MediaAnalyticsItem) : bool
+    if (mKey == NULL)
+        return true;
+    AString itemKey = item.getKey();
+    if (strcmp(mKey, itemKey.c_str()) != 0) {
+        return false;
+    }
+    return true;
+!!!518405.cpp!!!	handleRecord(inout item : MediaAnalyticsItem) : void
+
+    ALOGV("MetricsSummarizer::handleRecord() for %s",
+                item == NULL ? "<nothing>" : item->toString().c_str());
+
+    if (item == NULL) {
+        return;
+    }
+
+    List<MediaAnalyticsItem *>::iterator it = mSummaries->begin();
+    for (; it != mSummaries->end(); it++) {
+        bool good = sameAttributes((*it), item, getIgnorables());
+        ALOGV("Match against %s says %d",
+              (*it)->toString().c_str(), good);
+        if (good)
+            break;
+    }
+    if (it == mSummaries->end()) {
+            ALOGV("save new record");
+            item = item->dup();
+            if (item == NULL) {
+                ALOGE("unable to save MediaMetrics record");
+            }
+            sortProps(item);
+            item->setInt32("aggregated",1);
+            mSummaries->push_back(item);
+    } else {
+            ALOGV("increment existing record");
+            (*it)->addInt32("aggregated",1);
+            mergeRecord(*(*it), *item);
+    }
+!!!518533.cpp!!!	mergeRecord(inout have : MediaAnalyticsItem, inout incoming : MediaAnalyticsItem) : void
+    // default is no further massaging.
+    ALOGV("MetricsSummarizer::mergeRecord() [default]");
+    return;
+!!!518661.cpp!!!	dumpSummary(inout slot : int) : AString
+    return dumpSummary(slot, NULL);
+!!!518789.cpp!!!	dumpSummary(inout slot : int, in only : char) : AString
+    AString value = "";
+
+    List<MediaAnalyticsItem *>::iterator it = mSummaries->begin();
+    if (it != mSummaries->end()) {
+        char buf[16];   // enough for "#####: "
+        for (; it != mSummaries->end(); it++) {
+            if (only != NULL && strcmp(only, (*it)->getKey().c_str()) != 0) {
+                continue;
+            }
+            AString entry = (*it)->toString();
+            snprintf(buf, sizeof(buf), "%5d: ", slot);
+            value.append(buf);
+            value.append(entry.c_str());
+            value.append("\n");
+            slot++;
+        }
+    }
+    return value;
+!!!518917.cpp!!!	setIgnorables(in ignorables : char) : void
+    mIgnorables = ignorables;
+!!!519045.cpp!!!	getIgnorables() : char
+    return mIgnorables;
+!!!519173.cpp!!!	sameAttributes(inout summ : MediaAnalyticsItem, inout single : MediaAnalyticsItem, in ignorable : char) : bool
+
+    if (single == NULL || summ == NULL) {
+        return false;
+    }
+    ALOGV("MetricsSummarizer::sameAttributes(): summ %s", summ->toString().c_str());
+    ALOGV("MetricsSummarizer::sameAttributes(): single %s", single->toString().c_str());
+
+    // this can be made better.
+    for(size_t i=0;i<single->mPropCount;i++) {
+        MediaAnalyticsItem::Prop *prop1 = &(single->mProps[i]);
+        const char *attrName = prop1->mName;
+        ALOGV("compare on attr '%s'", attrName);
+
+        // is it something we should ignore
+        if (ignorable != NULL) {
+            const char **ig = ignorable;
+            while (*ig) {
+                if (strcmp(*ig, attrName) == 0) {
+                    break;
+                }
+                ig++;
+            }
+            if (*ig) {
+                ALOGV("we don't mind that it has attr '%s'", attrName);
+                continue;
+            }
+        }
+
+        MediaAnalyticsItem::Prop *prop2 = summ->findProp(attrName);
+        if (prop2 == NULL) {
+            ALOGV("summ doesn't have this attr");
+            return false;
+        }
+        if (prop1->mType != prop2->mType) {
+            ALOGV("mismatched attr types");
+            return false;
+        }
+        switch (prop1->mType) {
+            case MediaAnalyticsItem::kTypeInt32:
+                if (prop1->u.int32Value != prop2->u.int32Value)
+                    return false;
+                break;
+            case MediaAnalyticsItem::kTypeInt64:
+                if (prop1->u.int64Value != prop2->u.int64Value)
+                    return false;
+                break;
+            case MediaAnalyticsItem::kTypeDouble:
+                // XXX: watch out for floating point comparisons!
+                if (prop1->u.doubleValue != prop2->u.doubleValue)
+                    return false;
+                break;
+            case MediaAnalyticsItem::kTypeCString:
+                if (strcmp(prop1->u.CStringValue, prop2->u.CStringValue) != 0)
+                    return false;
+                break;
+            case MediaAnalyticsItem::kTypeRate:
+                if (prop1->u.rate.count != prop2->u.rate.count)
+                    return false;
+                if (prop1->u.rate.duration != prop2->u.rate.duration)
+                    return false;
+                break;
+            default:
+                return false;
+        }
+    }
+
+    return true;
+!!!519301.cpp!!!	sameAttributesId(inout summ : MediaAnalyticsItem, inout single : MediaAnalyticsItem, in ignorable : char) : bool
+
+    // verify same user
+    if (summ->mPid != single->mPid)
+        return false;
+
+    // and finally do the more expensive validation of the attributes
+    return sameAttributes(summ, single, ignorable);
+!!!519429.cpp!!!	PropSorter(in a : void, in b : void) : int
+    MediaAnalyticsItem::Prop *ai = (MediaAnalyticsItem::Prop *)a;
+    MediaAnalyticsItem::Prop *bi = (MediaAnalyticsItem::Prop *)b;
+    return strcmp(ai->mName, bi->mName);
+!!!519557.cpp!!!	sortProps(inout item : MediaAnalyticsItem) : void
+    if (item->mPropCount != 0) {
+        if (DEBUG_SORT) {
+            ALOGD("sortProps(pre): %s", item->toString().c_str());
+        }
+        qsort(item->mProps, item->mPropCount,
+              sizeof(MediaAnalyticsItem::Prop), MetricsSummarizer::PropSorter);
+        if (DEBUG_SORT) {
+            ALOGD("sortProps(pst): %s", item->toString().c_str());
+        }
+    }

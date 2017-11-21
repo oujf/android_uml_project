@@ -1,0 +1,53 @@
+class AAudioServiceEndpointCapture
+!!!534917.cpp!!!	~AAudioServiceEndpointCapture()
+    delete mDistributionBuffer;
+!!!535045.cpp!!!	open(in deviceId : int32_t) : aaudio_result_t
+    aaudio_result_t result = AAudioServiceEndpoint::open(deviceId);
+    if (result == AAUDIO_OK) {
+        delete mDistributionBuffer;
+        int distributionBufferSizeBytes = getStreamInternal()->getFramesPerBurst()
+                                          * getStreamInternal()->getBytesPerFrame();
+        mDistributionBuffer = new uint8_t[distributionBufferSizeBytes];
+    }
+    return result;
+!!!535301.cpp!!!	callbackLoop() : void
+    ALOGD("AAudioServiceEndpointCapture(): callbackLoop() entering");
+    int32_t underflowCount = 0;
+
+    aaudio_result_t result = getStreamInternal()->requestStart();
+
+    int64_t timeoutNanos = getStreamInternal()->calculateReasonableTimeout();
+
+    // result might be a frame count
+    while (mCallbackEnabled.load() && getStreamInternal()->isActive() && (result >= 0)) {
+        // Read audio data from stream using a blocking read.
+        result = getStreamInternal()->read(mDistributionBuffer, getFramesPerBurst(), timeoutNanos);
+        if (result == AAUDIO_ERROR_DISCONNECTED) {
+            disconnectRegisteredStreams();
+            break;
+        } else if (result != getFramesPerBurst()) {
+            ALOGW("AAudioServiceEndpointCapture(): callbackLoop() read %d / %d",
+                  result, getFramesPerBurst());
+            break;
+        }
+
+        // Distribute data to each active stream.
+        { // use lock guard
+            std::lock_guard <std::mutex> lock(mLockStreams);
+            for (AAudioServiceStreamShared *sharedStream : mRunningStreams) {
+                FifoBuffer *fifo = sharedStream->getDataFifoBuffer();
+                if (fifo->getFifoControllerBase()->getEmptyFramesAvailable() <
+                    getFramesPerBurst()) {
+                    underflowCount++;
+                } else {
+                    fifo->write(mDistributionBuffer, getFramesPerBurst());
+                }
+                sharedStream->markTransferTime(AudioClock::getNanoseconds());
+            }
+        }
+    }
+
+    result = getStreamInternal()->requestStop();
+
+    ALOGD("AAudioServiceEndpointCapture(): callbackLoop() exiting, %d underflows", underflowCount);
+    return NULL; // TODO review

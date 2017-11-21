@@ -1,0 +1,67 @@
+class LayoutPrefetchRegistryImpl
+!!!10391045.java!!!	setPrefetchVector(in dx : int, in dy : int) : void
+            mPrefetchDx = dx;
+            mPrefetchDy = dy;
+!!!10391173.java!!!	collectPrefetchPositionsFromView(inout view : RecyclerView, inout nested : boolean) : void
+            mCount = 0;
+            if (mPrefetchArray != null) {
+                Arrays.fill(mPrefetchArray, -1);
+            }
+
+            final RecyclerView.LayoutManager layout = view.mLayout;
+            if (view.mAdapter != null
+                    && layout != null
+                    && layout.isItemPrefetchEnabled()) {
+                if (nested) {
+                    // nested prefetch, only if no adapter updates pending. Note: we don't query
+                    // view.hasPendingAdapterUpdates(), as first layout may not have occurred
+                    if (!view.mAdapterHelper.hasPendingUpdates()) {
+                        layout.collectInitialPrefetchPositions(view.mAdapter.getItemCount(), this);
+                    }
+                } else {
+                    // momentum based prefetch, only if we trust current child/adapter state
+                    if (!view.hasPendingAdapterUpdates()) {
+                        layout.collectAdjacentPrefetchPositions(mPrefetchDx, mPrefetchDy,
+                                view.mState, this);
+                    }
+                }
+
+                if (mCount > layout.mPrefetchMaxCountObserved) {
+                    layout.mPrefetchMaxCountObserved = mCount;
+                    layout.mPrefetchMaxObservedInInitialPrefetch = nested;
+                    view.mRecycler.updateViewCacheSize();
+                }
+            }
+!!!10391301.java!!!	addPosition(in layoutPosition : int, in pixelDistance : int) : void
+            if (pixelDistance < 0) {
+                throw new IllegalArgumentException("Pixel distance must be non-negative");
+            }
+
+            // allocate or expand array as needed, doubling when needed
+            final int storagePosition = mCount * 2;
+            if (mPrefetchArray == null) {
+                mPrefetchArray = new int[4];
+                Arrays.fill(mPrefetchArray, -1);
+            } else if (storagePosition >= mPrefetchArray.length) {
+                final int[] oldArray = mPrefetchArray;
+                mPrefetchArray = new int[storagePosition * 2];
+                System.arraycopy(oldArray, 0, mPrefetchArray, 0, oldArray.length);
+            }
+
+            // add position
+            mPrefetchArray[storagePosition] = layoutPosition;
+            mPrefetchArray[storagePosition + 1] = pixelDistance;
+
+            mCount++;
+!!!10391429.java!!!	lastPrefetchIncludedPosition(in position : int) : boolean
+            if (mPrefetchArray != null) {
+                final int count = mCount * 2;
+                for (int i = 0; i < count; i += 2) {
+                    if (mPrefetchArray[i] == position) return true;
+                }
+            }
+            return false;
+!!!10391557.java!!!	clearPrefetchPositions() : void
+            if (mPrefetchArray != null) {
+                Arrays.fill(mPrefetchArray, -1);
+            }

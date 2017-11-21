@@ -1,0 +1,198 @@
+class TwilightService
+!!!12531589.java!!!	TwilightService(inout context : Context)
+        super(context);
+        mHandler = new Handler(Looper.getMainLooper(), this);
+!!!12531717.java!!!	onStart() : void
+        publishLocalService(TwilightManager.class, new TwilightManager() {
+            @Override
+            public void registerListener(@NonNull TwilightListener listener,
+                    @NonNull Handler handler) {
+                synchronized (mListeners) {
+                    final boolean wasEmpty = mListeners.isEmpty();
+                    mListeners.put(listener, handler);
+
+                    if (wasEmpty && !mListeners.isEmpty()) {
+                        mHandler.sendEmptyMessage(MSG_START_LISTENING);
+                    }
+                }
+            }
+
+            @Override
+            public void unregisterListener(@NonNull TwilightListener listener) {
+                synchronized (mListeners) {
+                    final boolean wasEmpty = mListeners.isEmpty();
+                    mListeners.remove(listener);
+
+                    if (!wasEmpty && mListeners.isEmpty()) {
+                        mHandler.sendEmptyMessage(MSG_STOP_LISTENING);
+                    }
+                }
+            }
+
+            @Override
+            public TwilightState getLastTwilightState() {
+                synchronized (mListeners) {
+                    return mLastTwilightState;
+                }
+            }
+        });
+!!!12531845.java!!!	onBootPhase(in phase : int) : void
+        if (phase == PHASE_BOOT_COMPLETED) {
+            final Context c = getContext();
+            mAlarmManager = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            mLocationManager = (LocationManager) c.getSystemService(Context.LOCATION_SERVICE);
+
+            mBootCompleted = true;
+            if (mHasListeners) {
+                startListening();
+            }
+        }
+!!!12531973.java!!!	handleMessage(inout msg : Message) : boolean
+        switch (msg.what) {
+            case MSG_START_LISTENING:
+                if (!mHasListeners) {
+                    mHasListeners = true;
+                    if (mBootCompleted) {
+                        startListening();
+                    }
+                }
+                return true;
+            case MSG_STOP_LISTENING:
+                if (mHasListeners) {
+                    mHasListeners = false;
+                    if (mBootCompleted) {
+                        stopListening();
+                    }
+                }
+                return true;
+        }
+        return false;
+!!!12532101.java!!!	startListening() : void
+        Slog.d(TAG, "startListening");
+
+        // Start listening for location updates (default: low power, max 1h, min 10m).
+        mLocationManager.requestLocationUpdates(
+                null /* default */, this, Looper.getMainLooper());
+
+        // Request the device's location immediately if a previous location isn't available.
+        if (mLocationManager.getLastLocation() == null) {
+            if (mLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                mLocationManager.requestSingleUpdate(
+                        LocationManager.NETWORK_PROVIDER, this, Looper.getMainLooper());
+            } else if (mLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                mLocationManager.requestSingleUpdate(
+                        LocationManager.GPS_PROVIDER, this, Looper.getMainLooper());
+            }
+        }
+
+        // Update whenever the system clock is changed.
+        if (mTimeChangedReceiver == null) {
+            mTimeChangedReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    Slog.d(TAG, "onReceive: " + intent);
+                    updateTwilightState();
+                }
+            };
+
+            final IntentFilter intentFilter = new IntentFilter(Intent.ACTION_TIME_CHANGED);
+            intentFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            getContext().registerReceiver(mTimeChangedReceiver, intentFilter);
+        }
+
+        // Force an update now that we have listeners registered.
+        updateTwilightState();
+!!!12532229.java!!!	stopListening() : void
+        Slog.d(TAG, "stopListening");
+
+        if (mTimeChangedReceiver != null) {
+            getContext().unregisterReceiver(mTimeChangedReceiver);
+            mTimeChangedReceiver = null;
+        }
+
+        if (mLastTwilightState != null) {
+            mAlarmManager.cancel(this);
+        }
+
+        mLocationManager.removeUpdates(this);
+        mLastLocation = null;
+!!!12532357.java!!!	updateTwilightState() : void
+        // Calculate the twilight state based on the current time and location.
+        final long currentTimeMillis = System.currentTimeMillis();
+        final Location location = mLastLocation != null ? mLastLocation
+                : mLocationManager.getLastLocation();
+        final TwilightState state = calculateTwilightState(location, currentTimeMillis);
+        if (DEBUG) {
+            Slog.d(TAG, "updateTwilightState: " + state);
+        }
+
+        // Notify listeners if the state has changed.
+        synchronized (mListeners) {
+            if (!Objects.equals(mLastTwilightState, state)) {
+                mLastTwilightState = state;
+
+                for (int i = mListeners.size() - 1; i >= 0; --i) {
+                    final TwilightListener listener = mListeners.keyAt(i);
+                    final Handler handler = mListeners.valueAt(i);
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            listener.onTwilightStateChanged(state);
+                        }
+                    });
+                }
+            }
+        }
+
+        // Schedule an alarm to update the state at the next sunrise or sunset.
+        if (state != null) {
+            final long triggerAtMillis = state.isNight()
+                    ? state.sunriseTimeMillis() : state.sunsetTimeMillis();
+            mAlarmManager.setExact(AlarmManager.RTC, triggerAtMillis, TAG, this, mHandler);
+        }
+!!!12532485.java!!!	onAlarm() : void
+        Slog.d(TAG, "onAlarm");
+        updateTwilightState();
+!!!12532613.java!!!	onLocationChanged(inout location : Location) : void
+        // Location providers may erroneously return (0.0, 0.0) when they fail to determine the
+        // device's location. These location updates can be safely ignored since the chance of a
+        // user actually being at these coordinates is quite low.
+        if (location != null
+                && !(location.getLongitude() == 0.0 && location.getLatitude() == 0.0)) {
+            Slog.d(TAG, "onLocationChanged:"
+                    + " provider=" + location.getProvider()
+                    + " accuracy=" + location.getAccuracy()
+                    + " time=" + location.getTime());
+            mLastLocation = location;
+            updateTwilightState();
+        }
+!!!12533125.java!!!	calculateTwilightState(inout location : Location, in timeMillis : long) : TwilightState
+        if (location == null) {
+            return null;
+        }
+
+        final CalendarAstronomer ca = new CalendarAstronomer(
+                location.getLongitude(), location.getLatitude());
+
+        final Calendar noon = Calendar.getInstance();
+        noon.setTimeInMillis(timeMillis);
+        noon.set(Calendar.HOUR_OF_DAY, 12);
+        noon.set(Calendar.MINUTE, 0);
+        noon.set(Calendar.SECOND, 0);
+        noon.set(Calendar.MILLISECOND, 0);
+        ca.setTime(noon.getTimeInMillis());
+
+        long sunriseTimeMillis = ca.getSunRiseSet(true /* rise */);
+        long sunsetTimeMillis = ca.getSunRiseSet(false /* rise */);
+
+        if (sunsetTimeMillis < timeMillis) {
+            noon.add(Calendar.DATE, 1);
+            ca.setTime(noon.getTimeInMillis());
+            sunriseTimeMillis = ca.getSunRiseSet(true /* rise */);
+        } else if (sunriseTimeMillis > timeMillis) {
+            noon.add(Calendar.DATE, -1);
+            ca.setTime(noon.getTimeInMillis());
+            sunsetTimeMillis = ca.getSunRiseSet(false /* rise */);
+        }
+
+        return new TwilightState(sunriseTimeMillis, sunsetTimeMillis);

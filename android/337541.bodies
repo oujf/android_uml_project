@@ -1,0 +1,66 @@
+class MidiDeviceInfo
+!!!904965.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    // Needs to be kept in sync with code in MidiDeviceInfo.java
+    RETURN_IF_FAILED(parcel->writeInt32(mType));
+    RETURN_IF_FAILED(parcel->writeInt32(mId));
+    RETURN_IF_FAILED(parcel->writeInt32((int32_t)mInputPortNames.size()));
+    RETURN_IF_FAILED(parcel->writeInt32((int32_t)mOutputPortNames.size()));
+    RETURN_IF_FAILED(writeStringVector(parcel, mInputPortNames));
+    RETURN_IF_FAILED(writeStringVector(parcel, mOutputPortNames));
+    RETURN_IF_FAILED(parcel->writeInt32(mIsPrivate ? 1 : 0));
+    RETURN_IF_FAILED(mProperties.writeToParcel(parcel));
+    // This corresponds to "extra" properties written by Java code
+    RETURN_IF_FAILED(mProperties.writeToParcel(parcel));
+    return OK;
+!!!905093.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    // Needs to be kept in sync with code in MidiDeviceInfo.java
+    RETURN_IF_FAILED(parcel->readInt32(&mType));
+    RETURN_IF_FAILED(parcel->readInt32(&mId));
+    int32_t inputPortCount;
+    RETURN_IF_FAILED(parcel->readInt32(&inputPortCount));
+    int32_t outputPortCount;
+    RETURN_IF_FAILED(parcel->readInt32(&outputPortCount));
+    RETURN_IF_FAILED(readStringVector(parcel, &mInputPortNames, inputPortCount));
+    RETURN_IF_FAILED(readStringVector(parcel, &mOutputPortNames, outputPortCount));
+    int32_t isPrivate;
+    RETURN_IF_FAILED(parcel->readInt32(&isPrivate));
+    mIsPrivate = isPrivate == 1;
+    RETURN_IF_FAILED(mProperties.readFromParcel(parcel));
+    // Ignore "extra" properties as they may contain Java Parcelables
+    return OK;
+!!!905861.cpp!!!	getProperty(in propertyName : char) : String16
+    String16 value;
+    if (mProperties.getString(String16(propertyName), &value)) {
+        return value;
+    } else {
+        return String16();
+    }
+!!!905989.cpp!!!	operator ==(in lhs : MidiDeviceInfo, in rhs : MidiDeviceInfo) : bool
+    return (lhs.mType == rhs.mType && lhs.mId == rhs.mId &&
+            areVectorsEqual(lhs.mInputPortNames, rhs.mInputPortNames) &&
+            areVectorsEqual(lhs.mOutputPortNames, rhs.mOutputPortNames) &&
+            lhs.mProperties == rhs.mProperties &&
+            lhs.mIsPrivate == rhs.mIsPrivate);
+!!!906245.cpp!!!	readStringVector(in parcel : Parcel, inout vectorPtr : Vector<String16>, in defaultLength : size_t) : status_t
+    std::unique_ptr<std::vector<std::unique_ptr<String16>>> v;
+    status_t result = parcel->readString16Vector(&v);
+    if (result != OK) return result;
+    vectorPtr->clear();
+    if (v.get() != nullptr) {
+        for (const auto& iter : *v) {
+            if (iter.get() != nullptr) {
+                vectorPtr->push_back(*iter);
+            } else {
+                vectorPtr->push_back(String16());
+            }
+        }
+    } else {
+        vectorPtr->resize(defaultLength);
+    }
+    return OK;
+!!!906373.cpp!!!	writeStringVector(inout parcel : Parcel, in vector : Vector<String16>) : status_t
+    std::vector<String16> v;
+    for (size_t i = 0; i < vector.size(); ++i) {
+        v.push_back(vector[i]);
+    }
+    return parcel->writeString16Vector(v);

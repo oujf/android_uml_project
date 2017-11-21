@@ -1,0 +1,78 @@
+class PluginInstanceManager
+!!!3303557.java!!!	PluginInstanceManager(inout context : Context, in action : String, inout listener : PluginListener<T>, inout allowMultiple : boolean, inout looper : Looper, inout version : VersionInfo, inout manager : PluginManagerImpl)
+        this(context, context.getPackageManager(), action, listener, allowMultiple, looper, version,
+                manager, Build.IS_DEBUGGABLE);
+!!!3303685.java!!!	PluginInstanceManager(inout context : Context, inout pm : PackageManager, in action : String, inout listener : PluginListener<T>, inout allowMultiple : boolean, inout looper : Looper, inout version : VersionInfo, inout manager : PluginManagerImpl, inout debuggable : boolean)
+        mMainHandler = new MainHandler(Looper.getMainLooper());
+        mPluginHandler = new PluginHandler(looper);
+        mManager = manager;
+        mContext = context;
+        mPm = pm;
+        mAction = action;
+        mListener = listener;
+        mAllowMultiple = allowMultiple;
+        mVersion = version;
+        isDebuggable = debuggable;
+!!!3303813.java!!!	getPlugin() : PluginInstanceManager::PluginInfo
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            throw new RuntimeException("Must be called from UI thread");
+        }
+        mPluginHandler.handleQueryPlugins(null /* All packages */);
+        if (mPluginHandler.mPlugins.size() > 0) {
+            mMainHandler.removeMessages(MainHandler.PLUGIN_CONNECTED);
+            PluginInfo<T> info = mPluginHandler.mPlugins.get(0);
+            PluginPrefs.setHasPlugins(mContext);
+            info.mPlugin.onCreate(mContext, info.mPluginContext);
+            return info;
+        }
+        return null;
+!!!3303941.java!!!	loadAll() : void
+        if (DEBUG) Log.d(TAG, "startListening");
+        mPluginHandler.sendEmptyMessage(PluginHandler.QUERY_ALL);
+!!!3304069.java!!!	destroy() : void
+        if (DEBUG) Log.d(TAG, "stopListening");
+        ArrayList<PluginInfo> plugins = new ArrayList<>(mPluginHandler.mPlugins);
+        for (PluginInfo plugin : plugins) {
+            mMainHandler.obtainMessage(MainHandler.PLUGIN_DISCONNECTED,
+                    plugin.mPlugin).sendToTarget();
+        }
+!!!3304197.java!!!	onPackageRemoved(in pkg : String) : void
+        mPluginHandler.obtainMessage(PluginHandler.REMOVE_PKG, pkg).sendToTarget();
+!!!3304325.java!!!	onPackageChange(in pkg : String) : void
+        mPluginHandler.obtainMessage(PluginHandler.REMOVE_PKG, pkg).sendToTarget();
+        mPluginHandler.obtainMessage(PluginHandler.QUERY_PKG, pkg).sendToTarget();
+!!!3304453.java!!!	checkAndDisable(in className : String) : boolean
+        boolean disableAny = false;
+        ArrayList<PluginInfo> plugins = new ArrayList<>(mPluginHandler.mPlugins);
+        for (PluginInfo info : plugins) {
+            if (className.startsWith(info.mPackage)) {
+                disable(info);
+                disableAny = true;
+            }
+        }
+        return disableAny;
+!!!3304581.java!!!	disableAll() : void
+        ArrayList<PluginInfo> plugins = new ArrayList<>(mPluginHandler.mPlugins);
+        for (int i = 0; i < plugins.size(); i++) {
+            disable(plugins.get(i));
+        }
+!!!3304709.java!!!	disable(inout info : PluginInstanceManager::PluginInfo) : void
+        // Live by the sword, die by the sword.
+        // Misbehaving plugins get disabled and won't come back until uninstall/reinstall.
+
+        // If a plugin is detected in the stack of a crash then this will be called for that
+        // plugin, if the plugin causing a crash cannot be identified, they are all disabled
+        // assuming one of them must be bad.
+        Log.w(TAG, "Disabling plugin " + info.mPackage + "/" + info.mClass);
+        mPm.setComponentEnabledSetting(
+                new ComponentName(info.mPackage, info.mClass),
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP);
+!!!3304837.java!!!	dependsOn(inout p : Plugin, inout cls : Class<T>) : boolean
+        ArrayList<PluginInfo> plugins = new ArrayList<>(mPluginHandler.mPlugins);
+        for (PluginInfo info : plugins) {
+            if (info.mPlugin.getClass().getName().equals(p.getClass().getName())) {
+                return info.mVersion != null && info.mVersion.hasClass(cls);
+            }
+        }
+        return false;

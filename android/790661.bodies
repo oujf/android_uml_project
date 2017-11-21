@@ -1,0 +1,73 @@
+class PipNotification
+!!!3302277.java!!!	PipNotification(inout context : Context)
+        mNotificationManager = (NotificationManager) context.getSystemService(
+                Context.NOTIFICATION_SERVICE);
+
+        mNotificationBuilder = new Notification.Builder(context, NotificationChannels.TVPIP)
+                .setLocalOnly(true)
+                .setOngoing(false)
+                .setCategory(Notification.CATEGORY_SYSTEM)
+                .extend(new Notification.TvExtender()
+                        .setContentIntent(createPendingIntent(context, ACTION_MENU))
+                        .setDeleteIntent(createPendingIntent(context, ACTION_CLOSE)));
+
+        mPipManager.addListener(mPipListener);
+        mPipManager.addMediaListener(mPipMediaListener);
+
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(ACTION_MENU);
+        intentFilter.addAction(ACTION_CLOSE);
+        context.registerReceiver(mEventReceiver, intentFilter);
+
+        onConfigurationChanged(context);
+!!!3302405.java!!!	onConfigurationChanged(inout context : Context) : void
+        Resources res = context.getResources();
+        mDefaultTitle = res.getString(R.string.pip_notification_unknown_title);
+        mDefaultIconResId = R.drawable.pip_icon;
+        if (mNotified) {
+            // update notification
+            notifyPipNotification();
+        }
+!!!3302533.java!!!	notifyPipNotification() : void
+        mNotified = true;
+        mNotificationBuilder
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setSmallIcon(mDefaultIconResId)
+                .setContentTitle(!TextUtils.isEmpty(mTitle) ? mTitle : mDefaultTitle);
+        if (mArt != null) {
+            mNotificationBuilder.setStyle(new Notification.BigPictureStyle()
+                    .bigPicture(mArt));
+        } else {
+            mNotificationBuilder.setStyle(null);
+        }
+        mNotificationManager.notify(NOTIFICATION_TAG, SystemMessage.NOTE_TV_PIP,
+                mNotificationBuilder.build());
+!!!3302661.java!!!	dismissPipNotification() : void
+        mNotified = false;
+        mNotificationManager.cancel(NOTIFICATION_TAG, SystemMessage.NOTE_TV_PIP);
+!!!3302789.java!!!	updateMediaControllerMetadata() : boolean
+        String title = null;
+        Bitmap art = null;
+        if (mPipManager.getMediaController() != null) {
+            MediaMetadata metadata = mPipManager.getMediaController().getMetadata();
+            if (metadata != null) {
+                title = metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE);
+                if (TextUtils.isEmpty(title)) {
+                    title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
+                }
+                art = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+                if (art == null) {
+                    art = metadata.getBitmap(MediaMetadata.METADATA_KEY_ART);
+                }
+            }
+        }
+        if (!TextUtils.equals(title, mTitle) || art != mArt) {
+            mTitle = title;
+            mArt = art;
+            return true;
+        }
+        return false;
+!!!3302917.java!!!	createPendingIntent(inout context : Context, in action : String) : PendingIntent
+        return PendingIntent.getBroadcast(context, 0,
+                new Intent(action), PendingIntent.FLAG_CANCEL_CURRENT);

@@ -1,0 +1,437 @@
+class WindowContainer
+!!!12607109.java!!!	getParent() : WindowContainer
+        return mParent;
+!!!12607237.java!!!	setParent(inout parent : WindowContainer) : void
+        mParent = parent;
+        // Removing parent usually means that we've detached this entity to destroy it or to attach
+        // to another parent. In both cases we don't need to update the configuration now.
+        if (mParent != null) {
+            // Update full configuration of this container and all its children.
+            onConfigurationChanged(mParent.mFullConfiguration);
+            // Update merged override configuration of this container and all its children.
+            onMergedOverrideConfigurationChanged();
+        }
+
+        onParentSet();
+!!!12607365.java!!!	onParentSet() : void
+        // Do nothing by default.
+!!!12607493.java!!!	addChild(inout child : E, inout comparator : Comparator<E>) : void
+        if (child.getParent() != null) {
+            throw new IllegalArgumentException("addChild: container=" + child.getName()
+                    + " is already a child of container=" + child.getParent().getName()
+                    + " can't add to container=" + getName());
+        }
+
+        int positionToAdd = -1;
+        if (comparator != null) {
+            final int count = mChildren.size();
+            for (int i = 0; i < count; i++) {
+                if (comparator.compare(child, mChildren.get(i)) < 0) {
+                    positionToAdd = i;
+                    break;
+                }
+            }
+        }
+
+        if (positionToAdd == -1) {
+            mChildren.add(child);
+        } else {
+            mChildren.add(positionToAdd, child);
+        }
+        // Set the parent after we've actually added a child in case a subclass depends on this.
+        child.setParent(this);
+!!!12607621.java!!!	addChild(inout child : E, in index : int) : void
+        if (child.getParent() != null) {
+            throw new IllegalArgumentException("addChild: container=" + child.getName()
+                    + " is already a child of container=" + child.getParent().getName()
+                    + " can't add to container=" + getName());
+        }
+        mChildren.add(index, child);
+        // Set the parent after we've actually added a child in case a subclass depends on this.
+        child.setParent(this);
+!!!12607749.java!!!	removeChild(inout child : E) : void
+        if (mChildren.remove(child)) {
+            child.setParent(null);
+        } else {
+            throw new IllegalArgumentException("removeChild: container=" + child.getName()
+                    + " is not a child of container=" + getName());
+        }
+!!!12607877.java!!!	removeImmediately() : void
+        while (!mChildren.isEmpty()) {
+            final WindowContainer child = mChildren.peekLast();
+            child.removeImmediately();
+            // Need to do this after calling remove on the child because the child might try to
+            // remove/detach itself from its parent which will cause an exception if we remove
+            // it before calling remove on the child.
+            mChildren.remove(child);
+        }
+
+        if (mParent != null) {
+            mParent.removeChild(this);
+        }
+
+        if (mController != null) {
+            setController(null);
+        }
+!!!12608005.java!!!	removeIfPossible() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.removeIfPossible();
+        }
+!!!12608133.java!!!	hasChild(inout child : WindowContainer) : boolean
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer current = mChildren.get(i);
+            if (current == child || current.hasChild(child)) {
+                return true;
+            }
+        }
+        return false;
+!!!12608261.java!!!	positionChildAt(in position : int, inout child : E, inout includingParents : boolean) : void
+
+        if (child.getParent() != this) {
+            throw new IllegalArgumentException("removeChild: container=" + child.getName()
+                    + " is not a child of container=" + getName()
+                    + " current parent=" + child.getParent());
+        }
+
+        if ((position < 0 && position != POSITION_BOTTOM)
+                || (position > mChildren.size() && position != POSITION_TOP)) {
+            throw new IllegalArgumentException("positionAt: invalid position=" + position
+                    + ", children number=" + mChildren.size());
+        }
+
+        if (position >= mChildren.size() - 1) {
+            position = POSITION_TOP;
+        } else if (position == 0) {
+            position = POSITION_BOTTOM;
+        }
+
+        switch (position) {
+            case POSITION_TOP:
+                if (mChildren.peekLast() != child) {
+                    mChildren.remove(child);
+                    mChildren.add(child);
+                }
+                if (includingParents && getParent() != null) {
+                    getParent().positionChildAt(POSITION_TOP, this /* child */,
+                            true /* includingParents */);
+                }
+                break;
+            case POSITION_BOTTOM:
+                if (mChildren.peekFirst() != child) {
+                    mChildren.remove(child);
+                    mChildren.addFirst(child);
+                }
+                if (includingParents && getParent() != null) {
+                    getParent().positionChildAt(POSITION_BOTTOM, this /* child */,
+                            true /* includingParents */);
+                }
+                break;
+            default:
+                mChildren.remove(child);
+                mChildren.add(position, child);
+        }
+!!!12608389.java!!!	getConfiguration() : Configuration
+        return mFullConfiguration;
+!!!12608517.java!!!	onConfigurationChanged(inout newParentConfig : Configuration) : void
+        mFullConfiguration.setTo(newParentConfig);
+        mFullConfiguration.updateFrom(mOverrideConfiguration);
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer child = mChildren.get(i);
+            child.onConfigurationChanged(mFullConfiguration);
+        }
+!!!12608645.java!!!	getOverrideConfiguration() : Configuration
+        return mOverrideConfiguration;
+!!!12608773.java!!!	onOverrideConfigurationChanged(inout overrideConfiguration : Configuration) : void
+        mOverrideConfiguration.setTo(overrideConfiguration);
+        // Update full configuration of this container and all its children.
+        onConfigurationChanged(mParent != null ? mParent.getConfiguration() : EMPTY);
+        // Update merged override config of this container and all its children.
+        onMergedOverrideConfigurationChanged();
+
+        if (mParent != null) {
+            mParent.onDescendantOverrideConfigurationChanged();
+        }
+!!!12608901.java!!!	onDescendantOverrideConfigurationChanged() : void
+        if (mParent != null) {
+            mParent.onDescendantOverrideConfigurationChanged();
+        }
+!!!12609029.java!!!	getMergedOverrideConfiguration() : Configuration
+        return mMergedOverrideConfiguration;
+!!!12609157.java!!!	onMergedOverrideConfigurationChanged() : void
+        if (mParent != null) {
+            mMergedOverrideConfiguration.setTo(mParent.getMergedOverrideConfiguration());
+            mMergedOverrideConfiguration.updateFrom(mOverrideConfiguration);
+        } else {
+            mMergedOverrideConfiguration.setTo(mOverrideConfiguration);
+        }
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer child = mChildren.get(i);
+            child.onMergedOverrideConfigurationChanged();
+        }
+!!!12609285.java!!!	onDisplayChanged(inout dc : DisplayContent) : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer child = mChildren.get(i);
+            child.onDisplayChanged(dc);
+        }
+!!!12609413.java!!!	setWaitingForDrawnIfResizingChanged() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.setWaitingForDrawnIfResizingChanged();
+        }
+!!!12609541.java!!!	onResize() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.onResize();
+        }
+!!!12609669.java!!!	onMovedByResize() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.onMovedByResize();
+        }
+!!!12609797.java!!!	resetDragResizingChangeReported() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.resetDragResizingChangeReported();
+        }
+!!!12609925.java!!!	forceWindowsScaleableInTransaction(inout force : boolean) : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.forceWindowsScaleableInTransaction(force);
+        }
+!!!12610053.java!!!	isAnimating() : boolean
+        for (int j = mChildren.size() - 1; j >= 0; j--) {
+            final WindowContainer wc = mChildren.get(j);
+            if (wc.isAnimating()) {
+                return true;
+            }
+        }
+        return false;
+!!!12610181.java!!!	sendAppVisibilityToClients() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.sendAppVisibilityToClients();
+        }
+!!!12610309.java!!!	setVisibleBeforeClientHidden() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.setVisibleBeforeClientHidden();
+        }
+!!!12610437.java!!!	hasContentToDisplay() : boolean
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            if (wc.hasContentToDisplay()) {
+                return true;
+            }
+        }
+        return false;
+!!!12610565.java!!!	isVisible() : boolean
+        // TODO: Will this be more correct if it checks the visibility of its parents?
+        // It depends...For example, Tasks and Stacks are only visible if there children are visible
+        // but, WindowState are not visible if there parent are not visible. Maybe have the
+        // container specify which direction to traverse for visibility?
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            if (wc.isVisible()) {
+                return true;
+            }
+        }
+        return false;
+!!!12610693.java!!!	getTopChild() : E
+        return mChildren.peekLast();
+!!!12610821.java!!!	checkCompleteDeferredRemoval() : boolean
+        boolean stillDeferringRemoval = false;
+
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            stillDeferringRemoval |= wc.checkCompleteDeferredRemoval();
+        }
+
+        return stillDeferringRemoval;
+!!!12610949.java!!!	checkAppWindowsReadyToShow() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.checkAppWindowsReadyToShow();
+        }
+!!!12611077.java!!!	stepAppWindowsAnimation(in currentTime : long) : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.stepAppWindowsAnimation(currentTime);
+        }
+!!!12611205.java!!!	onAppTransitionDone() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            wc.onAppTransitionDone();
+        }
+!!!12611333.java!!!	setOrientation(in orientation : int) : void
+        mOrientation = orientation;
+!!!12611461.java!!!	getOrientation() : int
+        return getOrientation(mOrientation);
+!!!12611589.java!!!	getOrientation(in candidate : int) : int
+        if (!fillsParent()) {
+            // Ignore containers that don't completely fill their parents.
+            return SCREEN_ORIENTATION_UNSET;
+        }
+
+        // The container fills its parent so we can use it orientation if it has one
+        // specified; otherwise we prefer to use the orientation of its topmost child that has one
+        // specified and fall back on this container's unset or unspecified value as a candidate
+        // if none of the children have a better candidate for the orientation.
+        if (mOrientation != SCREEN_ORIENTATION_UNSET
+                && mOrientation != SCREEN_ORIENTATION_UNSPECIFIED) {
+            return mOrientation;
+        }
+
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+
+            // TODO: Maybe mOrientation should default to SCREEN_ORIENTATION_UNSET vs.
+            // SCREEN_ORIENTATION_UNSPECIFIED?
+            final int orientation = wc.getOrientation(candidate == SCREEN_ORIENTATION_BEHIND
+                    ? SCREEN_ORIENTATION_BEHIND : SCREEN_ORIENTATION_UNSET);
+            if (orientation == SCREEN_ORIENTATION_BEHIND) {
+                // container wants us to use the orientation of the container behind it. See if we
+                // can find one. Else return SCREEN_ORIENTATION_BEHIND so the caller can choose to
+                // look behind this container.
+                candidate = orientation;
+                continue;
+            }
+
+            if (orientation == SCREEN_ORIENTATION_UNSET) {
+                continue;
+            }
+
+            if (wc.fillsParent() || orientation != SCREEN_ORIENTATION_UNSPECIFIED) {
+                // Use the orientation if the container fills its parent or requested an explicit
+                // orientation that isn't SCREEN_ORIENTATION_UNSPECIFIED.
+                return orientation;
+            }
+        }
+
+        return candidate;
+!!!12611717.java!!!	fillsParent() : boolean
+        return false;
+!!!12611845.java!!!	switchUser() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            mChildren.get(i).switchUser();
+        }
+!!!12611973.java!!!	forAllWindows(inout callback : ToBooleanFunction, inout traverseTopToBottom : boolean) : boolean
+        if (traverseTopToBottom) {
+            for (int i = mChildren.size() - 1; i >= 0; --i) {
+                if (mChildren.get(i).forAllWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+            }
+        } else {
+            final int count = mChildren.size();
+            for (int i = 0; i < count; i++) {
+                if (mChildren.get(i).forAllWindows(callback, traverseTopToBottom)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!12612101.java!!!	forAllWindows(inout callback : Consumer<WindowState>, inout traverseTopToBottom : boolean) : void
+        ForAllWindowsConsumerWrapper wrapper = obtainConsumerWrapper(callback);
+        forAllWindows(wrapper, traverseTopToBottom);
+        wrapper.release();
+!!!12612229.java!!!	forAllTasks(inout callback : Consumer<Task>) : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            mChildren.get(i).forAllTasks(callback);
+        }
+!!!12612357.java!!!	getWindow(inout callback : Predicate<WindowState>) : WindowState
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowState w = mChildren.get(i).getWindow(callback);
+            if (w != null) {
+                return w;
+            }
+        }
+
+        return null;
+!!!12612485.java!!!	compareTo(inout other : WindowContainer) : int
+        if (this == other) {
+            return 0;
+        }
+
+        if (mParent != null && mParent == other.mParent) {
+            final WindowList<WindowContainer> list = mParent.mChildren;
+            return list.indexOf(this) > list.indexOf(other) ? 1 : -1;
+        }
+
+        final LinkedList<WindowContainer> thisParentChain = mTmpChain1;
+        final LinkedList<WindowContainer> otherParentChain = mTmpChain2;
+        try {
+            getParents(thisParentChain);
+            other.getParents(otherParentChain);
+
+            // Find the common ancestor of both containers.
+            WindowContainer commonAncestor = null;
+            WindowContainer thisTop = thisParentChain.peekLast();
+            WindowContainer otherTop = otherParentChain.peekLast();
+            while (thisTop != null && otherTop != null && thisTop == otherTop) {
+                commonAncestor = thisParentChain.removeLast();
+                otherParentChain.removeLast();
+                thisTop = thisParentChain.peekLast();
+                otherTop = otherParentChain.peekLast();
+            }
+
+            // Containers don't belong to the same hierarchy???
+            if (commonAncestor == null) {
+                throw new IllegalArgumentException("No in the same hierarchy this="
+                        + thisParentChain + " other=" + otherParentChain);
+            }
+
+            // Children are always considered greater than their parents, so if one of the containers
+            // we are comparing it the parent of the other then whichever is the child is greater.
+            if (commonAncestor == this) {
+                return -1;
+            } else if (commonAncestor == other) {
+                return 1;
+            }
+
+            // The position of the first non-common ancestor in the common ancestor list determines
+            // which is greater the which.
+            final WindowList<WindowContainer> list = commonAncestor.mChildren;
+            return list.indexOf(thisParentChain.peekLast()) > list.indexOf(otherParentChain.peekLast())
+                    ? 1 : -1;
+        } finally {
+            mTmpChain1.clear();
+            mTmpChain2.clear();
+        }
+!!!12612613.java!!!	getParents(inout parents : LinkedList<WindowContainer>) : void
+        parents.clear();
+        WindowContainer current = this;
+        do {
+            parents.addLast(current);
+            current = current.mParent;
+        } while (current != null);
+!!!12612741.java!!!	getController() : WindowContainerController
+        return mController;
+!!!12612869.java!!!	setController(inout controller : WindowContainerController) : void
+        if (mController != null && controller != null) {
+            throw new IllegalArgumentException("Can't set controller=" + mController
+                    + " for container=" + this + " Already set to=" + mController);
+        }
+        if (controller != null) {
+            controller.setContainer(this);
+        } else if (mController != null) {
+            mController.setContainer(null);
+        }
+        mController = controller;
+!!!12612997.java!!!	dumpChildrenNames(inout out : StringBuilder, in prefix : String) : void
+        final String childPrefix = prefix + " ";
+        out.append(getName() + "\n");
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowContainer wc = mChildren.get(i);
+            out.append(childPrefix + "#" + i + " ");
+            wc.dumpChildrenNames(out, childPrefix);
+        }
+!!!12613125.java!!!	getName() : String
+        return toString();
+!!!12613253.java!!!	obtainConsumerWrapper(inout consumer : Consumer<WindowState>) : WindowContainer::ForAllWindowsConsumerWrapper
+        ForAllWindowsConsumerWrapper wrapper = mConsumerWrapperPool.acquire();
+        if (wrapper == null) {
+            wrapper = new ForAllWindowsConsumerWrapper();
+        }
+        wrapper.setConsumer(consumer);
+        return wrapper;

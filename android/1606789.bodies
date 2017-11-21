@@ -1,0 +1,328 @@
+class SyntheticPasswordManager
+!!!10855173.java!!!	SyntheticPasswordManager(inout storage : LockSettingsStorage)
+        mStorage = storage;
+!!!10855301.java!!!	getCredentialType(in handle : long, in userId : int) : int
+        byte[] passwordData = loadState(PASSWORD_DATA_NAME, handle, userId);
+        if (passwordData == null) {
+            Log.w(TAG, "getCredentialType: encountered empty password data for user " + userId);
+            return LockPatternUtils.CREDENTIAL_TYPE_NONE;
+        }
+        return PasswordData.fromBytes(passwordData).passwordType;
+!!!10855429.java!!!	newSyntheticPasswordAndSid(inout gatekeeper : IGateKeeperService, inout hash : byte [[]], in credential : String, in userId : int) : SyntheticPasswordManager::AuthenticationToken
+        AuthenticationToken result = AuthenticationToken.create();
+        GateKeeperResponse response;
+        if (hash != null) {
+            response = gatekeeper.enroll(userId, hash, credential.getBytes(),
+                    result.deriveGkPassword());
+            if (response.getResponseCode() != GateKeeperResponse.RESPONSE_OK) {
+                Log.w(TAG, "Fail to migrate SID, assuming no SID, user " + userId);
+                clearSidForUser(userId);
+            } else {
+                saveSyntheticPasswordHandle(response.getPayload(), userId);
+            }
+        } else {
+            clearSidForUser(userId);
+        }
+        saveEscrowData(result, userId);
+        return result;
+!!!10855557.java!!!	newSidForUser(inout gatekeeper : IGateKeeperService, inout authToken : SyntheticPasswordManager::AuthenticationToken, in userId : int) : void
+        GateKeeperResponse response = gatekeeper.enroll(userId, null, null,
+                authToken.deriveGkPassword());
+        if (response.getResponseCode() != GateKeeperResponse.RESPONSE_OK) {
+            Log.e(TAG, "Fail to create new SID for user " + userId);
+            return;
+        }
+        saveSyntheticPasswordHandle(response.getPayload(), userId);
+!!!10855685.java!!!	clearSidForUser(in userId : int) : void
+        destroyState(SP_HANDLE_NAME, DEFAULT_HANDLE, userId);
+!!!10855813.java!!!	hasSidForUser(in userId : int) : boolean
+        return hasState(SP_HANDLE_NAME, DEFAULT_HANDLE, userId);
+!!!10855941.java!!!	loadSyntheticPasswordHandle(in userId : int) : byte
+        return loadState(SP_HANDLE_NAME, DEFAULT_HANDLE, userId);
+!!!10856069.java!!!	saveSyntheticPasswordHandle(inout spHandle : byte [[]], in userId : int) : void
+        saveState(SP_HANDLE_NAME, spHandle, DEFAULT_HANDLE, userId);
+!!!10856197.java!!!	loadEscrowData(inout authToken : SyntheticPasswordManager::AuthenticationToken, in userId : int) : boolean
+        authToken.E0 = loadState(SP_E0_NAME, DEFAULT_HANDLE, userId);
+        authToken.P1 = loadState(SP_P1_NAME, DEFAULT_HANDLE, userId);
+        return authToken.E0 != null && authToken.P1 != null;
+!!!10856325.java!!!	saveEscrowData(inout authToken : SyntheticPasswordManager::AuthenticationToken, in userId : int) : void
+        saveState(SP_E0_NAME, authToken.E0, DEFAULT_HANDLE, userId);
+        saveState(SP_P1_NAME, authToken.P1, DEFAULT_HANDLE, userId);
+!!!10856453.java!!!	hasEscrowData(in userId : int) : boolean
+        return hasState(SP_E0_NAME, DEFAULT_HANDLE, userId)
+                && hasState(SP_P1_NAME, DEFAULT_HANDLE, userId);
+!!!10856581.java!!!	destroyEscrowData(in userId : int) : void
+        destroyState(SP_E0_NAME, DEFAULT_HANDLE, userId);
+        destroyState(SP_P1_NAME, DEFAULT_HANDLE, userId);
+!!!10856709.java!!!	createPasswordBasedSyntheticPassword(inout gatekeeper : IGateKeeperService, in credential : String, in credentialType : int, inout authToken : SyntheticPasswordManager::AuthenticationToken, in userId : int) : long
+        if (credential == null || credentialType == LockPatternUtils.CREDENTIAL_TYPE_NONE) {
+            credentialType = LockPatternUtils.CREDENTIAL_TYPE_NONE;
+            credential = DEFAULT_PASSWORD;
+        }
+
+        long handle = generateHandle();
+        PasswordData pwd = PasswordData.create(credentialType);
+        byte[] pwdToken = computePasswordToken(credential, pwd);
+
+        // In case GK enrollment leaves persistent state around (in RPMB), this will nuke them
+        // to prevent them from accumulating and causing problems.
+        gatekeeper.clearSecureUserId(fakeUid(userId));
+        GateKeeperResponse response = gatekeeper.enroll(fakeUid(userId), null, null,
+                passwordTokenToGkInput(pwdToken));
+        if (response.getResponseCode() != GateKeeperResponse.RESPONSE_OK) {
+            Log.e(TAG, "Fail to enroll user password when creating SP for user " + userId);
+            return DEFAULT_HANDLE;
+        }
+        pwd.passwordHandle = response.getPayload();
+        long sid = sidFromPasswordHandle(pwd.passwordHandle);
+        saveState(PASSWORD_DATA_NAME, pwd.toBytes(), handle, userId);
+
+        byte[] applicationId = transformUnderSecdiscardable(pwdToken,
+                createSecdiscardable(handle, userId));
+        createSyntheticPasswordBlob(handle, SYNTHETIC_PASSWORD_PASSWORD_BASED, authToken,
+                applicationId, sid, userId);
+        return handle;
+!!!10856837.java!!!	createTokenBasedSyntheticPassword(inout token : byte [[]], in userId : int) : long
+        long handle = generateHandle();
+        byte[] applicationId = transformUnderSecdiscardable(token,
+                createSecdiscardable(handle, userId));
+        if (!tokenMap.containsKey(userId)) {
+            tokenMap.put(userId, new ArrayMap<>());
+        }
+        tokenMap.get(userId).put(handle, applicationId);
+        return handle;
+!!!10856965.java!!!	getPendingTokensForUser(in userId : int) : Set<Long>
+        if (!tokenMap.containsKey(userId)) {
+            return Collections.emptySet();
+        }
+        return tokenMap.get(userId).keySet();
+!!!10857093.java!!!	removePendingToken(in handle : long, in userId : int) : boolean
+        if (!tokenMap.containsKey(userId)) {
+            return false;
+        }
+        return tokenMap.get(userId).remove(handle) != null;
+!!!10857221.java!!!	activateTokenBasedSyntheticPassword(in handle : long, inout authToken : SyntheticPasswordManager::AuthenticationToken, in userId : int) : boolean
+        if (!tokenMap.containsKey(userId)) {
+            return false;
+        }
+        byte[] applicationId = tokenMap.get(userId).get(handle);
+        if (applicationId == null) {
+            return false;
+        }
+        if (!loadEscrowData(authToken, userId)) {
+            Log.w(TAG, "User is not escrowable");
+            return false;
+        }
+        createSyntheticPasswordBlob(handle, SYNTHETIC_PASSWORD_TOKEN_BASED, authToken,
+                applicationId, 0L, userId);
+        tokenMap.get(userId).remove(handle);
+        return true;
+!!!10857349.java!!!	createSyntheticPasswordBlob(in handle : long, in type : byte, inout authToken : SyntheticPasswordManager::AuthenticationToken, inout applicationId : byte [[]], in sid : long, in userId : int) : void
+        final byte[] secret;
+        if (type == SYNTHETIC_PASSWORD_TOKEN_BASED) {
+            secret = authToken.computeP0();
+        } else {
+            secret = authToken.syntheticPassword.getBytes();
+        }
+        byte[] content = createSPBlob(getHandleName(handle), secret, applicationId, sid);
+        byte[] blob = new byte[content.length + 1 + 1];
+        blob[0] = SYNTHETIC_PASSWORD_VERSION;
+        blob[1] = type;
+        System.arraycopy(content, 0, blob, 2, content.length);
+        saveState(SP_BLOB_NAME, blob, handle, userId);
+!!!10857477.java!!!	unwrapPasswordBasedSyntheticPassword(inout gatekeeper : IGateKeeperService, in handle : long, in credential : String, in userId : int) : SyntheticPasswordManager::AuthenticationResult
+        if (credential == null) {
+            credential = DEFAULT_PASSWORD;
+        }
+        AuthenticationResult result = new AuthenticationResult();
+        PasswordData pwd = PasswordData.fromBytes(loadState(PASSWORD_DATA_NAME, handle, userId));
+        byte[] pwdToken = computePasswordToken(credential, pwd);
+        byte[] gkPwdToken = passwordTokenToGkInput(pwdToken);
+
+        GateKeeperResponse response = gatekeeper.verifyChallenge(fakeUid(userId), 0L,
+                pwd.passwordHandle, gkPwdToken);
+        int responseCode = response.getResponseCode();
+        if (responseCode == GateKeeperResponse.RESPONSE_OK) {
+            result.gkResponse = VerifyCredentialResponse.OK;
+            if (response.getShouldReEnroll()) {
+                GateKeeperResponse reenrollResponse = gatekeeper.enroll(fakeUid(userId),
+                        pwd.passwordHandle, gkPwdToken, gkPwdToken);
+                if (reenrollResponse.getResponseCode() == GateKeeperResponse.RESPONSE_OK) {
+                    pwd.passwordHandle = reenrollResponse.getPayload();
+                    saveState(PASSWORD_DATA_NAME, pwd.toBytes(), handle, userId);
+                } else {
+                    Log.w(TAG, "Fail to re-enroll user password for user " + userId);
+                    // continue the flow anyway
+                }
+            }
+        } else if (responseCode == GateKeeperResponse.RESPONSE_RETRY) {
+            result.gkResponse = new VerifyCredentialResponse(response.getTimeout());
+            return result;
+        } else  {
+            result.gkResponse = VerifyCredentialResponse.ERROR;
+            return result;
+        }
+
+
+        byte[] applicationId = transformUnderSecdiscardable(pwdToken,
+                loadSecdiscardable(handle, userId));
+        result.authToken = unwrapSyntheticPasswordBlob(handle, SYNTHETIC_PASSWORD_PASSWORD_BASED,
+                applicationId, userId);
+
+        // Perform verifyChallenge to refresh auth tokens for GK if user password exists.
+        result.gkResponse = verifyChallenge(gatekeeper, result.authToken, 0L, userId);
+        return result;
+!!!10857605.java!!!	unwrapTokenBasedSyntheticPassword(inout gatekeeper : IGateKeeperService, in handle : long, inout token : byte [[]], in userId : int) : SyntheticPasswordManager::AuthenticationResult
+        AuthenticationResult result = new AuthenticationResult();
+        byte[] applicationId = transformUnderSecdiscardable(token,
+                loadSecdiscardable(handle, userId));
+        result.authToken = unwrapSyntheticPasswordBlob(handle, SYNTHETIC_PASSWORD_TOKEN_BASED,
+                applicationId, userId);
+        if (result.authToken != null) {
+            result.gkResponse = verifyChallenge(gatekeeper, result.authToken, 0L, userId);
+            if (result.gkResponse == null) {
+                // The user currently has no password. return OK with null payload so null
+                // is propagated to unlockUser()
+                result.gkResponse = VerifyCredentialResponse.OK;
+            }
+        } else {
+            result.gkResponse = VerifyCredentialResponse.ERROR;
+        }
+        return result;
+!!!10857733.java!!!	unwrapSyntheticPasswordBlob(in handle : long, in type : byte, inout applicationId : byte [[]], in userId : int) : SyntheticPasswordManager::AuthenticationToken
+        byte[] blob = loadState(SP_BLOB_NAME, handle, userId);
+        if (blob == null) {
+            return null;
+        }
+        if (blob[0] != SYNTHETIC_PASSWORD_VERSION) {
+            throw new RuntimeException("Unknown blob version");
+        }
+        if (blob[1] != type) {
+            throw new RuntimeException("Invalid blob type");
+        }
+        byte[] secret = decryptSPBlob(getHandleName(handle),
+                Arrays.copyOfRange(blob, 2, blob.length), applicationId);
+        if (secret == null) {
+            Log.e(TAG, "Fail to decrypt SP for user " + userId);
+            return null;
+        }
+        AuthenticationToken result = new AuthenticationToken();
+        if (type == SYNTHETIC_PASSWORD_TOKEN_BASED) {
+            if (!loadEscrowData(result, userId)) {
+                Log.e(TAG, "User is not escrowable: " + userId);
+                return null;
+            }
+            result.recreate(secret);
+        } else {
+            result.syntheticPassword = new String(secret);
+        }
+        return result;
+!!!10857861.java!!!	verifyChallenge(inout gatekeeper : IGateKeeperService, inout auth : SyntheticPasswordManager::AuthenticationToken, in challenge : long, in userId : int) : VerifyCredentialResponse
+        byte[] spHandle = loadSyntheticPasswordHandle(userId);
+        if (spHandle == null) {
+            // There is no password handle associated with the given user, i.e. the user is not
+            // secured by lockscreen and has no SID, so just return here;
+            return null;
+        }
+        VerifyCredentialResponse result;
+        GateKeeperResponse response = gatekeeper.verifyChallenge(userId, challenge,
+                spHandle, auth.deriveGkPassword());
+        int responseCode = response.getResponseCode();
+        if (responseCode == GateKeeperResponse.RESPONSE_OK) {
+            result = new VerifyCredentialResponse(response.getPayload());
+            if (response.getShouldReEnroll()) {
+                response = gatekeeper.enroll(userId, spHandle,
+                        spHandle, auth.deriveGkPassword());
+                if (response.getResponseCode() == GateKeeperResponse.RESPONSE_OK) {
+                    spHandle = response.getPayload();
+                    saveSyntheticPasswordHandle(spHandle, userId);
+                    // Call self again to re-verify with updated handle
+                    return verifyChallenge(gatekeeper, auth, challenge, userId);
+                } else {
+                    Log.w(TAG, "Fail to re-enroll SP handle for user " + userId);
+                    // Fall through, return existing handle
+                }
+            }
+        } else if (responseCode == GateKeeperResponse.RESPONSE_RETRY) {
+            result = new VerifyCredentialResponse(response.getTimeout());
+        } else {
+            result = VerifyCredentialResponse.ERROR;
+        }
+        return result;
+!!!10857989.java!!!	existsHandle(in handle : long, in userId : int) : boolean
+        return hasState(SP_BLOB_NAME, handle, userId);
+!!!10858117.java!!!	destroyTokenBasedSyntheticPassword(in handle : long, in userId : int) : void
+        destroySyntheticPassword(handle, userId);
+        destroyState(SECDISCARDABLE_NAME, handle, userId);
+!!!10858245.java!!!	destroyPasswordBasedSyntheticPassword(in handle : long, in userId : int) : void
+        destroySyntheticPassword(handle, userId);
+        destroyState(SECDISCARDABLE_NAME, handle, userId);
+        destroyState(PASSWORD_DATA_NAME, handle, userId);
+!!!10858373.java!!!	destroySyntheticPassword(in handle : long, in userId : int) : void
+        destroyState(SP_BLOB_NAME, handle, userId);
+        destroySPBlobKey(getHandleName(handle));
+!!!10858501.java!!!	transformUnderSecdiscardable(inout data : byte [[]], inout rawSecdiscardable : byte [[]]) : byte
+        byte[] secdiscardable = SyntheticPasswordCrypto.personalisedHash(
+                PERSONALISATION_SECDISCARDABLE, rawSecdiscardable);
+        byte[] result = new byte[data.length + secdiscardable.length];
+        System.arraycopy(data, 0, result, 0, data.length);
+        System.arraycopy(secdiscardable, 0, result, data.length, secdiscardable.length);
+        return result;
+!!!10858629.java!!!	createSecdiscardable(in handle : long, in userId : int) : byte
+        byte[] data = secureRandom(SECDISCARDABLE_LENGTH);
+        saveState(SECDISCARDABLE_NAME, data, handle, userId);
+        return data;
+!!!10858757.java!!!	loadSecdiscardable(in handle : long, in userId : int) : byte
+        return loadState(SECDISCARDABLE_NAME, handle, userId);
+!!!10858885.java!!!	hasState(in stateName : String, in handle : long, in userId : int) : boolean
+        return !ArrayUtils.isEmpty(loadState(stateName, handle, userId));
+!!!10859013.java!!!	loadState(in stateName : String, in handle : long, in userId : int) : byte
+        return mStorage.readSyntheticPasswordState(userId, handle, stateName);
+!!!10859141.java!!!	saveState(in stateName : String, inout data : byte [[]], in handle : long, in userId : int) : void
+        mStorage.writeSyntheticPasswordState(userId, handle, stateName, data);
+!!!10859269.java!!!	destroyState(in stateName : String, in handle : long, in userId : int) : void
+        mStorage.deleteSyntheticPasswordState(userId, handle, stateName);
+!!!10859397.java!!!	decryptSPBlob(in blobKeyName : String, inout blob : byte [[]], inout applicationId : byte [[]]) : byte
+        return SyntheticPasswordCrypto.decryptBlob(blobKeyName, blob, applicationId);
+!!!10859525.java!!!	createSPBlob(in blobKeyName : String, inout data : byte [[]], inout applicationId : byte [[]], in sid : long) : byte
+        return SyntheticPasswordCrypto.createBlob(blobKeyName, data, applicationId, sid);
+!!!10859653.java!!!	destroySPBlobKey(in keyAlias : String) : void
+        SyntheticPasswordCrypto.destroyBlobKey(keyAlias);
+!!!10859781.java!!!	generateHandle() : long
+        SecureRandom rng = new SecureRandom();
+        long result;
+        do {
+            result = rng.nextLong();
+        } while (result == DEFAULT_HANDLE);
+        return result;
+!!!10859909.java!!!	fakeUid(in uid : int) : int
+        return 100000 + uid;
+!!!10860037.java!!!	secureRandom(in length : int) : byte
+        try {
+            return SecureRandom.getInstance("SHA1PRNG").generateSeed(length);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+!!!10860165.java!!!	getHandleName(in handle : long) : String
+        return String.format("%s%x", LockPatternUtils.SYNTHETIC_PASSWORD_KEY_PREFIX, handle);
+!!!10860293.java!!!	computePasswordToken(in password : String, inout data : SyntheticPasswordManager::PasswordData) : byte
+        return scrypt(password, data.salt, 1 << data.scryptN, 1 << data.scryptR, 1 << data.scryptP,
+                PASSWORD_TOKEN_LENGTH);
+!!!10860421.java!!!	passwordTokenToGkInput(inout token : byte [[]]) : byte
+        return SyntheticPasswordCrypto.personalisedHash(PERSONALIZATION_USER_GK_AUTH, token);
+!!!10860549.java!!!	sidFromPasswordHandle(inout handle : byte [[]]) : long
+        return nativeSidFromPasswordHandle(handle);
+!!!10860677.java!!!	scrypt(in password : String, inout salt : byte [[]], in N : int, in r : int, in p : int, in outLen : int) : byte
+        return nativeScrypt(password.getBytes(), salt, N, r, p, outLen);
+!!!10861061.java!!!	bytesToHex(inout bytes : byte [[]]) : String
+        if (bytes == null) {
+            return "null";
+        }
+        char[] hexChars = new char[bytes.length * 2];
+        for ( int j = 0; j < bytes.length; j++ ) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = hexArray[v >>> 4];
+            hexChars[j * 2 + 1] = hexArray[v & 0x0F];
+        }
+        return new String(hexChars);

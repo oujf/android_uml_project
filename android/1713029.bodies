@@ -1,0 +1,49 @@
+class CallbackDelegate
+!!!11849989.java!!!	CallbackDelegate()
+            mHandler = new Handler(Looper.getMainLooper(), null, true /*async*/);
+            mClientCallbacks = new ArrayMap<IBinder, IMediaProjectionCallback>();
+            mWatcherCallbacks = new ArrayMap<IBinder, IMediaProjectionWatcherCallback>();
+!!!11850117.java!!!	add(inout callback : IMediaProjectionCallback) : void
+            synchronized (mLock) {
+                mClientCallbacks.put(callback.asBinder(), callback);
+            }
+!!!11850245.java!!!	add(inout callback : IMediaProjectionWatcherCallback) : void
+            synchronized (mLock) {
+                mWatcherCallbacks.put(callback.asBinder(), callback);
+            }
+!!!11850373.java!!!	remove(inout callback : IMediaProjectionCallback) : void
+            synchronized (mLock) {
+                mClientCallbacks.remove(callback.asBinder());
+            }
+!!!11850501.java!!!	remove(inout callback : IMediaProjectionWatcherCallback) : void
+            synchronized (mLock) {
+                mWatcherCallbacks.remove(callback.asBinder());
+            }
+!!!11850629.java!!!	dispatchStart(inout projection : MediaProjectionManagerService::MediaProjection) : void
+            if (projection == null) {
+                Slog.e(TAG, "Tried to dispatch start notification for a null media projection."
+                        + " Ignoring!");
+                return;
+            }
+            synchronized (mLock) {
+                for (IMediaProjectionWatcherCallback callback : mWatcherCallbacks.values()) {
+                    MediaProjectionInfo info = projection.getProjectionInfo();
+                    mHandler.post(new WatcherStartCallback(info, callback));
+                }
+            }
+!!!11850757.java!!!	dispatchStop(inout projection : MediaProjectionManagerService::MediaProjection) : void
+            if (projection == null) {
+                Slog.e(TAG, "Tried to dispatch stop notification for a null media projection."
+                        + " Ignoring!");
+                return;
+            }
+            synchronized (mLock) {
+                for (IMediaProjectionCallback callback : mClientCallbacks.values()) {
+                    mHandler.post(new ClientStopCallback(callback));
+                }
+
+                for (IMediaProjectionWatcherCallback callback : mWatcherCallbacks.values()) {
+                    MediaProjectionInfo info = projection.getProjectionInfo();
+                    mHandler.post(new WatcherStopCallback(info, callback));
+                }
+            }

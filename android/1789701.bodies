@@ -1,0 +1,64 @@
+class InputInterceptor
+!!!12707845.java!!!	InputInterceptor(inout display : Display)
+            InputChannel[] channels = InputChannel.openInputChannelPair("drag");
+            mServerChannel = channels[0];
+            mClientChannel = channels[1];
+            mService.mInputManager.registerInputChannel(mServerChannel, null);
+            mInputEventReceiver = mService.new DragInputEventReceiver(mClientChannel,
+                    mService.mH.getLooper());
+
+            mDragApplicationHandle = new InputApplicationHandle(null);
+            mDragApplicationHandle.name = "drag";
+            mDragApplicationHandle.dispatchingTimeoutNanos =
+                    WindowManagerService.DEFAULT_INPUT_DISPATCHING_TIMEOUT_NANOS;
+
+            mDragWindowHandle = new InputWindowHandle(mDragApplicationHandle, null, null,
+                    display.getDisplayId());
+            mDragWindowHandle.name = "drag";
+            mDragWindowHandle.inputChannel = mServerChannel;
+            mDragWindowHandle.layer = getDragLayerLw();
+            mDragWindowHandle.layoutParamsFlags = 0;
+            mDragWindowHandle.layoutParamsType = WindowManager.LayoutParams.TYPE_DRAG;
+            mDragWindowHandle.dispatchingTimeoutNanos =
+                    WindowManagerService.DEFAULT_INPUT_DISPATCHING_TIMEOUT_NANOS;
+            mDragWindowHandle.visible = true;
+            mDragWindowHandle.canReceiveKeys = false;
+            mDragWindowHandle.hasFocus = true;
+            mDragWindowHandle.hasWallpaper = false;
+            mDragWindowHandle.paused = false;
+            mDragWindowHandle.ownerPid = Process.myPid();
+            mDragWindowHandle.ownerUid = Process.myUid();
+            mDragWindowHandle.inputFeatures = 0;
+            mDragWindowHandle.scaleFactor = 1.0f;
+
+            // The drag window cannot receive new touches.
+            mDragWindowHandle.touchableRegion.setEmpty();
+
+            // The drag window covers the entire display
+            mDragWindowHandle.frameLeft = 0;
+            mDragWindowHandle.frameTop = 0;
+            mDragWindowHandle.frameRight = mDisplaySize.x;
+            mDragWindowHandle.frameBottom = mDisplaySize.y;
+
+            // Pause rotations before a drag.
+            if (DEBUG_ORIENTATION) {
+                Slog.d(TAG_WM, "Pausing rotation during drag");
+            }
+            mService.pauseRotationLocked();
+!!!12707973.java!!!	tearDown() : void
+            mService.mInputManager.unregisterInputChannel(mServerChannel);
+            mInputEventReceiver.dispose();
+            mInputEventReceiver = null;
+            mClientChannel.dispose();
+            mServerChannel.dispose();
+            mClientChannel = null;
+            mServerChannel = null;
+
+            mDragWindowHandle = null;
+            mDragApplicationHandle = null;
+
+            // Resume rotations after a drag.
+            if (DEBUG_ORIENTATION) {
+                Slog.d(TAG_WM, "Resuming rotation after drag");
+            }
+            mService.resumeRotationLocked();

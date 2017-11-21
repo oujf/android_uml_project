@@ -1,0 +1,95 @@
+class SharedMemoryParcelable
+!!!668165.cpp!!!	setup(in fd : int, in sizeInBytes : int32_t) : void
+    mFd = fd;
+    mSizeInBytes = sizeInBytes;
+
+!!!668293.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    status_t status = parcel->writeInt32(mSizeInBytes);
+    if (status != NO_ERROR) return status;
+    if (mSizeInBytes > 0) {
+        status = parcel->writeDupFileDescriptor(mFd);
+        ALOGE_IF(status != NO_ERROR, "SharedMemoryParcelable writeDupFileDescriptor failed : %d",
+                 status);
+    }
+    return status;
+!!!668421.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    status_t status = parcel->readInt32(&mSizeInBytes);
+    if (status != NO_ERROR) {
+        return status;
+    }
+    if (mSizeInBytes > 0) {
+        // Keep the original FD until you are done with the mFd.
+        // If you close it in here then it will prevent mFd from working.
+        mOriginalFd = parcel->readFileDescriptor();
+        ALOGV("SharedMemoryParcelable::readFromParcel() LEAK? mOriginalFd = %d\n", mOriginalFd);
+        mFd = fcntl(mOriginalFd, F_DUPFD_CLOEXEC, 0);
+        ALOGV("SharedMemoryParcelable::readFromParcel() LEAK? mFd = %d\n", mFd);
+        if (mFd == -1) {
+            status = -errno;
+            ALOGE("SharedMemoryParcelable readFromParcel fcntl() failed : %d", status);
+        }
+    }
+    return status;
+!!!668549.cpp!!!	resolve(in offsetInBytes : int32_t, in sizeInBytes : int32_t, inout regionAddressPtr : void) : aaudio_result_t
+
+    if (offsetInBytes < 0) {
+        ALOGE("SharedMemoryParcelable illegal offsetInBytes = %d", offsetInBytes);
+        return AAUDIO_ERROR_OUT_OF_RANGE;
+    } else if ((offsetInBytes + sizeInBytes) > mSizeInBytes) {
+        ALOGE("SharedMemoryParcelable out of range, offsetInBytes = %d, "
+              "sizeInBytes = %d, mSizeInBytes = %d",
+              offsetInBytes, sizeInBytes, mSizeInBytes);
+        return AAUDIO_ERROR_OUT_OF_RANGE;
+    }
+    if (mResolvedAddress == MMAP_UNRESOLVED_ADDRESS) {
+        mResolvedAddress = (uint8_t *) mmap(0, mSizeInBytes, PROT_READ|PROT_WRITE,
+                                          MAP_SHARED, mFd, 0);
+        if (mResolvedAddress == MMAP_UNRESOLVED_ADDRESS) {
+            ALOGE("SharedMemoryParcelable mmap failed for fd = %d, errno = %s",
+                  mFd, strerror(errno));
+            return AAUDIO_ERROR_INTERNAL;
+        }
+    }
+    *regionAddressPtr = mResolvedAddress + offsetInBytes;
+    ALOGV("SharedMemoryParcelable mResolvedAddress = %p", mResolvedAddress);
+    ALOGV("SharedMemoryParcelable offset by %d, *regionAddressPtr = %p",
+          offsetInBytes, *regionAddressPtr);
+    return AAUDIO_OK;
+!!!668677.cpp!!!	close() : aaudio_result_t
+    if (mResolvedAddress != MMAP_UNRESOLVED_ADDRESS) {
+        int err = munmap(mResolvedAddress, mSizeInBytes);
+        if (err < 0) {
+            ALOGE("SharedMemoryParcelable::close() munmap() failed %d", err);
+            return AAudioConvert_androidToAAudioResult(err);
+        }
+        mResolvedAddress = MMAP_UNRESOLVED_ADDRESS;
+    }
+    if (mFd != -1) {
+        ALOGV("SharedMemoryParcelable::close() LEAK? mFd = %d\n", mFd);
+        ::close(mFd);
+        mFd = -1;
+    }
+    if (mOriginalFd != -1) {
+        ALOGV("SharedMemoryParcelable::close() LEAK? mOriginalFd = %d\n", mOriginalFd);
+        ::close(mOriginalFd);
+        mOriginalFd = -1;
+    }
+    return AAUDIO_OK;
+!!!668933.cpp!!!	getSizeInBytes() : int32_t
+    return mSizeInBytes;
+!!!669061.cpp!!!	validate() : aaudio_result_t
+    if (mSizeInBytes < 0 || mSizeInBytes >= MAX_MMAP_SIZE_BYTES) {
+        ALOGE("SharedMemoryParcelable invalid mSizeInBytes = %d", mSizeInBytes);
+        return AAUDIO_ERROR_OUT_OF_RANGE;
+    }
+    if (mSizeInBytes > 0) {
+        if (mFd == -1) {
+            ALOGE("SharedMemoryParcelable uninitialized mFd = %d", mFd);
+            return AAUDIO_ERROR_INTERNAL;
+        }
+    }
+    return AAUDIO_OK;
+!!!669189.cpp!!!	dump() : void
+    ALOGD("SharedMemoryParcelable mFd = %d", mFd);
+    ALOGD("SharedMemoryParcelable mSizeInBytes = %d", mSizeInBytes);
+    ALOGD("SharedMemoryParcelable mResolvedAddress = %p", mResolvedAddress);

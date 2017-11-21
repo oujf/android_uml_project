@@ -1,0 +1,182 @@
+class QSDetail
+!!!3349765.java!!!	QSDetail(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!3349893.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        FontSizeUtils.updateFontSize(mDetailDoneButton, R.dimen.qs_detail_button_text_size);
+        FontSizeUtils.updateFontSize(mDetailSettingsButton, R.dimen.qs_detail_button_text_size);
+
+        for (int i = 0; i < mDetailViews.size(); i++) {
+            mDetailViews.valueAt(i).dispatchConfigurationChanged(newConfig);
+        }
+!!!3350021.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        mDetailContent = findViewById(android.R.id.content);
+        mDetailSettingsButton = findViewById(android.R.id.button2);
+        mDetailDoneButton = findViewById(android.R.id.button1);
+
+        mQsDetailHeader = findViewById(R.id.qs_detail_header);
+        mQsDetailHeaderTitle = (TextView) mQsDetailHeader.findViewById(android.R.id.title);
+        mQsDetailHeaderSwitch = (Switch) mQsDetailHeader.findViewById(android.R.id.toggle);
+        mQsDetailHeaderProgress = findViewById(R.id.qs_detail_header_progress);
+
+        updateDetailText();
+
+        mClipper = new QSDetailClipper(this);
+
+        final OnClickListener doneListener = new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                announceForAccessibility(
+                        mContext.getString(R.string.accessibility_desc_quick_settings));
+                mQsPanel.closeDetail();
+            }
+        };
+        mDetailDoneButton.setOnClickListener(doneListener);
+!!!3350149.java!!!	setQsPanel(inout panel : QSPanel, inout header : QuickStatusBarHeader, inout footer : View) : void
+        mQsPanel = panel;
+        mHeader = header;
+        mFooter = footer;
+        mHeader.setCallback(mQsPanelCallback);
+        mQsPanel.setCallback(mQsPanelCallback);
+!!!3350277.java!!!	setHost(inout host : QSTileHost) : void
+        mHost = host;
+!!!3350405.java!!!	isShowingDetail() : boolean
+        return mDetailAdapter != null;
+!!!3350533.java!!!	setFullyExpanded(inout fullyExpanded : boolean) : void
+        mFullyExpanded = fullyExpanded;
+!!!3350661.java!!!	setExpanded(inout qsExpanded : boolean) : void
+        if (!qsExpanded) {
+            mTriggeredExpand = false;
+        }
+!!!3350789.java!!!	updateDetailText() : void
+        mDetailDoneButton.setText(R.string.quick_settings_done);
+        mDetailSettingsButton.setText(R.string.quick_settings_more_settings);
+!!!3350917.java!!!	updateResources() : void
+        updateDetailText();
+!!!3351045.java!!!	isClosingDetail() : boolean
+        return mClosingDetail;
+!!!3351557.java!!!	handleShowingDetail(in adapter : DetailAdapter, in x : int, in y : int, inout toggleQs : boolean) : void
+        final boolean showingDetail = adapter != null;
+        setClickable(showingDetail);
+        if (showingDetail) {
+            setupDetailHeader(adapter);
+            if (toggleQs && !mFullyExpanded) {
+                mTriggeredExpand = true;
+                SysUiServiceProvider.getComponent(mContext, CommandQueue.class)
+                        .animateExpandSettingsPanel(null);
+            } else {
+                mTriggeredExpand = false;
+            }
+            mOpenX = x;
+            mOpenY = y;
+        } else {
+            // Ensure we collapse into the same point we opened from.
+            x = mOpenX;
+            y = mOpenY;
+            if (toggleQs && mTriggeredExpand) {
+                SysUiServiceProvider.getComponent(mContext, CommandQueue.class)
+                        .animateCollapsePanels();
+                mTriggeredExpand = false;
+            }
+        }
+
+        boolean visibleDiff = (mDetailAdapter != null) != (adapter != null);
+        if (!visibleDiff && mDetailAdapter == adapter) return;  // already in right state
+        AnimatorListener listener = null;
+        if (adapter != null) {
+            int viewCacheIndex = adapter.getMetricsCategory();
+            View detailView = adapter.createDetailView(mContext, mDetailViews.get(viewCacheIndex),
+                    mDetailContent);
+            if (detailView == null) throw new IllegalStateException("Must return detail view");
+
+            setupDetailFooter(adapter);
+
+            mDetailContent.removeAllViews();
+            mDetailContent.addView(detailView);
+            mDetailViews.put(viewCacheIndex, detailView);
+            Dependency.get(MetricsLogger.class).visible(adapter.getMetricsCategory());
+            announceForAccessibility(mContext.getString(
+                    R.string.accessibility_quick_settings_detail,
+                    adapter.getTitle()));
+            mDetailAdapter = adapter;
+            listener = mHideGridContentWhenDone;
+            setVisibility(View.VISIBLE);
+        } else {
+            if (mDetailAdapter != null) {
+                Dependency.get(MetricsLogger.class).hidden(mDetailAdapter.getMetricsCategory());
+            }
+            mClosingDetail = true;
+            mDetailAdapter = null;
+            listener = mTeardownDetailWhenDone;
+            mHeader.setVisibility(View.VISIBLE);
+            mFooter.setVisibility(View.VISIBLE);
+            mQsPanel.setGridContentVisibility(true);
+            mQsPanelCallback.onScanStateChanged(false);
+        }
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+
+        animateDetailVisibleDiff(x, y, visibleDiff, listener);
+!!!3351685.java!!!	animateDetailVisibleDiff(in x : int, in y : int, inout visibleDiff : boolean, inout listener : AnimatorListener) : void
+        if (visibleDiff) {
+            mAnimatingOpen = mDetailAdapter != null;
+            if (mFullyExpanded || mDetailAdapter != null) {
+                setAlpha(1);
+                mClipper.animateCircularClip(x, y, mDetailAdapter != null, listener);
+            } else {
+                animate().alpha(0)
+                        .setDuration(FADE_DURATION)
+                        .setListener(listener)
+                        .start();
+            }
+        }
+!!!3351813.java!!!	setupDetailFooter(inout adapter : DetailAdapter) : void
+        final Intent settingsIntent = adapter.getSettingsIntent();
+        mDetailSettingsButton.setVisibility(settingsIntent != null ? VISIBLE : GONE);
+        mDetailSettingsButton.setOnClickListener(v -> {
+            Dependency.get(MetricsLogger.class).action(ACTION_QS_MORE_SETTINGS,
+                    adapter.getMetricsCategory());
+            Dependency.get(ActivityStarter.class)
+                    .postStartActivityDismissingKeyguard(settingsIntent, 0);
+        });
+!!!3351941.java!!!	setupDetailHeader(in adapter : DetailAdapter) : void
+        mQsDetailHeaderTitle.setText(adapter.getTitle());
+        final Boolean toggleState = adapter.getToggleState();
+        if (toggleState == null) {
+            mQsDetailHeaderSwitch.setVisibility(INVISIBLE);
+            mQsDetailHeader.setClickable(false);
+        } else {
+            mQsDetailHeaderSwitch.setVisibility(VISIBLE);
+            handleToggleStateChanged(toggleState, adapter.getToggleEnabled());
+            mQsDetailHeader.setClickable(true);
+            mQsDetailHeader.setOnClickListener(new OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    boolean checked = !mQsDetailHeaderSwitch.isChecked();
+                    mQsDetailHeaderSwitch.setChecked(checked);
+                    adapter.setToggleState(checked);
+                }
+            });
+        }
+!!!3352069.java!!!	handleToggleStateChanged(inout state : boolean, inout toggleEnabled : boolean) : void
+        mSwitchState = state;
+        if (mAnimatingOpen) {
+            return;
+        }
+        mQsDetailHeaderSwitch.setChecked(state);
+        mQsDetailHeader.setEnabled(toggleEnabled);
+        mQsDetailHeaderSwitch.setEnabled(toggleEnabled);
+!!!3352197.java!!!	handleScanStateChanged(inout state : boolean) : void
+        if (mScanState == state) return;
+        mScanState = state;
+        final Animatable anim = (Animatable) mQsDetailHeaderProgress.getDrawable();
+        if (state) {
+            mQsDetailHeaderProgress.animate().alpha(1f);
+            anim.start();
+        } else {
+            mQsDetailHeaderProgress.animate().alpha(0f);
+            anim.stop();
+        }
+!!!3352325.java!!!	checkPendingAnimations() : void
+        handleToggleStateChanged(mSwitchState,
+                            mDetailAdapter != null && mDetailAdapter.getToggleEnabled());

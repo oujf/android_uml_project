@@ -1,0 +1,75 @@
+class BoundsAnimationController
+!!!12669701.java!!!	BoundsAnimationController(inout context : Context, inout transition : AppTransition, inout handler : Handler, inout animationHandler : AnimationHandler)
+        mHandler = handler;
+        mAppTransition = transition;
+        mAppTransition.registerListenerLocked(mAppTransitionNotifier);
+        mFastOutSlowInInterpolator = AnimationUtils.loadInterpolator(context,
+                com.android.internal.R.interpolator.fast_out_slow_in);
+        mAnimationHandler = animationHandler;
+!!!12671493.java!!!	animateBounds(in target : BoundsAnimationTarget, inout from : Rect, inout to : Rect, in animationDuration : int, in schedulePipModeChangedState : int, inout moveFromFullscreen : boolean, inout moveToFullscreen : boolean) : void
+        animateBoundsImpl(target, from, to, animationDuration, schedulePipModeChangedState,
+                moveFromFullscreen, moveToFullscreen);
+!!!12671621.java!!!	animateBoundsImpl(in target : BoundsAnimationTarget, inout from : Rect, inout to : Rect, in animationDuration : int, in schedulePipModeChangedState : int, inout moveFromFullscreen : boolean, inout moveToFullscreen : boolean) : BoundsAnimationController::BoundsAnimator
+        final BoundsAnimator existing = mRunningAnimations.get(target);
+        final boolean replacing = existing != null;
+
+        if (DEBUG) Slog.d(TAG, "animateBounds: target=" + target + " from=" + from + " to=" + to
+                + " schedulePipModeChangedState=" + schedulePipModeChangedState
+                + " replacing=" + replacing);
+
+        if (replacing) {
+            if (existing.isAnimatingTo(to)) {
+                // Just let the current animation complete if it has the same destination as the
+                // one we are trying to start.
+                if (DEBUG) Slog.d(TAG, "animateBounds: same destination as existing=" + existing
+                        + " ignoring...");
+
+                return existing;
+            }
+
+            // Update the PiP callback states if we are replacing the animation
+            if (existing.mSchedulePipModeChangedState == SCHEDULE_PIP_MODE_CHANGED_ON_START) {
+                if (schedulePipModeChangedState == SCHEDULE_PIP_MODE_CHANGED_ON_START) {
+                    if (DEBUG) Slog.d(TAG, "animateBounds: still animating to fullscreen, keep"
+                            + " existing deferred state");
+                } else {
+                    if (DEBUG) Slog.d(TAG, "animateBounds: fullscreen animation canceled, callback"
+                            + " on start already processed, schedule deferred update on end");
+                    schedulePipModeChangedState = SCHEDULE_PIP_MODE_CHANGED_ON_END;
+                }
+            } else if (existing.mSchedulePipModeChangedState == SCHEDULE_PIP_MODE_CHANGED_ON_END) {
+                if (schedulePipModeChangedState == SCHEDULE_PIP_MODE_CHANGED_ON_START) {
+                    if (DEBUG) Slog.d(TAG, "animateBounds: non-fullscreen animation canceled,"
+                            + " callback on start will be processed");
+                } else {
+                    if (DEBUG) Slog.d(TAG, "animateBounds: still animating from fullscreen, keep"
+                            + " existing deferred state");
+                    schedulePipModeChangedState = SCHEDULE_PIP_MODE_CHANGED_ON_END;
+                }
+            }
+
+            // Since we are replacing, we skip both animation start and end callbacks
+            existing.cancel();
+        }
+        final BoundsAnimator animator = new BoundsAnimator(target, from, to,
+                schedulePipModeChangedState, moveFromFullscreen, moveToFullscreen, replacing);
+        mRunningAnimations.put(target, animator);
+        animator.setFloatValues(0f, 1f);
+        animator.setDuration((animationDuration != -1 ? animationDuration
+                : DEFAULT_TRANSITION_DURATION) * DEBUG_ANIMATION_SLOW_DOWN_FACTOR);
+        animator.setInterpolator(mFastOutSlowInInterpolator);
+        animator.start();
+        return animator;
+!!!12671749.java!!!	getHandler() : Handler
+        return mHandler;
+!!!12671877.java!!!	onAllWindowsDrawn() : void
+        if (DEBUG) Slog.d(TAG, "onAllWindowsDrawn:");
+        mHandler.post(this::resume);
+!!!12672005.java!!!	resume() : void
+        for (int i = 0; i < mRunningAnimations.size(); i++) {
+            final BoundsAnimator b = mRunningAnimations.valueAt(i);
+            b.resume();
+        }
+!!!12672133.java!!!	updateBooster() : void
+        WindowManagerService.sThreadPriorityBooster.setBoundsAnimationRunning(
+                !mRunningAnimations.isEmpty());

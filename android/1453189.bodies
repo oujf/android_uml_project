@@ -1,0 +1,79 @@
+class WebViewDelegate
+!!!9192709.java!!!	setOnTraceEnabledChangeListener(in listener : WebViewDelegate::OnTraceEnabledChangeListener) : void
+        SystemProperties.addChangeCallback(new Runnable() {
+            @Override
+            public void run() {
+                listener.onTraceEnabledChange(isTraceTagEnabled());
+            }
+        });
+!!!9192837.java!!!	isTraceTagEnabled() : boolean
+        return Trace.isTagEnabled(Trace.TRACE_TAG_WEBVIEW);
+!!!9192965.java!!!	canInvokeDrawGlFunctor(inout containerView : View) : boolean
+        return true;
+!!!9193093.java!!!	invokeDrawGlFunctor(inout containerView : View, in nativeDrawGLFunctor : long, inout waitForCompletion : boolean) : void
+        ViewRootImpl.invokeFunctor(nativeDrawGLFunctor, waitForCompletion);
+!!!9193221.java!!!	callDrawGlFunction(inout canvas : Canvas, in nativeDrawGLFunctor : long) : void
+        if (!(canvas instanceof DisplayListCanvas)) {
+            // Canvas#isHardwareAccelerated() is only true for subclasses of HardwareCanvas.
+            throw new IllegalArgumentException(canvas.getClass().getName()
+                    + " is not a DisplayList canvas");
+        }
+        ((DisplayListCanvas) canvas).drawGLFunctor2(nativeDrawGLFunctor, null);
+!!!9193349.java!!!	callDrawGlFunction(inout canvas : Canvas, in nativeDrawGLFunctor : long, inout releasedRunnable : Runnable) : void
+        if (!(canvas instanceof DisplayListCanvas)) {
+            // Canvas#isHardwareAccelerated() is only true for subclasses of HardwareCanvas.
+            throw new IllegalArgumentException(canvas.getClass().getName()
+                    + " is not a DisplayList canvas");
+        }
+        ((DisplayListCanvas) canvas).drawGLFunctor2(nativeDrawGLFunctor, releasedRunnable);
+!!!9193477.java!!!	detachDrawGlFunctor(inout containerView : View, in nativeDrawGLFunctor : long) : void
+        ViewRootImpl viewRootImpl = containerView.getViewRootImpl();
+        if (nativeDrawGLFunctor != 0 && viewRootImpl != null) {
+            viewRootImpl.detachFunctor(nativeDrawGLFunctor);
+        }
+!!!9193605.java!!!	getPackageId(inout resources : Resources, in packageName : String) : int
+        SparseArray<String> packageIdentifiers =
+                resources.getAssets().getAssignedPackageIdentifiers();
+        for (int i = 0; i < packageIdentifiers.size(); i++) {
+            final String name = packageIdentifiers.valueAt(i);
+
+            if (packageName.equals(name)) {
+                return packageIdentifiers.keyAt(i);
+            }
+        }
+        throw new RuntimeException("Package not found: " + packageName);
+!!!9193733.java!!!	getApplication() : Application
+        return ActivityThread.currentApplication();
+!!!9193861.java!!!	getErrorString(inout context : Context, in errorCode : int) : String
+        return LegacyErrorStrings.getString(errorCode, context);
+!!!9193989.java!!!	addWebViewAssetPath(inout context : Context) : void
+        final String newAssetPath = WebViewFactory.getLoadedPackageInfo().applicationInfo.sourceDir;
+
+        final ApplicationInfo appInfo = context.getApplicationInfo();
+        final String[] libs = appInfo.sharedLibraryFiles;
+        if (!ArrayUtils.contains(libs, newAssetPath)) {
+            // Build the new library asset path list.
+            final int newLibAssetsCount = 1 + (libs != null ? libs.length : 0);
+            final String[] newLibAssets = new String[newLibAssetsCount];
+            if (libs != null) {
+                System.arraycopy(libs, 0, newLibAssets, 0, libs.length);
+            }
+            newLibAssets[newLibAssetsCount - 1] = newAssetPath;
+
+            // Update the ApplicationInfo object with the new list.
+            // We know this will persist and future Resources created via ResourcesManager
+            // will include the shared library because this ApplicationInfo comes from the
+            // underlying LoadedApk in ContextImpl, which does not change during the life of the
+            // application.
+            appInfo.sharedLibraryFiles = newLibAssets;
+
+            // Update existing Resources with the WebView library.
+            ResourcesManager.getInstance().appendLibAssetForMainAssetPath(
+                    appInfo.getBaseResourcePath(), newAssetPath);
+        }
+!!!9194117.java!!!	isMultiProcessEnabled() : boolean
+        try {
+            return WebViewFactory.getUpdateService().isMultiProcessEnabled();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }

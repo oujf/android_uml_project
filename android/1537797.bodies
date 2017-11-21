@@ -1,0 +1,73 @@
+class DumpUtils
+!!!10097669.java!!!	dumpAsync(inout handler : Handler, in dump : DumpUtils::Dump, inout pw : PrintWriter, in prefix : String, in timeout : long) : void
+        final StringWriter sw = new StringWriter();
+        if (handler.runWithScissors(new Runnable() {
+            @Override
+            public void run() {
+                PrintWriter lpw = new FastPrintWriter(sw);
+                dump.dump(lpw, prefix);
+                lpw.close();
+            }
+        }, timeout)) {
+            pw.print(sw.toString());
+        } else {
+            pw.println("... timed out");
+        }
+!!!10097925.java!!!	logMessage(inout pw : PrintWriter, in msg : String) : void
+        if (DEBUG) Slog.v(TAG, msg);
+        pw.println(msg);
+!!!10098053.java!!!	checkDumpPermission(inout context : Context, in tag : String, inout pw : PrintWriter) : boolean
+        if (context.checkCallingOrSelfPermission(android.Manifest.permission.DUMP)
+                != PackageManager.PERMISSION_GRANTED) {
+            logMessage(pw, "Permission Denial: can't dump " + tag + " from from pid="
+                    + Binder.getCallingPid() + ", uid=" + Binder.getCallingUid()
+                    + " due to missing android.permission.DUMP permission");
+            return false;
+        } else {
+            return true;
+        }
+!!!10098181.java!!!	checkUsageStatsPermission(inout context : Context, in tag : String, inout pw : PrintWriter) : boolean
+        // System internals always get access
+        final int uid = Binder.getCallingUid();
+        switch (uid) {
+            case android.os.Process.ROOT_UID:
+            case android.os.Process.SYSTEM_UID:
+            case android.os.Process.SHELL_UID:
+                return true;
+        }
+
+        // Caller always needs to hold permission
+        if (context.checkCallingOrSelfPermission(android.Manifest.permission.PACKAGE_USAGE_STATS)
+                != PackageManager.PERMISSION_GRANTED) {
+            logMessage(pw, "Permission Denial: can't dump " + tag + " from from pid="
+                    + Binder.getCallingPid() + ", uid=" + Binder.getCallingUid()
+                    + " due to missing android.permission.PACKAGE_USAGE_STATS permission");
+            return false;
+        }
+
+        // And finally, caller needs to have appops access; this is totally
+        // hacky, but it's the easiest way to wire this up without retrofitting
+        // Binder.dump() to pass through package names.
+        final AppOpsManager appOps = context.getSystemService(AppOpsManager.class);
+        final String[] pkgs = context.getPackageManager().getPackagesForUid(uid);
+        if (pkgs != null) {
+            for (String pkg : pkgs) {
+                switch (appOps.checkOpNoThrow(AppOpsManager.OP_GET_USAGE_STATS, uid, pkg)) {
+                    case AppOpsManager.MODE_ALLOWED:
+                        if (DEBUG) Slog.v(TAG, "Found package " + pkg + " with "
+                                + "android:get_usage_stats allowed");
+                        return true;
+                    case AppOpsManager.MODE_DEFAULT:
+                        if (DEBUG) Slog.v(TAG, "Found package " + pkg + " with "
+                                + "android:get_usage_stats default");
+                        return true;
+                }
+            }
+        }
+
+        logMessage(pw, "Permission Denial: can't dump " + tag + " from from pid="
+                + Binder.getCallingPid() + ", uid=" + Binder.getCallingUid()
+                + " due to android:get_usage_stats app-op not allowed");
+        return false;
+!!!10098309.java!!!	checkDumpAndUsageStatsPermission(inout context : Context, in tag : String, inout pw : PrintWriter) : boolean
+        return checkDumpPermission(context, tag, pw) && checkUsageStatsPermission(context, tag, pw);

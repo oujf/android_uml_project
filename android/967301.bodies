@@ -1,0 +1,1695 @@
+class Parcel
+!!!7510277.java!!!	obtain() : Parcel
+        final Parcel[] pool = sOwnedPool;
+        synchronized (pool) {
+            Parcel p;
+            for (int i=0; i<POOL_SIZE; i++) {
+                p = pool[i];
+                if (p != null) {
+                    pool[i] = null;
+                    if (DEBUG_RECYCLE) {
+                        p.mStack = new RuntimeException();
+                    }
+                    return p;
+                }
+            }
+        }
+        return new Parcel(0);
+!!!7510405.java!!!	recycle() : void
+        if (DEBUG_RECYCLE) mStack = null;
+        freeBuffer();
+
+        final Parcel[] pool;
+        if (mOwnsNativeParcelObject) {
+            pool = sOwnedPool;
+        } else {
+            mNativePtr = 0;
+            pool = sHolderPool;
+        }
+
+        synchronized (pool) {
+            for (int i=0; i<POOL_SIZE; i++) {
+                if (pool[i] == null) {
+                    pool[i] = this;
+                    return;
+                }
+            }
+        }
+!!!7510789.java!!!	dataSize() : int
+        return nativeDataSize(mNativePtr);
+!!!7510917.java!!!	dataAvail() : int
+        return nativeDataAvail(mNativePtr);
+!!!7511045.java!!!	dataPosition() : int
+        return nativeDataPosition(mNativePtr);
+!!!7511173.java!!!	dataCapacity() : int
+        return nativeDataCapacity(mNativePtr);
+!!!7511301.java!!!	setDataSize(in size : int) : void
+        updateNativeSize(nativeSetDataSize(mNativePtr, size));
+!!!7511429.java!!!	setDataPosition(in pos : int) : void
+        nativeSetDataPosition(mNativePtr, pos);
+!!!7511557.java!!!	setDataCapacity(in size : int) : void
+        nativeSetDataCapacity(mNativePtr, size);
+!!!7511685.java!!!	pushAllowFds(inout allowFds : boolean) : boolean
+        return nativePushAllowFds(mNativePtr, allowFds);
+!!!7511813.java!!!	restoreAllowFds(inout lastValue : boolean) : void
+        nativeRestoreAllowFds(mNativePtr, lastValue);
+!!!7511941.java!!!	marshall() : byte
+        return nativeMarshall(mNativePtr);
+!!!7512069.java!!!	unmarshall(inout data : byte [[]], in offset : int, in length : int) : void
+        updateNativeSize(nativeUnmarshall(mNativePtr, data, offset, length));
+!!!7512197.java!!!	appendFrom(inout parcel : Parcel, in offset : int, in length : int) : void
+        updateNativeSize(nativeAppendFrom(mNativePtr, parcel.mNativePtr, offset, length));
+!!!7512325.java!!!	compareData(inout other : Parcel) : int
+        return nativeCompareData(mNativePtr, other.mNativePtr);
+!!!7512453.java!!!	setClassCookie(inout clz : Class, inout cookie : Object) : void
+        if (mClassCookies == null) {
+            mClassCookies = new ArrayMap<>();
+        }
+        mClassCookies.put(clz, cookie);
+!!!7512581.java!!!	getClassCookie(inout clz : Class) : Object
+        return mClassCookies != null ? mClassCookies.get(clz) : null;
+!!!7512709.java!!!	adoptClassCookies(inout from : Parcel) : void
+        mClassCookies = from.mClassCookies;
+!!!7512837.java!!!	hasFileDescriptors() : boolean
+        return nativeHasFileDescriptors(mNativePtr);
+!!!7512965.java!!!	writeInterfaceToken(in interfaceName : String) : void
+        nativeWriteInterfaceToken(mNativePtr, interfaceName);
+!!!7513093.java!!!	enforceInterface(in interfaceName : String) : void
+        nativeEnforceInterface(mNativePtr, interfaceName);
+!!!7513221.java!!!	writeByteArray(inout b : byte [[]]) : void
+        writeByteArray(b, 0, (b != null) ? b.length : 0);
+!!!7513349.java!!!	writeByteArray(inout b : byte [[]], in offset : int, in len : int) : void
+        if (b == null) {
+            writeInt(-1);
+            return;
+        }
+        Arrays.checkOffsetAndCount(b.length, offset, len);
+        nativeWriteByteArray(mNativePtr, b, offset, len);
+!!!7513477.java!!!	writeBlob(inout b : byte [[]]) : void
+        writeBlob(b, 0, (b != null) ? b.length : 0);
+!!!7513605.java!!!	writeBlob(inout b : byte [[]], in offset : int, in len : int) : void
+        if (b == null) {
+            writeInt(-1);
+            return;
+        }
+        Arrays.checkOffsetAndCount(b.length, offset, len);
+        nativeWriteBlob(mNativePtr, b, offset, len);
+!!!7513733.java!!!	writeInt(in val : int) : void
+        nativeWriteInt(mNativePtr, val);
+!!!7513861.java!!!	writeLong(in val : long) : void
+        nativeWriteLong(mNativePtr, val);
+!!!7513989.java!!!	writeFloat(in val : float) : void
+        nativeWriteFloat(mNativePtr, val);
+!!!7514117.java!!!	writeDouble(in val : double) : void
+        nativeWriteDouble(mNativePtr, val);
+!!!7514245.java!!!	writeString(in val : String) : void
+        nativeWriteString(mNativePtr, val);
+!!!7514373.java!!!	writeBoolean(inout val : boolean) : void
+        writeInt(val ? 1 : 0);
+!!!7514501.java!!!	writeCharSequence(inout val : CharSequence) : void
+        TextUtils.writeToParcel(val, this, 0);
+!!!7514629.java!!!	writeStrongBinder(inout val : IBinder) : void
+        nativeWriteStrongBinder(mNativePtr, val);
+!!!7514757.java!!!	writeStrongInterface(inout val : IInterface) : void
+        writeStrongBinder(val == null ? null : val.asBinder());
+!!!7514885.java!!!	writeFileDescriptor(inout val : FileDescriptor) : void
+        updateNativeSize(nativeWriteFileDescriptor(mNativePtr, val));
+!!!7515013.java!!!	updateNativeSize(in newNativeSize : long) : void
+        if (mOwnsNativeParcelObject) {
+            if (newNativeSize > Integer.MAX_VALUE) {
+                newNativeSize = Integer.MAX_VALUE;
+            }
+            if (newNativeSize != mNativeSize) {
+                int delta = (int) (newNativeSize - mNativeSize);
+                if (delta > 0) {
+                    VMRuntime.getRuntime().registerNativeAllocation(delta);
+                } else {
+                    VMRuntime.getRuntime().registerNativeFree(-delta);
+                }
+                mNativeSize = newNativeSize;
+            }
+        }
+!!!7515141.java!!!	writeRawFileDescriptor(inout val : FileDescriptor) : void
+        nativeWriteFileDescriptor(mNativePtr, val);
+!!!7515269.java!!!	writeRawFileDescriptorArray(inout value : FileDescriptor [[]]) : void
+        if (value != null) {
+            int N = value.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeRawFileDescriptor(value[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7515397.java!!!	writeByte(in val : byte) : void
+        writeInt(val);
+!!!7515525.java!!!	writeMap(inout val : Map) : void
+        writeMapInternal((Map<String, Object>) val);
+!!!7515653.java!!!	writeMapInternal(inout val : Map<String,Object>) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        Set<Map.Entry<String,Object>> entries = val.entrySet();
+        writeInt(entries.size());
+        for (Map.Entry<String,Object> e : entries) {
+            writeValue(e.getKey());
+            writeValue(e.getValue());
+        }
+!!!7515781.java!!!	writeArrayMapInternal(inout val : ArrayMap) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        // Keep the format of this Parcel in sync with writeToParcelInner() in
+        // frameworks/native/libs/binder/PersistableBundle.cpp.
+        final int N = val.size();
+        writeInt(N);
+        if (DEBUG_ARRAY_MAP) {
+            RuntimeException here =  new RuntimeException("here");
+            here.fillInStackTrace();
+            Log.d(TAG, "Writing " + N + " ArrayMap entries", here);
+        }
+        int startPos;
+        for (int i=0; i<N; i++) {
+            if (DEBUG_ARRAY_MAP) startPos = dataPosition();
+            writeString(val.keyAt(i));
+            writeValue(val.valueAt(i));
+            if (DEBUG_ARRAY_MAP) Log.d(TAG, "  Write #" + i + " "
+                    + (dataPosition()-startPos) + " bytes: key=0x"
+                    + Integer.toHexString(val.keyAt(i) != null ? val.keyAt(i).hashCode() : 0)
+                    + " " + val.keyAt(i));
+        }
+!!!7515909.java!!!	writeArrayMap(inout val : ArrayMap) : void
+        writeArrayMapInternal(val);
+!!!7516037.java!!!	writeArraySet(inout val : ArraySet) : void
+        final int size = (val != null) ? val.size() : -1;
+        writeInt(size);
+        for (int i = 0; i < size; i++) {
+            writeValue(val.valueAt(i));
+        }
+!!!7516165.java!!!	writeBundle(inout val : Bundle) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+
+        val.writeToParcel(this, 0);
+!!!7516293.java!!!	writePersistableBundle(inout val : PersistableBundle) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+
+        val.writeToParcel(this, 0);
+!!!7516421.java!!!	writeSize(inout val : Size) : void
+        writeInt(val.getWidth());
+        writeInt(val.getHeight());
+!!!7516549.java!!!	writeSizeF(inout val : SizeF) : void
+        writeFloat(val.getWidth());
+        writeFloat(val.getHeight());
+!!!7516677.java!!!	writeList(inout val : List) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeValue(val.get(i));
+            i++;
+        }
+!!!7516805.java!!!	writeArray(inout val : Object [[]]) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.length;
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeValue(val[i]);
+            i++;
+        }
+!!!7516933.java!!!	writeSparseArray(inout val : SparseArray) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        writeInt(N);
+        int i=0;
+        while (i < N) {
+            writeInt(val.keyAt(i));
+            writeValue(val.valueAt(i));
+            i++;
+        }
+!!!7517061.java!!!	writeSparseBooleanArray(inout val : SparseBooleanArray) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        writeInt(N);
+        int i=0;
+        while (i < N) {
+            writeInt(val.keyAt(i));
+            writeByte((byte)(val.valueAt(i) ? 1 : 0));
+            i++;
+        }
+!!!7517189.java!!!	writeSparseIntArray(inout val : SparseIntArray) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        writeInt(N);
+        int i=0;
+        while (i < N) {
+            writeInt(val.keyAt(i));
+            writeInt(val.valueAt(i));
+            i++;
+        }
+!!!7517317.java!!!	writeBooleanArray(inout val : boolean [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeInt(val[i] ? 1 : 0);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7517445.java!!!	createBooleanArray() : boolean
+        int N = readInt();
+        // >>2 as a fast divide-by-4 works in the create*Array() functions
+        // because dataAvail() will never return a negative number.  4 is
+        // the size of a stored boolean in the stream.
+        if (N >= 0 && N <= (dataAvail() >> 2)) {
+            boolean[] val = new boolean[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readInt() != 0;
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7517573.java!!!	readBooleanArray(inout val : boolean [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readInt() != 0;
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7517701.java!!!	writeCharArray(inout val : char [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeInt((int)val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7517829.java!!!	createCharArray() : char
+        int N = readInt();
+        if (N >= 0 && N <= (dataAvail() >> 2)) {
+            char[] val = new char[N];
+            for (int i=0; i<N; i++) {
+                val[i] = (char)readInt();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7517957.java!!!	readCharArray(inout val : char [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = (char)readInt();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7518085.java!!!	writeIntArray(inout val : int [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeInt(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7518213.java!!!	createIntArray() : int
+        int N = readInt();
+        if (N >= 0 && N <= (dataAvail() >> 2)) {
+            int[] val = new int[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readInt();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7518341.java!!!	readIntArray(inout val : int [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readInt();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7518469.java!!!	writeLongArray(inout val : long [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeLong(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7518597.java!!!	createLongArray() : long
+        int N = readInt();
+        // >>3 because stored longs are 64 bits
+        if (N >= 0 && N <= (dataAvail() >> 3)) {
+            long[] val = new long[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readLong();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7518725.java!!!	readLongArray(inout val : long [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readLong();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7518853.java!!!	writeFloatArray(inout val : float [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeFloat(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7518981.java!!!	createFloatArray() : float
+        int N = readInt();
+        // >>2 because stored floats are 4 bytes
+        if (N >= 0 && N <= (dataAvail() >> 2)) {
+            float[] val = new float[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readFloat();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7519109.java!!!	readFloatArray(inout val : float [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readFloat();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7519237.java!!!	writeDoubleArray(inout val : double [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeDouble(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7519365.java!!!	createDoubleArray() : double
+        int N = readInt();
+        // >>3 because stored doubles are 8 bytes
+        if (N >= 0 && N <= (dataAvail() >> 3)) {
+            double[] val = new double[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readDouble();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7519493.java!!!	readDoubleArray(inout val : double [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readDouble();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7519621.java!!!	writeStringArray(inout val : String [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeString(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7519749.java!!!	createStringArray() : String
+        int N = readInt();
+        if (N >= 0) {
+            String[] val = new String[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readString();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7519877.java!!!	readStringArray(inout val : String [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readString();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7520005.java!!!	writeBinderArray(inout val : IBinder [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeStrongBinder(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7520133.java!!!	writeCharSequenceArray(inout val : CharSequence [[]]) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeCharSequence(val[i]);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7520261.java!!!	writeCharSequenceList(inout val : ArrayList<CharSequence>) : void
+        if (val != null) {
+            int N = val.size();
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeCharSequence(val.get(i));
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7520389.java!!!	createBinderArray() : IBinder
+        int N = readInt();
+        if (N >= 0) {
+            IBinder[] val = new IBinder[N];
+            for (int i=0; i<N; i++) {
+                val[i] = readStrongBinder();
+            }
+            return val;
+        } else {
+            return null;
+        }
+!!!7520517.java!!!	readBinderArray(inout val : IBinder [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readStrongBinder();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7520645.java!!!	writeTypedList(inout val : List<T>) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            T item = val.get(i);
+            if (item != null) {
+                writeInt(1);
+                item.writeToParcel(this, 0);
+            } else {
+                writeInt(0);
+            }
+            i++;
+        }
+!!!7520773.java!!!	writeStringList(inout val : List<String>) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeString(val.get(i));
+            i++;
+        }
+!!!7520901.java!!!	writeBinderList(inout val : List<IBinder>) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeStrongBinder(val.get(i));
+            i++;
+        }
+!!!7521029.java!!!	writeParcelableList(inout val : List<T>, in flags : int) : void
+        if (val == null) {
+            writeInt(-1);
+            return;
+        }
+
+        int N = val.size();
+        int i=0;
+        writeInt(N);
+        while (i < N) {
+            writeParcelable(val.get(i), flags);
+            i++;
+        }
+!!!7521157.java!!!	writeTypedArray(inout val : T [[]], in parcelableFlags : int) : void
+        if (val != null) {
+            int N = val.length;
+            writeInt(N);
+            for (int i = 0; i < N; i++) {
+                T item = val[i];
+                if (item != null) {
+                    writeInt(1);
+                    item.writeToParcel(this, parcelableFlags);
+                } else {
+                    writeInt(0);
+                }
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7521285.java!!!	writeTypedArrayList(inout list : ArrayList<T>, in parcelableFlags : int) : void
+        if (list != null) {
+            int N = list.size();
+            writeInt(N);
+            boolean wroteCreator = false;
+            for (int i = 0; i < N; i++) {
+                T item = list.get(i);
+                if (item != null) {
+                    writeInt(1);
+                    if (!wroteCreator) {
+                        writeParcelableCreator(item);
+                        wroteCreator = true;
+                    }
+                    item.writeToParcel(this, parcelableFlags);
+                } else {
+                    writeInt(0);
+                }
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7521413.java!!!	readTypedArrayList(inout loader : ClassLoader) : ArrayList<T>
+        int N = readInt();
+        if (N <= 0) {
+            return null;
+        }
+        Parcelable.Creator<?> creator = null;
+        ArrayList<T> result = new ArrayList<T>(N);
+        for (int i = 0; i < N; i++) {
+            if (readInt() != 0) {
+                if (creator == null) {
+                    creator = readParcelableCreator(loader);
+                    if (creator == null) {
+                        return null;
+                    }
+                }
+                final T parcelable;
+                if (creator instanceof Parcelable.ClassLoaderCreator<?>) {
+                    Parcelable.ClassLoaderCreator<?> classLoaderCreator =
+                            (Parcelable.ClassLoaderCreator<?>) creator;
+                    parcelable = (T) classLoaderCreator.createFromParcel(this, loader);
+                } else {
+                    parcelable = (T) creator.createFromParcel(this);
+                }
+                result.add(parcelable);
+            } else {
+                result.add(null);
+            }
+        }
+        return result;
+!!!7521541.java!!!	writeTypedArraySet(inout set : ArraySet, in parcelableFlags : int) : void
+        if (set != null) {
+            int N = set.size();
+            writeInt(N);
+            boolean wroteCreator = false;
+            for (int i = 0; i < N; i++) {
+                T item = set.valueAt(i);
+                if (item != null) {
+                    writeInt(1);
+                    if (!wroteCreator) {
+                        writeParcelableCreator(item);
+                        wroteCreator = true;
+                    }
+                    item.writeToParcel(this, parcelableFlags);
+                } else {
+                    writeInt(0);
+                }
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7521669.java!!!	readTypedArraySet(inout loader : ClassLoader) : ArraySet
+        int N = readInt();
+        if (N <= 0) {
+            return null;
+        }
+        Parcelable.Creator<?> creator = null;
+        ArraySet<T> result = new ArraySet<T>(N);
+        for (int i = 0; i < N; i++) {
+            T parcelable = null;
+            if (readInt() != 0) {
+                if (creator == null) {
+                    creator = readParcelableCreator(loader);
+                    if (creator == null) {
+                        return null;
+                    }
+                }
+                if (creator instanceof Parcelable.ClassLoaderCreator<?>) {
+                    Parcelable.ClassLoaderCreator<?> classLoaderCreator =
+                            (Parcelable.ClassLoaderCreator<?>) creator;
+                    parcelable = (T) classLoaderCreator.createFromParcel(this, loader);
+                } else {
+                    parcelable = (T) creator.createFromParcel(this);
+                }
+            }
+            result.append(parcelable);
+        }
+        return result;
+!!!7521797.java!!!	writeTypedObject(inout val : T, in parcelableFlags : int) : void
+        if (val != null) {
+            writeInt(1);
+            val.writeToParcel(this, parcelableFlags);
+        } else {
+            writeInt(0);
+        }
+!!!7521925.java!!!	writeValue(inout v : Object) : void
+        if (v == null) {
+            writeInt(VAL_NULL);
+        } else if (v instanceof String) {
+            writeInt(VAL_STRING);
+            writeString((String) v);
+        } else if (v instanceof Integer) {
+            writeInt(VAL_INTEGER);
+            writeInt((Integer) v);
+        } else if (v instanceof Map) {
+            writeInt(VAL_MAP);
+            writeMap((Map) v);
+        } else if (v instanceof Bundle) {
+            // Must be before Parcelable
+            writeInt(VAL_BUNDLE);
+            writeBundle((Bundle) v);
+        } else if (v instanceof PersistableBundle) {
+            writeInt(VAL_PERSISTABLEBUNDLE);
+            writePersistableBundle((PersistableBundle) v);
+        } else if (v instanceof Parcelable) {
+            // IMPOTANT: cases for classes that implement Parcelable must
+            // come before the Parcelable case, so that their specific VAL_*
+            // types will be written.
+            writeInt(VAL_PARCELABLE);
+            writeParcelable((Parcelable) v, 0);
+        } else if (v instanceof Short) {
+            writeInt(VAL_SHORT);
+            writeInt(((Short) v).intValue());
+        } else if (v instanceof Long) {
+            writeInt(VAL_LONG);
+            writeLong((Long) v);
+        } else if (v instanceof Float) {
+            writeInt(VAL_FLOAT);
+            writeFloat((Float) v);
+        } else if (v instanceof Double) {
+            writeInt(VAL_DOUBLE);
+            writeDouble((Double) v);
+        } else if (v instanceof Boolean) {
+            writeInt(VAL_BOOLEAN);
+            writeInt((Boolean) v ? 1 : 0);
+        } else if (v instanceof CharSequence) {
+            // Must be after String
+            writeInt(VAL_CHARSEQUENCE);
+            writeCharSequence((CharSequence) v);
+        } else if (v instanceof List) {
+            writeInt(VAL_LIST);
+            writeList((List) v);
+        } else if (v instanceof SparseArray) {
+            writeInt(VAL_SPARSEARRAY);
+            writeSparseArray((SparseArray) v);
+        } else if (v instanceof boolean[]) {
+            writeInt(VAL_BOOLEANARRAY);
+            writeBooleanArray((boolean[]) v);
+        } else if (v instanceof byte[]) {
+            writeInt(VAL_BYTEARRAY);
+            writeByteArray((byte[]) v);
+        } else if (v instanceof String[]) {
+            writeInt(VAL_STRINGARRAY);
+            writeStringArray((String[]) v);
+        } else if (v instanceof CharSequence[]) {
+            // Must be after String[] and before Object[]
+            writeInt(VAL_CHARSEQUENCEARRAY);
+            writeCharSequenceArray((CharSequence[]) v);
+        } else if (v instanceof IBinder) {
+            writeInt(VAL_IBINDER);
+            writeStrongBinder((IBinder) v);
+        } else if (v instanceof Parcelable[]) {
+            writeInt(VAL_PARCELABLEARRAY);
+            writeParcelableArray((Parcelable[]) v, 0);
+        } else if (v instanceof int[]) {
+            writeInt(VAL_INTARRAY);
+            writeIntArray((int[]) v);
+        } else if (v instanceof long[]) {
+            writeInt(VAL_LONGARRAY);
+            writeLongArray((long[]) v);
+        } else if (v instanceof Byte) {
+            writeInt(VAL_BYTE);
+            writeInt((Byte) v);
+        } else if (v instanceof Size) {
+            writeInt(VAL_SIZE);
+            writeSize((Size) v);
+        } else if (v instanceof SizeF) {
+            writeInt(VAL_SIZEF);
+            writeSizeF((SizeF) v);
+        } else if (v instanceof double[]) {
+            writeInt(VAL_DOUBLEARRAY);
+            writeDoubleArray((double[]) v);
+        } else {
+            Class<?> clazz = v.getClass();
+            if (clazz.isArray() && clazz.getComponentType() == Object.class) {
+                // Only pure Object[] are written here, Other arrays of non-primitive types are
+                // handled by serialization as this does not record the component type.
+                writeInt(VAL_OBJECTARRAY);
+                writeArray((Object[]) v);
+            } else if (v instanceof Serializable) {
+                // Must be last
+                writeInt(VAL_SERIALIZABLE);
+                writeSerializable((Serializable) v);
+            } else {
+                throw new RuntimeException("Parcel: unable to marshal value " + v);
+            }
+        }
+!!!7522053.java!!!	writeParcelable(inout p : Parcelable, in parcelableFlags : int) : void
+        if (p == null) {
+            writeString(null);
+            return;
+        }
+        writeParcelableCreator(p);
+        p.writeToParcel(this, parcelableFlags);
+!!!7522181.java!!!	writeParcelableCreator(inout p : Parcelable) : void
+        String name = p.getClass().getName();
+        writeString(name);
+!!!7522309.java!!!	writeSerializable(inout s : Serializable) : void
+        if (s == null) {
+            writeString(null);
+            return;
+        }
+        String name = s.getClass().getName();
+        writeString(name);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try {
+            ObjectOutputStream oos = new ObjectOutputStream(baos);
+            oos.writeObject(s);
+            oos.close();
+
+            writeByteArray(baos.toByteArray());
+        } catch (IOException ioe) {
+            throw new RuntimeException("Parcelable encountered " +
+                "IOException writing serializable object (name = " + name +
+                ")", ioe);
+        }
+!!!7522437.java!!!	writeException(inout e : Exception) : void
+        int code = 0;
+        if (e instanceof Parcelable
+                && (e.getClass().getClassLoader() == Parcelable.class.getClassLoader())) {
+            // We only send Parcelable exceptions that are in the
+            // BootClassLoader to ensure that the receiver can unpack them
+            code = EX_PARCELABLE;
+        } else if (e instanceof SecurityException) {
+            code = EX_SECURITY;
+        } else if (e instanceof BadParcelableException) {
+            code = EX_BAD_PARCELABLE;
+        } else if (e instanceof IllegalArgumentException) {
+            code = EX_ILLEGAL_ARGUMENT;
+        } else if (e instanceof NullPointerException) {
+            code = EX_NULL_POINTER;
+        } else if (e instanceof IllegalStateException) {
+            code = EX_ILLEGAL_STATE;
+        } else if (e instanceof NetworkOnMainThreadException) {
+            code = EX_NETWORK_MAIN_THREAD;
+        } else if (e instanceof UnsupportedOperationException) {
+            code = EX_UNSUPPORTED_OPERATION;
+        } else if (e instanceof ServiceSpecificException) {
+            code = EX_SERVICE_SPECIFIC;
+        }
+        writeInt(code);
+        StrictMode.clearGatheredViolations();
+        if (code == 0) {
+            if (e instanceof RuntimeException) {
+                throw (RuntimeException) e;
+            }
+            throw new RuntimeException(e);
+        }
+        writeString(e.getMessage());
+        switch (code) {
+            case EX_SERVICE_SPECIFIC:
+                writeInt(((ServiceSpecificException) e).errorCode);
+                break;
+            case EX_PARCELABLE:
+                // Write parceled exception prefixed by length
+                final int sizePosition = dataPosition();
+                writeInt(0);
+                writeParcelable((Parcelable) e, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+                final int payloadPosition = dataPosition();
+                setDataPosition(sizePosition);
+                writeInt(payloadPosition - sizePosition);
+                setDataPosition(payloadPosition);
+                break;
+        }
+!!!7522565.java!!!	writeNoException() : void
+        // Despite the name of this function ("write no exception"),
+        // it should instead be thought of as "write the RPC response
+        // header", but because this function name is written out by
+        // the AIDL compiler, we're not going to rename it.
+        //
+        // The response header, in the non-exception case (see also
+        // writeException above, also called by the AIDL compiler), is
+        // either a 0 (the default case), or EX_HAS_REPLY_HEADER if
+        // StrictMode has gathered up violations that have occurred
+        // during a Binder call, in which case we write out the number
+        // of violations and their details, serialized, before the
+        // actual RPC respons data.  The receiving end of this is
+        // readException(), below.
+        if (StrictMode.hasGatheredViolations()) {
+            writeInt(EX_HAS_REPLY_HEADER);
+            final int sizePosition = dataPosition();
+            writeInt(0);  // total size of fat header, to be filled in later
+            StrictMode.writeGatheredViolationsToParcel(this);
+            final int payloadPosition = dataPosition();
+            setDataPosition(sizePosition);
+            writeInt(payloadPosition - sizePosition);  // header size
+            setDataPosition(payloadPosition);
+        } else {
+            writeInt(0);
+        }
+!!!7522693.java!!!	readException() : void
+        int code = readExceptionCode();
+        if (code != 0) {
+            String msg = readString();
+            readException(code, msg);
+        }
+!!!7522821.java!!!	readExceptionCode() : int
+        int code = readInt();
+        if (code == EX_HAS_REPLY_HEADER) {
+            int headerSize = readInt();
+            if (headerSize == 0) {
+                Log.e(TAG, "Unexpected zero-sized Parcel reply header.");
+            } else {
+                // Currently the only thing in the header is StrictMode stacks,
+                // but discussions around event/RPC tracing suggest we might
+                // put that here too.  If so, switch on sub-header tags here.
+                // But for now, just parse out the StrictMode stuff.
+                StrictMode.readAndHandleBinderCallViolations(this);
+            }
+            // And fat response headers are currently only used when
+            // there are no exceptions, so return no error:
+            return 0;
+        }
+        return code;
+!!!7522949.java!!!	readException(in code : int, in msg : String) : void
+        switch (code) {
+            case EX_PARCELABLE:
+                if (readInt() > 0) {
+                    SneakyThrow.sneakyThrow(
+                            (Exception) readParcelable(Parcelable.class.getClassLoader()));
+                } else {
+                    throw new RuntimeException(msg + " [missing Parcelable]");
+                }
+            case EX_SECURITY:
+                throw new SecurityException(msg);
+            case EX_BAD_PARCELABLE:
+                throw new BadParcelableException(msg);
+            case EX_ILLEGAL_ARGUMENT:
+                throw new IllegalArgumentException(msg);
+            case EX_NULL_POINTER:
+                throw new NullPointerException(msg);
+            case EX_ILLEGAL_STATE:
+                throw new IllegalStateException(msg);
+            case EX_NETWORK_MAIN_THREAD:
+                throw new NetworkOnMainThreadException();
+            case EX_UNSUPPORTED_OPERATION:
+                throw new UnsupportedOperationException(msg);
+            case EX_SERVICE_SPECIFIC:
+                throw new ServiceSpecificException(readInt(), msg);
+        }
+        throw new RuntimeException("Unknown exception code: " + code
+                + " msg " + msg);
+!!!7523077.java!!!	readInt() : int
+        return nativeReadInt(mNativePtr);
+!!!7523205.java!!!	readLong() : long
+        return nativeReadLong(mNativePtr);
+!!!7523333.java!!!	readFloat() : float
+        return nativeReadFloat(mNativePtr);
+!!!7523461.java!!!	readDouble() : double
+        return nativeReadDouble(mNativePtr);
+!!!7523589.java!!!	readString() : String
+        return nativeReadString(mNativePtr);
+!!!7523717.java!!!	readBoolean() : boolean
+        return readInt() != 0;
+!!!7523845.java!!!	readCharSequence() : CharSequence
+        return TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(this);
+!!!7523973.java!!!	readStrongBinder() : IBinder
+        return nativeReadStrongBinder(mNativePtr);
+!!!7524101.java!!!	readFileDescriptor() : ParcelFileDescriptor
+        FileDescriptor fd = nativeReadFileDescriptor(mNativePtr);
+        return fd != null ? new ParcelFileDescriptor(fd) : null;
+!!!7524229.java!!!	readRawFileDescriptor() : FileDescriptor
+        return nativeReadFileDescriptor(mNativePtr);
+!!!7524357.java!!!	createRawFileDescriptorArray() : FileDescriptor
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        FileDescriptor[] f = new FileDescriptor[N];
+        for (int i = 0; i < N; i++) {
+            f[i] = readRawFileDescriptor();
+        }
+        return f;
+!!!7524485.java!!!	readRawFileDescriptorArray(inout val : FileDescriptor [[]]) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                val[i] = readRawFileDescriptor();
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7525125.java!!!	readByte() : byte
+        return (byte)(readInt() & 0xff);
+!!!7525253.java!!!	readMap(inout outVal : Map, inout loader : ClassLoader) : void
+        int N = readInt();
+        readMapInternal(outVal, N, loader);
+!!!7525381.java!!!	readList(inout outVal : List, inout loader : ClassLoader) : void
+        int N = readInt();
+        readListInternal(outVal, N, loader);
+!!!7525509.java!!!	readHashMap(inout loader : ClassLoader) : HashMap
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        HashMap m = new HashMap(N);
+        readMapInternal(m, N, loader);
+        return m;
+!!!7525637.java!!!	readBundle() : Bundle
+        return readBundle(null);
+!!!7525765.java!!!	readBundle(inout loader : ClassLoader) : Bundle
+        int length = readInt();
+        if (length < 0) {
+            if (Bundle.DEBUG) Log.d(TAG, "null bundle: length=" + length);
+            return null;
+        }
+
+        final Bundle bundle = new Bundle(this, length);
+        if (loader != null) {
+            bundle.setClassLoader(loader);
+        }
+        return bundle;
+!!!7525893.java!!!	readPersistableBundle() : PersistableBundle
+        return readPersistableBundle(null);
+!!!7526021.java!!!	readPersistableBundle(inout loader : ClassLoader) : PersistableBundle
+        int length = readInt();
+        if (length < 0) {
+            if (Bundle.DEBUG) Log.d(TAG, "null bundle: length=" + length);
+            return null;
+        }
+
+        final PersistableBundle bundle = new PersistableBundle(this, length);
+        if (loader != null) {
+            bundle.setClassLoader(loader);
+        }
+        return bundle;
+!!!7526149.java!!!	readSize() : Size
+        final int width = readInt();
+        final int height = readInt();
+        return new Size(width, height);
+!!!7526277.java!!!	readSizeF() : SizeF
+        final float width = readFloat();
+        final float height = readFloat();
+        return new SizeF(width, height);
+!!!7526405.java!!!	createByteArray() : byte
+        return nativeCreateByteArray(mNativePtr);
+!!!7526533.java!!!	readByteArray(inout val : byte [[]]) : void
+        // TODO: make this a native method to avoid the extra copy.
+        byte[] ba = createByteArray();
+        if (ba.length == val.length) {
+           System.arraycopy(ba, 0, val, 0, ba.length);
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7526661.java!!!	readBlob() : byte
+        return nativeReadBlob(mNativePtr);
+!!!7526789.java!!!	readStringArray() : String
+        String[] array = null;
+
+        int length = readInt();
+        if (length >= 0)
+        {
+            array = new String[length];
+
+            for (int i = 0 ; i < length ; i++)
+            {
+                array[i] = readString();
+            }
+        }
+
+        return array;
+!!!7526917.java!!!	readCharSequenceArray() : CharSequence
+        CharSequence[] array = null;
+
+        int length = readInt();
+        if (length >= 0)
+        {
+            array = new CharSequence[length];
+
+            for (int i = 0 ; i < length ; i++)
+            {
+                array[i] = readCharSequence();
+            }
+        }
+
+        return array;
+!!!7527045.java!!!	readCharSequenceList() : ArrayList<CharSequence>
+        ArrayList<CharSequence> array = null;
+
+        int length = readInt();
+        if (length >= 0) {
+            array = new ArrayList<CharSequence>(length);
+
+            for (int i = 0 ; i < length ; i++) {
+                array.add(readCharSequence());
+            }
+        }
+
+        return array;
+!!!7527173.java!!!	readArrayList(inout loader : ClassLoader) : ArrayList
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        ArrayList l = new ArrayList(N);
+        readListInternal(l, N, loader);
+        return l;
+!!!7527301.java!!!	readArray(inout loader : ClassLoader) : Object
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        Object[] l = new Object[N];
+        readArrayInternal(l, N, loader);
+        return l;
+!!!7527429.java!!!	readSparseArray(inout loader : ClassLoader) : SparseArray
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        SparseArray sa = new SparseArray(N);
+        readSparseArrayInternal(sa, N, loader);
+        return sa;
+!!!7527557.java!!!	readSparseBooleanArray() : SparseBooleanArray
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        SparseBooleanArray sa = new SparseBooleanArray(N);
+        readSparseBooleanArrayInternal(sa, N);
+        return sa;
+!!!7527685.java!!!	readSparseIntArray() : SparseIntArray
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        SparseIntArray sa = new SparseIntArray(N);
+        readSparseIntArrayInternal(sa, N);
+        return sa;
+!!!7527813.java!!!	createTypedArrayList(inout c : Parcelable::Creator) : ArrayList<T>
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        ArrayList<T> l = new ArrayList<T>(N);
+        while (N > 0) {
+            if (readInt() != 0) {
+                l.add(c.createFromParcel(this));
+            } else {
+                l.add(null);
+            }
+            N--;
+        }
+        return l;
+!!!7527941.java!!!	readTypedList(inout list : List<T>, inout c : Parcelable::Creator) : void
+        int M = list.size();
+        int N = readInt();
+        int i = 0;
+        for (; i < M && i < N; i++) {
+            if (readInt() != 0) {
+                list.set(i, c.createFromParcel(this));
+            } else {
+                list.set(i, null);
+            }
+        }
+        for (; i<N; i++) {
+            if (readInt() != 0) {
+                list.add(c.createFromParcel(this));
+            } else {
+                list.add(null);
+            }
+        }
+        for (; i<M; i++) {
+            list.remove(N);
+        }
+!!!7528069.java!!!	createStringArrayList() : ArrayList<String>
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        ArrayList<String> l = new ArrayList<String>(N);
+        while (N > 0) {
+            l.add(readString());
+            N--;
+        }
+        return l;
+!!!7528197.java!!!	createBinderArrayList() : IBinder
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        ArrayList<IBinder> l = new ArrayList<IBinder>(N);
+        while (N > 0) {
+            l.add(readStrongBinder());
+            N--;
+        }
+        return l;
+!!!7528325.java!!!	readStringList(inout list : List<String>) : void
+        int M = list.size();
+        int N = readInt();
+        int i = 0;
+        for (; i < M && i < N; i++) {
+            list.set(i, readString());
+        }
+        for (; i<N; i++) {
+            list.add(readString());
+        }
+        for (; i<M; i++) {
+            list.remove(N);
+        }
+!!!7528453.java!!!	readBinderList(inout list : List<IBinder>) : void
+        int M = list.size();
+        int N = readInt();
+        int i = 0;
+        for (; i < M && i < N; i++) {
+            list.set(i, readStrongBinder());
+        }
+        for (; i<N; i++) {
+            list.add(readStrongBinder());
+        }
+        for (; i<M; i++) {
+            list.remove(N);
+        }
+!!!7528581.java!!!	readParcelableList(inout list : List<T>, inout cl : ClassLoader) : List<T>
+        final int N = readInt();
+        if (N == -1) {
+            list.clear();
+            return list;
+        }
+
+        final int M = list.size();
+        int i = 0;
+        for (; i < M && i < N; i++) {
+            list.set(i, (T) readParcelable(cl));
+        }
+        for (; i<N; i++) {
+            list.add((T) readParcelable(cl));
+        }
+        for (; i<M; i++) {
+            list.remove(N);
+        }
+        return list;
+!!!7528709.java!!!	createTypedArray(inout c : Parcelable::Creator) : T
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        T[] l = c.newArray(N);
+        for (int i=0; i<N; i++) {
+            if (readInt() != 0) {
+                l[i] = c.createFromParcel(this);
+            }
+        }
+        return l;
+!!!7528837.java!!!	readTypedArray(inout val : T [[]], inout c : Parcelable::Creator) : void
+        int N = readInt();
+        if (N == val.length) {
+            for (int i=0; i<N; i++) {
+                if (readInt() != 0) {
+                    val[i] = c.createFromParcel(this);
+                } else {
+                    val[i] = null;
+                }
+            }
+        } else {
+            throw new RuntimeException("bad array lengths");
+        }
+!!!7528965.java!!!	readTypedArray(inout c : Parcelable::Creator) : T
+        return createTypedArray(c);
+!!!7529093.java!!!	readTypedObject(inout c : Parcelable::Creator) : T
+        if (readInt() != 0) {
+            return c.createFromParcel(this);
+        } else {
+            return null;
+        }
+!!!7529221.java!!!	writeParcelableArray(inout value : T [[]], in parcelableFlags : int) : void
+        if (value != null) {
+            int N = value.length;
+            writeInt(N);
+            for (int i=0; i<N; i++) {
+                writeParcelable(value[i], parcelableFlags);
+            }
+        } else {
+            writeInt(-1);
+        }
+!!!7529349.java!!!	readValue(inout loader : ClassLoader) : Object
+        int type = readInt();
+
+        switch (type) {
+        case VAL_NULL:
+            return null;
+
+        case VAL_STRING:
+            return readString();
+
+        case VAL_INTEGER:
+            return readInt();
+
+        case VAL_MAP:
+            return readHashMap(loader);
+
+        case VAL_PARCELABLE:
+            return readParcelable(loader);
+
+        case VAL_SHORT:
+            return (short) readInt();
+
+        case VAL_LONG:
+            return readLong();
+
+        case VAL_FLOAT:
+            return readFloat();
+
+        case VAL_DOUBLE:
+            return readDouble();
+
+        case VAL_BOOLEAN:
+            return readInt() == 1;
+
+        case VAL_CHARSEQUENCE:
+            return readCharSequence();
+
+        case VAL_LIST:
+            return readArrayList(loader);
+
+        case VAL_BOOLEANARRAY:
+            return createBooleanArray();
+
+        case VAL_BYTEARRAY:
+            return createByteArray();
+
+        case VAL_STRINGARRAY:
+            return readStringArray();
+
+        case VAL_CHARSEQUENCEARRAY:
+            return readCharSequenceArray();
+
+        case VAL_IBINDER:
+            return readStrongBinder();
+
+        case VAL_OBJECTARRAY:
+            return readArray(loader);
+
+        case VAL_INTARRAY:
+            return createIntArray();
+
+        case VAL_LONGARRAY:
+            return createLongArray();
+
+        case VAL_BYTE:
+            return readByte();
+
+        case VAL_SERIALIZABLE:
+            return readSerializable(loader);
+
+        case VAL_PARCELABLEARRAY:
+            return readParcelableArray(loader);
+
+        case VAL_SPARSEARRAY:
+            return readSparseArray(loader);
+
+        case VAL_SPARSEBOOLEANARRAY:
+            return readSparseBooleanArray();
+
+        case VAL_BUNDLE:
+            return readBundle(loader); // loading will be deferred
+
+        case VAL_PERSISTABLEBUNDLE:
+            return readPersistableBundle(loader);
+
+        case VAL_SIZE:
+            return readSize();
+
+        case VAL_SIZEF:
+            return readSizeF();
+
+        case VAL_DOUBLEARRAY:
+            return createDoubleArray();
+
+        default:
+            int off = dataPosition() - 4;
+            throw new RuntimeException(
+                "Parcel " + this + ": Unmarshalling unknown type code " + type + " at offset " + off);
+        }
+!!!7529477.java!!!	readParcelable(inout loader : ClassLoader) : T
+        Parcelable.Creator<?> creator = readParcelableCreator(loader);
+        if (creator == null) {
+            return null;
+        }
+        if (creator instanceof Parcelable.ClassLoaderCreator<?>) {
+          Parcelable.ClassLoaderCreator<?> classLoaderCreator =
+              (Parcelable.ClassLoaderCreator<?>) creator;
+          return (T) classLoaderCreator.createFromParcel(this, loader);
+        }
+        return (T) creator.createFromParcel(this);
+!!!7529605.java!!!	readCreator(inout creator : Parcelable::Creator, inout loader : ClassLoader) : T
+        if (creator instanceof Parcelable.ClassLoaderCreator<?>) {
+          Parcelable.ClassLoaderCreator<?> classLoaderCreator =
+              (Parcelable.ClassLoaderCreator<?>) creator;
+          return (T) classLoaderCreator.createFromParcel(this, loader);
+        }
+        return (T) creator.createFromParcel(this);
+!!!7529733.java!!!	readParcelableCreator(inout loader : ClassLoader) : Parcelable::Creator
+        String name = readString();
+        if (name == null) {
+            return null;
+        }
+        Parcelable.Creator<?> creator;
+        synchronized (mCreators) {
+            HashMap<String,Parcelable.Creator<?>> map = mCreators.get(loader);
+            if (map == null) {
+                map = new HashMap<>();
+                mCreators.put(loader, map);
+            }
+            creator = map.get(name);
+            if (creator == null) {
+                try {
+                    // If loader == null, explicitly emulate Class.forName(String) "caller
+                    // classloader" behavior.
+                    ClassLoader parcelableClassLoader =
+                            (loader == null ? getClass().getClassLoader() : loader);
+                    // Avoid initializing the Parcelable class until we know it implements
+                    // Parcelable and has the necessary CREATOR field. http://b/1171613.
+                    Class<?> parcelableClass = Class.forName(name, false /* initialize */,
+                            parcelableClassLoader);
+                    if (!Parcelable.class.isAssignableFrom(parcelableClass)) {
+                        throw new BadParcelableException("Parcelable protocol requires that the "
+                                + "class implements Parcelable");
+                    }
+                    Field f = parcelableClass.getField("CREATOR");
+                    if ((f.getModifiers() & Modifier.STATIC) == 0) {
+                        throw new BadParcelableException("Parcelable protocol requires "
+                                + "the CREATOR object to be static on class " + name);
+                    }
+                    Class<?> creatorType = f.getType();
+                    if (!Parcelable.Creator.class.isAssignableFrom(creatorType)) {
+                        // Fail before calling Field.get(), not after, to avoid initializing
+                        // parcelableClass unnecessarily.
+                        throw new BadParcelableException("Parcelable protocol requires a "
+                                + "Parcelable.Creator object called "
+                                + "CREATOR on class " + name);
+                    }
+                    creator = (Parcelable.Creator<?>) f.get(null);
+                }
+                catch (IllegalAccessException e) {
+                    Log.e(TAG, "Illegal access when unmarshalling: " + name, e);
+                    throw new BadParcelableException(
+                            "IllegalAccessException when unmarshalling: " + name);
+                }
+                catch (ClassNotFoundException e) {
+                    Log.e(TAG, "Class not found when unmarshalling: " + name, e);
+                    throw new BadParcelableException(
+                            "ClassNotFoundException when unmarshalling: " + name);
+                }
+                catch (NoSuchFieldException e) {
+                    throw new BadParcelableException("Parcelable protocol requires a "
+                            + "Parcelable.Creator object called "
+                            + "CREATOR on class " + name);
+                }
+                if (creator == null) {
+                    throw new BadParcelableException("Parcelable protocol requires a "
+                            + "non-null Parcelable.Creator object called "
+                            + "CREATOR on class " + name);
+                }
+
+                map.put(name, creator);
+            }
+        }
+
+        return creator;
+!!!7529861.java!!!	readParcelableArray(inout loader : ClassLoader) : Parcelable
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        Parcelable[] p = new Parcelable[N];
+        for (int i = 0; i < N; i++) {
+            p[i] = readParcelable(loader);
+        }
+        return p;
+!!!7529989.java!!!	readParcelableArray(inout loader : ClassLoader, inout clazz : Class<T>) : T
+        int N = readInt();
+        if (N < 0) {
+            return null;
+        }
+        T[] p = (T[]) Array.newInstance(clazz, N);
+        for (int i = 0; i < N; i++) {
+            p[i] = readParcelable(loader);
+        }
+        return p;
+!!!7530117.java!!!	readSerializable() : Serializable
+        return readSerializable(null);
+!!!7530245.java!!!	readSerializable(in loader : ClassLoader) : Serializable
+        String name = readString();
+        if (name == null) {
+            // For some reason we were unable to read the name of the Serializable (either there
+            // is nothing left in the Parcel to read, or the next value wasn't a String), so
+            // return null, which indicates that the name wasn't found in the parcel.
+            return null;
+        }
+
+        byte[] serializedData = createByteArray();
+        ByteArrayInputStream bais = new ByteArrayInputStream(serializedData);
+        try {
+            ObjectInputStream ois = new ObjectInputStream(bais) {
+                @Override
+                protected Class<?> resolveClass(ObjectStreamClass osClass)
+                        throws IOException, ClassNotFoundException {
+                    // try the custom classloader if provided
+                    if (loader != null) {
+                        Class<?> c = Class.forName(osClass.getName(), false, loader);
+                        if (c != null) {
+                            return c;
+                        }
+                    }
+                    return super.resolveClass(osClass);
+                }
+            };
+            return (Serializable) ois.readObject();
+        } catch (IOException ioe) {
+            throw new RuntimeException("Parcelable encountered " +
+                "IOException reading a Serializable object (name = " + name +
+                ")", ioe);
+        } catch (ClassNotFoundException cnfe) {
+            throw new RuntimeException("Parcelable encountered " +
+                "ClassNotFoundException reading a Serializable object (name = "
+                + name + ")", cnfe);
+        }
+!!!7530373.java!!!	obtain(in obj : int) : Parcel
+        throw new UnsupportedOperationException();
+!!!7530501.java!!!	obtain(in obj : long) : Parcel
+        final Parcel[] pool = sHolderPool;
+        synchronized (pool) {
+            Parcel p;
+            for (int i=0; i<POOL_SIZE; i++) {
+                p = pool[i];
+                if (p != null) {
+                    pool[i] = null;
+                    if (DEBUG_RECYCLE) {
+                        p.mStack = new RuntimeException();
+                    }
+                    p.init(obj);
+                    return p;
+                }
+            }
+        }
+        return new Parcel(obj);
+!!!7530629.java!!!	Parcel(in nativePtr : long)
+        if (DEBUG_RECYCLE) {
+            mStack = new RuntimeException();
+        }
+        //Log.i(TAG, "Initializing obj=0x" + Integer.toHexString(obj), mStack);
+        init(nativePtr);
+!!!7530757.java!!!	init(in nativePtr : long) : void
+        if (nativePtr != 0) {
+            mNativePtr = nativePtr;
+            mOwnsNativeParcelObject = false;
+        } else {
+            mNativePtr = nativeCreate();
+            mOwnsNativeParcelObject = true;
+        }
+!!!7530885.java!!!	freeBuffer() : void
+        if (mOwnsNativeParcelObject) {
+            updateNativeSize(nativeFreeBuffer(mNativePtr));
+        }
+!!!7531013.java!!!	destroy() : void
+        if (mNativePtr != 0) {
+            if (mOwnsNativeParcelObject) {
+                nativeDestroy(mNativePtr);
+                updateNativeSize(0);
+            }
+            mNativePtr = 0;
+        }
+!!!7531141.java!!!	finalize() : void
+        if (DEBUG_RECYCLE) {
+            if (mStack != null) {
+                Log.w(TAG, "Client did not call Parcel.recycle()", mStack);
+            }
+        }
+        destroy();
+!!!7531269.java!!!	readMapInternal(inout outVal : Map, in N : int, inout loader : ClassLoader) : void
+        while (N > 0) {
+            Object key = readValue(loader);
+            Object value = readValue(loader);
+            outVal.put(key, value);
+            N--;
+        }
+!!!7531397.java!!!	readArrayMapInternal(inout outVal : ArrayMap, in N : int, inout loader : ClassLoader) : void
+        if (DEBUG_ARRAY_MAP) {
+            RuntimeException here =  new RuntimeException("here");
+            here.fillInStackTrace();
+            Log.d(TAG, "Reading " + N + " ArrayMap entries", here);
+        }
+        int startPos;
+        while (N > 0) {
+            if (DEBUG_ARRAY_MAP) startPos = dataPosition();
+            String key = readString();
+            Object value = readValue(loader);
+            if (DEBUG_ARRAY_MAP) Log.d(TAG, "  Read #" + (N-1) + " "
+                    + (dataPosition()-startPos) + " bytes: key=0x"
+                    + Integer.toHexString((key != null ? key.hashCode() : 0)) + " " + key);
+            outVal.append(key, value);
+            N--;
+        }
+        outVal.validate();
+!!!7531525.java!!!	readArrayMapSafelyInternal(inout outVal : ArrayMap, in N : int, inout loader : ClassLoader) : void
+        if (DEBUG_ARRAY_MAP) {
+            RuntimeException here =  new RuntimeException("here");
+            here.fillInStackTrace();
+            Log.d(TAG, "Reading safely " + N + " ArrayMap entries", here);
+        }
+        while (N > 0) {
+            String key = readString();
+            if (DEBUG_ARRAY_MAP) Log.d(TAG, "  Read safe #" + (N-1) + ": key=0x"
+                    + (key != null ? key.hashCode() : 0) + " " + key);
+            Object value = readValue(loader);
+            outVal.put(key, value);
+            N--;
+        }
+!!!7531653.java!!!	readArrayMap(inout outVal : ArrayMap, inout loader : ClassLoader) : void
+        final int N = readInt();
+        if (N < 0) {
+            return;
+        }
+        readArrayMapInternal(outVal, N, loader);
+!!!7531781.java!!!	readArraySet(inout loader : ClassLoader) : ArraySet
+        final int size = readInt();
+        if (size < 0) {
+            return null;
+        }
+        ArraySet<Object> result = new ArraySet<>(size);
+        for (int i = 0; i < size; i++) {
+            Object value = readValue(loader);
+            result.append(value);
+        }
+        return result;
+!!!7531909.java!!!	readListInternal(inout outVal : List, in N : int, inout loader : ClassLoader) : void
+        while (N > 0) {
+            Object value = readValue(loader);
+            //Log.d(TAG, "Unmarshalling value=" + value);
+            outVal.add(value);
+            N--;
+        }
+!!!7532037.java!!!	readArrayInternal(inout outVal : Object [[]], in N : int, inout loader : ClassLoader) : void
+        for (int i = 0; i < N; i++) {
+            Object value = readValue(loader);
+            //Log.d(TAG, "Unmarshalling value=" + value);
+            outVal[i] = value;
+        }
+!!!7532165.java!!!	readSparseArrayInternal(inout outVal : SparseArray, in N : int, inout loader : ClassLoader) : void
+        while (N > 0) {
+            int key = readInt();
+            Object value = readValue(loader);
+            //Log.i(TAG, "Unmarshalling key=" + key + " value=" + value);
+            outVal.append(key, value);
+            N--;
+        }
+!!!7532293.java!!!	readSparseBooleanArrayInternal(inout outVal : SparseBooleanArray, in N : int) : void
+        while (N > 0) {
+            int key = readInt();
+            boolean value = this.readByte() == 1;
+            //Log.i(TAG, "Unmarshalling key=" + key + " value=" + value);
+            outVal.append(key, value);
+            N--;
+        }
+!!!7532421.java!!!	readSparseIntArrayInternal(inout outVal : SparseIntArray, in N : int) : void
+        while (N > 0) {
+            int key = readInt();
+            int value = readInt();
+            outVal.append(key, value);
+            N--;
+        }
+!!!7532549.java!!!	getBlobAshmemSize() : long
+        return nativeGetBlobAshmemSize(mNativePtr);

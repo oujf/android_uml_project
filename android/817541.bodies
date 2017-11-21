@@ -1,0 +1,110 @@
+class WifiTile
+!!!3464965.java!!!	WifiTile(inout host : QSHost)
+        super(host);
+        mController = Dependency.get(NetworkController.class);
+        mWifiController = mController.getAccessPointController();
+        mDetailAdapter = (WifiDetailAdapter) createDetailAdapter();
+        mActivityStarter = Dependency.get(ActivityStarter.class);
+!!!3465093.java!!!	newTileState() : SignalState
+        return new SignalState();
+!!!3465221.java!!!	setListening(inout listening : boolean) : void
+        if (listening) {
+            mController.addCallback(mSignalCallback);
+        } else {
+            mController.removeCallback(mSignalCallback);
+        }
+!!!3465349.java!!!	setDetailListening(inout listening : boolean) : void
+        if (listening) {
+            mWifiController.addAccessPointCallback(mDetailAdapter);
+        } else {
+            mWifiController.removeAccessPointCallback(mDetailAdapter);
+        }
+!!!3465477.java!!!	getDetailAdapter() : DetailAdapter
+        return mDetailAdapter;
+!!!3465605.java!!!	createDetailAdapter() : DetailAdapter
+        return new WifiDetailAdapter();
+!!!3465733.java!!!	createTileView(inout context : Context) : QSIconView
+        return new SignalTileView(context);
+!!!3465861.java!!!	getLongClickIntent() : Intent
+        return WIFI_SETTINGS;
+!!!3465989.java!!!	handleClick() : void
+        // Secondary clicks are header clicks, just toggle.
+        mState.copyTo(mStateBeforeClick);
+        mController.setWifiEnabled(!mState.value);
+!!!3466117.java!!!	handleSecondaryClick() : void
+        if (!mWifiController.canConfigWifi()) {
+            mActivityStarter.postStartActivityDismissingKeyguard(
+                    new Intent(Settings.ACTION_WIFI_SETTINGS), 0);
+            return;
+        }
+        showDetail(true);
+!!!3466245.java!!!	getTileLabel() : CharSequence
+        return mContext.getString(R.string.quick_settings_wifi_label);
+!!!3466373.java!!!	handleUpdateState(inout state : SignalState, inout arg : Object) : void
+        if (DEBUG) Log.d(TAG, "handleUpdateState arg=" + arg);
+        CallbackInfo cb = (CallbackInfo) arg;
+        if (cb == null) {
+            cb = mSignalCallback.mInfo;
+        }
+
+        boolean wifiConnected = cb.enabled && (cb.wifiSignalIconId > 0) && (cb.enabledDesc != null);
+        boolean wifiNotConnected = (cb.wifiSignalIconId > 0) && (cb.enabledDesc == null);
+        boolean enabledChanging = state.value != cb.enabled;
+        if (enabledChanging) {
+            mDetailAdapter.setItemsVisible(cb.enabled);
+            fireToggleStateChanged(cb.enabled);
+        }
+        state.dualTarget = true;
+        state.value = cb.enabled;
+        state.activityIn = cb.enabled && cb.activityIn;
+        state.activityOut = cb.enabled && cb.activityOut;
+        final StringBuffer minimalContentDescription = new StringBuffer();
+        final Resources r = mContext.getResources();
+        if (cb.isTransient) {
+            state.icon = ResourceIcon.get(R.drawable.ic_signal_wifi_transient_animation);
+            state.label = r.getString(R.string.quick_settings_wifi_label);
+        } else if (!state.value) {
+            state.icon = ResourceIcon.get(R.drawable.ic_qs_wifi_disabled);
+            state.label = r.getString(R.string.quick_settings_wifi_label);
+        } else if (wifiConnected) {
+            state.icon = ResourceIcon.get(cb.wifiSignalIconId);
+            state.label = removeDoubleQuotes(cb.enabledDesc);
+        } else if (wifiNotConnected) {
+            state.icon = ResourceIcon.get(R.drawable.ic_qs_wifi_disconnected);
+            state.label = r.getString(R.string.quick_settings_wifi_label);
+        } else {
+            state.icon = ResourceIcon.get(R.drawable.ic_qs_wifi_no_network);
+            state.label = r.getString(R.string.quick_settings_wifi_label);
+        }
+        minimalContentDescription.append(
+                mContext.getString(R.string.quick_settings_wifi_label)).append(",");
+        if (state.value) {
+            if (wifiConnected) {
+                minimalContentDescription.append(cb.wifiSignalContentDescription).append(",");
+                minimalContentDescription.append(removeDoubleQuotes(cb.enabledDesc));
+            }
+        }
+        state.contentDescription = minimalContentDescription.toString();
+        state.dualLabelContentDescription = r.getString(
+                R.string.accessibility_quick_settings_open_settings, getTileLabel());
+        state.expandedAccessibilityClassName = Switch.class.getName();
+        state.state = Tile.STATE_ACTIVE;
+!!!3466501.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_WIFI;
+!!!3466629.java!!!	shouldAnnouncementBeDelayed() : boolean
+        return mStateBeforeClick.value == mState.value;
+!!!3466757.java!!!	composeChangeAnnouncement() : String
+        if (mState.value) {
+            return mContext.getString(R.string.accessibility_quick_settings_wifi_changed_on);
+        } else {
+            return mContext.getString(R.string.accessibility_quick_settings_wifi_changed_off);
+        }
+!!!3466885.java!!!	isAvailable() : boolean
+        return mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI);
+!!!3467013.java!!!	removeDoubleQuotes(in string : String) : String
+        if (string == null) return null;
+        final int length = string.length();
+        if ((length > 1) && (string.charAt(0) == '"') && (string.charAt(length - 1) == '"')) {
+            return string.substring(1, length - 1);
+        }
+        return string;

@@ -1,0 +1,156 @@
+class BluetoothLeScanner
+!!!6051589.java!!!	BluetoothLeScanner(inout bluetoothManager : IBluetoothManager)
+        mBluetoothManager = bluetoothManager;
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        mHandler = new Handler(Looper.getMainLooper());
+        mLeScanClients = new HashMap<ScanCallback, BleScanCallbackWrapper>();
+!!!6051717.java!!!	startScan(in callback : ScanCallback) : void
+        startScan(null, new ScanSettings.Builder().build(), callback);
+!!!6051845.java!!!	startScan(inout filters : List<ScanFilter>, inout settings : ScanSettings, in callback : ScanCallback) : void
+        startScan(filters, settings, null, callback, /*callbackIntent=*/ null, null);
+!!!6051973.java!!!	startScan(inout filters : List<ScanFilter>, inout settings : ScanSettings, inout callbackIntent : PendingIntent) : int
+        return startScan(filters,
+                settings != null ? settings : new ScanSettings.Builder().build(),
+                null, null, callbackIntent, null);
+!!!6052101.java!!!	startScanFromSource(in workSource : WorkSource, in callback : ScanCallback) : void
+        startScanFromSource(null, new ScanSettings.Builder().build(), workSource, callback);
+!!!6052229.java!!!	startScanFromSource(inout filters : List<ScanFilter>, inout settings : ScanSettings, in workSource : WorkSource, in callback : ScanCallback) : void
+        startScan(filters, settings, workSource, callback, null, null);
+!!!6052357.java!!!	startScan(inout filters : List<ScanFilter>, inout settings : ScanSettings, in workSource : WorkSource, in callback : ScanCallback, in callbackIntent : PendingIntent, inout resultStorages : List<List<ResultStorageDescriptor>>) : int
+        BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
+        if (callback == null && callbackIntent == null) {
+            throw new IllegalArgumentException("callback is null");
+        }
+        if (settings == null) {
+            throw new IllegalArgumentException("settings is null");
+        }
+        synchronized (mLeScanClients) {
+            if (callback != null && mLeScanClients.containsKey(callback)) {
+                postCallbackError(callback, ScanCallback.SCAN_FAILED_ALREADY_STARTED);
+            }
+            IBluetoothGatt gatt;
+            try {
+                gatt = mBluetoothManager.getBluetoothGatt();
+            } catch (RemoteException e) {
+                gatt = null;
+            }
+            if (gatt == null) {
+                return postCallbackErrorOrReturn(callback, ScanCallback.SCAN_FAILED_INTERNAL_ERROR);
+            }
+            if (!isSettingsConfigAllowedForScan(settings)) {
+                return postCallbackErrorOrReturn(callback,
+                            ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED);
+            }
+            if (!isHardwareResourcesAvailableForScan(settings)) {
+                return postCallbackErrorOrReturn(callback,
+                            ScanCallback.SCAN_FAILED_OUT_OF_HARDWARE_RESOURCES);
+            }
+            if (!isSettingsAndFilterComboAllowed(settings, filters)) {
+                return postCallbackErrorOrReturn(callback,
+                        ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED);
+            }
+            if (callback != null) {
+                BleScanCallbackWrapper wrapper = new BleScanCallbackWrapper(gatt, filters,
+                        settings, workSource, callback, resultStorages);
+                wrapper.startRegistration();
+            } else {
+                try {
+                    gatt.startScanForIntent(callbackIntent, settings, filters,
+                            ActivityThread.currentOpPackageName());
+                } catch (RemoteException e) {
+                    return ScanCallback.SCAN_FAILED_INTERNAL_ERROR;
+                }
+            }
+        }
+        return ScanCallback.NO_ERROR;
+!!!6052485.java!!!	stopScan(inout callback : ScanCallback) : void
+        BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
+        synchronized (mLeScanClients) {
+            BleScanCallbackWrapper wrapper = mLeScanClients.remove(callback);
+            if (wrapper == null) {
+                if (DBG) Log.d(TAG, "could not find callback wrapper");
+                return;
+            }
+            wrapper.stopLeScan();
+        }
+!!!6052613.java!!!	stopScan(inout callbackIntent : PendingIntent) : void
+        BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
+        IBluetoothGatt gatt;
+        try {
+            gatt = mBluetoothManager.getBluetoothGatt();
+            gatt.stopScanForIntent(callbackIntent, ActivityThread.currentOpPackageName());
+        } catch (RemoteException e) {
+        }
+!!!6052741.java!!!	flushPendingScanResults(inout callback : ScanCallback) : void
+        BluetoothLeUtils.checkAdapterStateOn(mBluetoothAdapter);
+        if (callback == null) {
+            throw new IllegalArgumentException("callback cannot be null!");
+        }
+        synchronized (mLeScanClients) {
+            BleScanCallbackWrapper wrapper = mLeScanClients.get(callback);
+            if (wrapper == null) {
+                return;
+            }
+            wrapper.flushPendingBatchResults();
+        }
+!!!6052869.java!!!	startTruncatedScan(inout truncatedFilters : List<TruncatedFilter>, inout settings : ScanSettings, in callback : ScanCallback) : void
+        int filterSize = truncatedFilters.size();
+        List<ScanFilter> scanFilters = new ArrayList<ScanFilter>(filterSize);
+        List<List<ResultStorageDescriptor>> scanStorages =
+                new ArrayList<List<ResultStorageDescriptor>>(filterSize);
+        for (TruncatedFilter filter : truncatedFilters) {
+            scanFilters.add(filter.getFilter());
+            scanStorages.add(filter.getStorageDescriptors());
+        }
+        startScan(scanFilters, settings, null, callback, null, scanStorages);
+!!!6052997.java!!!	cleanup() : void
+        mLeScanClients.clear();
+!!!6054277.java!!!	postCallbackErrorOrReturn(in callback : ScanCallback, in errorCode : int) : int
+        if (callback == null) {
+            return errorCode;
+        } else {
+            postCallbackError(callback, errorCode);
+            return ScanCallback.NO_ERROR;
+        }
+!!!6054405.java!!!	postCallbackError(in callback : ScanCallback, in errorCode : int) : void
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                callback.onScanFailed(errorCode);
+            }
+        });
+!!!6054533.java!!!	isSettingsConfigAllowedForScan(inout settings : ScanSettings) : boolean
+        if (mBluetoothAdapter.isOffloadedFilteringSupported()) {
+            return true;
+        }
+        final int callbackType = settings.getCallbackType();
+        // Only support regular scan if no offloaded filter support.
+        if (callbackType == ScanSettings.CALLBACK_TYPE_ALL_MATCHES
+                && settings.getReportDelayMillis() == 0) {
+            return true;
+        }
+        return false;
+!!!6054661.java!!!	isSettingsAndFilterComboAllowed(inout settings : ScanSettings, inout filterList : List<ScanFilter>) : boolean
+        final int callbackType = settings.getCallbackType();
+        // If onlost/onfound is requested, a non-empty filter is expected
+        if ((callbackType & (ScanSettings.CALLBACK_TYPE_FIRST_MATCH
+                        | ScanSettings.CALLBACK_TYPE_MATCH_LOST)) != 0) {
+            if (filterList == null) {
+                return false;
+            }
+            for (ScanFilter filter : filterList) {
+                if (filter.isAllFieldsEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+!!!6054789.java!!!	isHardwareResourcesAvailableForScan(inout settings : ScanSettings) : boolean
+        final int callbackType = settings.getCallbackType();
+        if ((callbackType & ScanSettings.CALLBACK_TYPE_FIRST_MATCH) != 0
+                || (callbackType & ScanSettings.CALLBACK_TYPE_MATCH_LOST) != 0) {
+            // For onlost/onfound, we required hw support be available
+            return (mBluetoothAdapter.isOffloadedFilteringSupported() &&
+                    mBluetoothAdapter.isHardwareTrackingFiltersAvailable());
+        }
+        return true;

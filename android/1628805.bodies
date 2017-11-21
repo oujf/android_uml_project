@@ -1,0 +1,112 @@
+class AccountManagerBackupHelper
+!!!10919173.java!!!	AccountManagerBackupHelper(inout accountManagerService : AccountManagerService, inout accountManagerInternal : AccountManagerInternal)
+        mAccountManagerService = accountManagerService;
+        mAccountManagerInternal = accountManagerInternal;
+!!!10919557.java!!!	backupAccountAccessPermissions(in userId : int) : byte
+        final AccountManagerService.UserAccounts accounts = mAccountManagerService
+                .getUserAccounts(userId);
+        synchronized (accounts.dbLock) {
+            synchronized (accounts.cacheLock) {
+                List<Pair<String, Integer>> allAccountGrants = accounts.accountsDb
+                        .findAllAccountGrants();
+                if (allAccountGrants.isEmpty()) {
+                    return null;
+                }
+                try {
+                    ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
+                    final XmlSerializer serializer = new FastXmlSerializer();
+                    serializer.setOutput(dataStream, StandardCharsets.UTF_8.name());
+                    serializer.startDocument(null, true);
+                    serializer.startTag(null, TAG_PERMISSIONS);
+
+                    PackageManager packageManager = mAccountManagerService.mContext
+                            .getPackageManager();
+                    for (Pair<String, Integer> grant : allAccountGrants) {
+                        final String accountName = grant.first;
+                        final int uid = grant.second;
+
+                        final String[] packageNames = packageManager.getPackagesForUid(uid);
+                        if (packageNames == null) {
+                            continue;
+                        }
+
+                        for (String packageName : packageNames) {
+                            String digest = PackageUtils.computePackageCertSha256Digest(
+                                    packageManager, packageName, userId);
+                            if (digest != null) {
+                                serializer.startTag(null, TAG_PERMISSION);
+                                serializer.attribute(null, ATTR_ACCOUNT_SHA_256,
+                                        PackageUtils.computeSha256Digest(accountName.getBytes()));
+                                serializer.attribute(null, ATTR_PACKAGE, packageName);
+                                serializer.attribute(null, ATTR_DIGEST, digest);
+                                serializer.endTag(null, TAG_PERMISSION);
+                            }
+                        }
+                    }
+                    serializer.endTag(null, TAG_PERMISSIONS);
+                    serializer.endDocument();
+                    serializer.flush();
+                    return dataStream.toByteArray();
+                } catch (IOException e) {
+                    Log.e(TAG, "Error backing up account access grants", e);
+                    return null;
+                }
+            }
+        }
+!!!10919685.java!!!	restoreAccountAccessPermissions(inout data : byte [[]], in userId : int) : void
+        try {
+            ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
+            XmlPullParser parser = Xml.newPullParser();
+            parser.setInput(dataStream, StandardCharsets.UTF_8.name());
+            PackageManager packageManager = mAccountManagerService.mContext.getPackageManager();
+
+            final int permissionsOuterDepth = parser.getDepth();
+            while (XmlUtils.nextElementWithin(parser, permissionsOuterDepth)) {
+                if (!TAG_PERMISSIONS.equals(parser.getName())) {
+                    continue;
+                }
+                final int permissionOuterDepth = parser.getDepth();
+                while (XmlUtils.nextElementWithin(parser, permissionOuterDepth)) {
+                    if (!TAG_PERMISSION.equals(parser.getName())) {
+                        continue;
+                    }
+                    String accountDigest = parser.getAttributeValue(null, ATTR_ACCOUNT_SHA_256);
+                    if (TextUtils.isEmpty(accountDigest)) {
+                        XmlUtils.skipCurrentTag(parser);
+                    }
+                    String packageName = parser.getAttributeValue(null, ATTR_PACKAGE);
+                    if (TextUtils.isEmpty(packageName)) {
+                        XmlUtils.skipCurrentTag(parser);
+                    }
+                    String digest =  parser.getAttributeValue(null, ATTR_DIGEST);
+                    if (TextUtils.isEmpty(digest)) {
+                        XmlUtils.skipCurrentTag(parser);
+                    }
+
+                    PendingAppPermission pendingAppPermission = new PendingAppPermission(
+                            accountDigest, packageName, digest, userId);
+
+                    if (!pendingAppPermission.apply(packageManager)) {
+                        synchronized (mLock) {
+                            // Start watching before add pending to avoid a missed signal
+                            if (mRestorePackageMonitor == null) {
+                                mRestorePackageMonitor = new RestorePackageMonitor();
+                                mRestorePackageMonitor.register(mAccountManagerService.mContext,
+                                        mAccountManagerService.mHandler.getLooper(), true);
+                            }
+                            if (mRestorePendingAppPermissions == null) {
+                                mRestorePendingAppPermissions = new ArrayList<>();
+                            }
+                            mRestorePendingAppPermissions.add(pendingAppPermission);
+                        }
+                    }
+                }
+            }
+
+            // Make sure we eventually prune the in-memory pending restores
+            mRestoreCancelCommand = new CancelRestoreCommand();
+            mAccountManagerService.mHandler.postDelayed(mRestoreCancelCommand,
+                    PENDING_RESTORE_TIMEOUT_MILLIS);
+        } catch (XmlPullParserException | IOException e) {
+            Log.e(TAG, "Error restoring app permissions", e);
+        }

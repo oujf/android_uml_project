@@ -1,0 +1,185 @@
+class PreferenceFragment
+!!!7739909.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+        mPreferenceManager = new PreferenceManager(getActivity(), FIRST_REQUEST_CODE);
+        mPreferenceManager.setFragment(this);
+!!!7740037.java!!!	onCreateView(inout inflater : LayoutInflater, inout container : ViewGroup, inout savedInstanceState : Bundle) : View
+
+        TypedArray a = getActivity().obtainStyledAttributes(null,
+                com.android.internal.R.styleable.PreferenceFragment,
+                com.android.internal.R.attr.preferenceFragmentStyle,
+                0);
+
+        mLayoutResId = a.getResourceId(com.android.internal.R.styleable.PreferenceFragment_layout,
+                mLayoutResId);
+
+        a.recycle();
+
+        return inflater.inflate(mLayoutResId, container, false);
+!!!7740165.java!!!	onViewCreated(inout view : View, inout savedInstanceState : Bundle) : void
+        super.onViewCreated(view, savedInstanceState);
+
+        TypedArray a = getActivity().obtainStyledAttributes(null,
+                com.android.internal.R.styleable.PreferenceFragment,
+                com.android.internal.R.attr.preferenceFragmentStyle,
+                0);
+
+        ListView lv = (ListView) view.findViewById(android.R.id.list);
+        if (lv != null
+                && a.hasValueOrEmpty(com.android.internal.R.styleable.PreferenceFragment_divider)) {
+            lv.setDivider(
+                    a.getDrawable(com.android.internal.R.styleable.PreferenceFragment_divider));
+        }
+
+        a.recycle();
+!!!7740293.java!!!	onActivityCreated(inout savedInstanceState : Bundle) : void
+        super.onActivityCreated(savedInstanceState);
+
+        if (mHavePrefs) {
+            bindPreferences();
+        }
+
+        mInitDone = true;
+
+        if (savedInstanceState != null) {
+            Bundle container = savedInstanceState.getBundle(PREFERENCES_TAG);
+            if (container != null) {
+                final PreferenceScreen preferenceScreen = getPreferenceScreen();
+                if (preferenceScreen != null) {
+                    preferenceScreen.restoreHierarchyState(container);
+                }
+            }
+        }
+!!!7740421.java!!!	onStart() : void
+        super.onStart();
+        mPreferenceManager.setOnPreferenceTreeClickListener(this);
+!!!7740549.java!!!	onStop() : void
+        super.onStop();
+        mPreferenceManager.dispatchActivityStop();
+        mPreferenceManager.setOnPreferenceTreeClickListener(null);
+!!!7740677.java!!!	onDestroyView() : void
+        if (mList != null) {
+            mList.setOnKeyListener(null);
+        }
+        mList = null;
+        mHandler.removeCallbacks(mRequestFocus);
+        mHandler.removeMessages(MSG_BIND_PREFERENCES);
+        super.onDestroyView();
+!!!7740805.java!!!	onDestroy() : void
+        super.onDestroy();
+        mPreferenceManager.dispatchActivityDestroy();
+!!!7740933.java!!!	onSaveInstanceState(inout outState : Bundle) : void
+        super.onSaveInstanceState(outState);
+
+        final PreferenceScreen preferenceScreen = getPreferenceScreen();
+        if (preferenceScreen != null) {
+            Bundle container = new Bundle();
+            preferenceScreen.saveHierarchyState(container);
+            outState.putBundle(PREFERENCES_TAG, container);
+        }
+!!!7741061.java!!!	onActivityResult(in requestCode : int, in resultCode : int, inout data : Intent) : void
+        super.onActivityResult(requestCode, resultCode, data);
+
+        mPreferenceManager.dispatchActivityResult(requestCode, resultCode, data);
+!!!7741189.java!!!	getPreferenceManager() : PreferenceManager
+        return mPreferenceManager;
+!!!7741317.java!!!	setPreferenceScreen(inout preferenceScreen : PreferenceScreen) : void
+        if (mPreferenceManager.setPreferences(preferenceScreen) && preferenceScreen != null) {
+            onUnbindPreferences();
+            mHavePrefs = true;
+            if (mInitDone) {
+                postBindPreferences();
+            }
+        }
+!!!7741445.java!!!	getPreferenceScreen() : PreferenceScreen
+        return mPreferenceManager.getPreferenceScreen();
+!!!7741573.java!!!	addPreferencesFromIntent(inout intent : Intent) : void
+        requirePreferenceManager();
+
+        setPreferenceScreen(mPreferenceManager.inflateFromIntent(intent, getPreferenceScreen()));
+!!!7741701.java!!!	addPreferencesFromResource(in preferencesResId : int) : void
+        requirePreferenceManager();
+
+        setPreferenceScreen(mPreferenceManager.inflateFromResource(getActivity(),
+                preferencesResId, getPreferenceScreen()));
+!!!7741829.java!!!	onPreferenceTreeClick(inout preferenceScreen : PreferenceScreen, inout preference : Preference) : boolean
+        if (preference.getFragment() != null &&
+                getActivity() instanceof OnPreferenceStartFragmentCallback) {
+            return ((OnPreferenceStartFragmentCallback)getActivity()).onPreferenceStartFragment(
+                    this, preference);
+        }
+        return false;
+!!!7741957.java!!!	findPreference(inout key : CharSequence) : Preference
+        if (mPreferenceManager == null) {
+            return null;
+        }
+        return mPreferenceManager.findPreference(key);
+!!!7742085.java!!!	requirePreferenceManager() : void
+        if (mPreferenceManager == null) {
+            throw new RuntimeException("This should be called after super.onCreate.");
+        }
+!!!7742213.java!!!	postBindPreferences() : void
+        if (mHandler.hasMessages(MSG_BIND_PREFERENCES)) return;
+        mHandler.obtainMessage(MSG_BIND_PREFERENCES).sendToTarget();
+!!!7742341.java!!!	bindPreferences() : void
+        final PreferenceScreen preferenceScreen = getPreferenceScreen();
+        if (preferenceScreen != null) {
+            View root = getView();
+            if (root != null) {
+                View titleView = root.findViewById(android.R.id.title);
+                if (titleView instanceof TextView) {
+                    CharSequence title = preferenceScreen.getTitle();
+                    if (TextUtils.isEmpty(title)) {
+                        titleView.setVisibility(View.GONE);
+                    } else {
+                        ((TextView) titleView).setText(title);
+                        titleView.setVisibility(View.VISIBLE);
+                    }
+                }
+            }
+
+            preferenceScreen.bind(getListView());
+        }
+        onBindPreferences();
+!!!7742725.java!!!	getListView() : ListView
+        ensureList();
+        return mList;
+!!!7742853.java!!!	hasListView() : boolean
+        if (mList != null) {
+            return true;
+        }
+        View root = getView();
+        if (root == null) {
+            return false;
+        }
+        View rawListView = root.findViewById(android.R.id.list);
+        if (!(rawListView instanceof ListView)) {
+            return false;
+        }
+        mList = (ListView)rawListView;
+        if (mList == null) {
+            return false;
+        }
+        return true;
+!!!7742981.java!!!	ensureList() : void
+        if (mList != null) {
+            return;
+        }
+        View root = getView();
+        if (root == null) {
+            throw new IllegalStateException("Content view not yet created");
+        }
+        View rawListView = root.findViewById(android.R.id.list);
+        if (!(rawListView instanceof ListView)) {
+            throw new RuntimeException(
+                    "Content has view with id attribute 'android.R.id.list' "
+                    + "that is not a ListView class");
+        }
+        mList = (ListView)rawListView;
+        if (mList == null) {
+            throw new RuntimeException(
+                    "Your content must have a ListView whose id attribute is " +
+                    "'android.R.id.list'");
+        }
+        mList.setOnKeyListener(mListOnKeyListener);
+        mHandler.post(mRequestFocus);

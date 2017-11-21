@@ -1,0 +1,212 @@
+class TWGraphicBufferProducer
+!!!1466757.cpp!!!	requestBuffer(in slot : int32_t, in _hidl_cb : requestBuffer_cb) : Return<void>
+    sp<GraphicBuffer> buf;
+    status_t status = mBase->requestBuffer(slot, &buf);
+    AnwBuffer anwBuffer;
+    wrapAs(&anwBuffer, *buf);
+    _hidl_cb(static_cast<int32_t>(status), anwBuffer);
+    return Void();
+!!!1466885.cpp!!!	setMaxDequeuedBufferCount(in maxDequeuedBuffers : int32_t) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setMaxDequeuedBufferCount(
+            static_cast<int>(maxDequeuedBuffers)));
+!!!1467013.cpp!!!	setAsyncMode(in async : bool) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setAsyncMode(async));
+!!!1467141.cpp!!!	dequeueBuffer(in width : uint32_t, in height : uint32_t, in format : PixelFormat, in usage : uint32_t, in getFrameTimestamps : bool, in _hidl_cb : dequeueBuffer_cb) : Return<void>
+    int slot;
+    sp<Fence> fence;
+    ::android::FrameEventHistoryDelta outTimestamps;
+    status_t status = mBase->dequeueBuffer(
+            &slot, &fence,
+            width, height,
+            static_cast<::android::PixelFormat>(format), usage,
+            getFrameTimestamps ? &outTimestamps : nullptr);
+    hidl_handle tFence;
+    FrameEventHistoryDelta tOutTimestamps;
+
+    native_handle_t* nh = nullptr;
+    if ((fence == nullptr) || !wrapAs(&tFence, &nh, *fence)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::dequeueBuffer - "
+                "Invalid output fence";
+        _hidl_cb(static_cast<int32_t>(status),
+                 static_cast<int32_t>(slot),
+                 tFence,
+                 tOutTimestamps);
+        return Void();
+    }
+    std::vector<std::vector<native_handle_t*> > nhAA;
+    if (getFrameTimestamps && !wrapAs(&tOutTimestamps, &nhAA, outTimestamps)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::dequeueBuffer - "
+                "Invalid output timestamps";
+        _hidl_cb(static_cast<int32_t>(status),
+                 static_cast<int32_t>(slot),
+                 tFence,
+                 tOutTimestamps);
+        native_handle_delete(nh);
+        return Void();
+    }
+
+    _hidl_cb(static_cast<int32_t>(status),
+            static_cast<int32_t>(slot),
+            tFence,
+            tOutTimestamps);
+    native_handle_delete(nh);
+    if (getFrameTimestamps) {
+        for (auto& nhA : nhAA) {
+            for (auto& handle : nhA) {
+                native_handle_delete(handle);
+            }
+        }
+    }
+    return Void();
+!!!1467269.cpp!!!	detachBuffer(in slot : int32_t) : Return<int32_t>
+    return static_cast<int32_t>(mBase->detachBuffer(slot));
+!!!1467397.cpp!!!	detachNextBuffer(in _hidl_cb : detachNextBuffer_cb) : Return<void>
+    sp<GraphicBuffer> outBuffer;
+    sp<Fence> outFence;
+    status_t status = mBase->detachNextBuffer(&outBuffer, &outFence);
+    AnwBuffer tBuffer;
+    hidl_handle tFence;
+
+    if (outBuffer == nullptr) {
+        LOG(ERROR) << "TWGraphicBufferProducer::detachNextBuffer - "
+                "Invalid output buffer";
+        _hidl_cb(static_cast<int32_t>(status), tBuffer, tFence);
+        return Void();
+    }
+    wrapAs(&tBuffer, *outBuffer);
+    native_handle_t* nh = nullptr;
+    if ((outFence != nullptr) && !wrapAs(&tFence, &nh, *outFence)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::detachNextBuffer - "
+                "Invalid output fence";
+        _hidl_cb(static_cast<int32_t>(status), tBuffer, tFence);
+        return Void();
+    }
+
+    _hidl_cb(static_cast<int32_t>(status), tBuffer, tFence);
+    native_handle_delete(nh);
+    return Void();
+!!!1467525.cpp!!!	attachBuffer(in buffer : AnwBuffer, in _hidl_cb : attachBuffer_cb) : Return<void>
+    int outSlot;
+    sp<GraphicBuffer> lBuffer = new GraphicBuffer();
+    if (!convertTo(lBuffer.get(), buffer)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::attachBuffer - "
+                "Invalid input native window buffer";
+        _hidl_cb(static_cast<int32_t>(BAD_VALUE), -1);
+        return Void();
+    }
+    status_t status = mBase->attachBuffer(&outSlot, lBuffer);
+
+    _hidl_cb(static_cast<int32_t>(status), static_cast<int32_t>(outSlot));
+    return Void();
+!!!1467781.cpp!!!	cancelBuffer(in slot : int32_t, in fence : hidl_handle) : Return<int32_t>
+    sp<Fence> lFence = new Fence();
+    if (!convertTo(lFence.get(), fence)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::cancelBuffer - "
+                "Invalid input fence";
+        return static_cast<int32_t>(BAD_VALUE);
+    }
+    return static_cast<int32_t>(mBase->cancelBuffer(static_cast<int>(slot), lFence));
+!!!1467909.cpp!!!	query(in what : int32_t, in _hidl_cb : query_cb) : Return<void>
+    int lValue;
+    int lReturn = mBase->query(static_cast<int>(what), &lValue);
+    _hidl_cb(static_cast<int32_t>(lReturn), static_cast<int32_t>(lValue));
+    return Void();
+!!!1468037.cpp!!!	connect(in listener : sp<HProducerListener>, in api : int32_t, in producerControlledByApp : bool, in _hidl_cb : connect_cb) : Return<void>
+    sp<BProducerListener> lListener = listener == nullptr ?
+            nullptr : new LWProducerListener(listener);
+    BGraphicBufferProducer::QueueBufferOutput lOutput;
+    status_t status = mBase->connect(lListener,
+            static_cast<int>(api),
+            producerControlledByApp,
+            &lOutput);
+
+    QueueBufferOutput tOutput;
+    std::vector<std::vector<native_handle_t*> > nhAA;
+    if (!wrapAs(&tOutput, &nhAA, lOutput)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::connect - "
+                "Invalid output";
+        _hidl_cb(static_cast<int32_t>(status), tOutput);
+        return Void();
+    }
+
+    _hidl_cb(static_cast<int32_t>(status), tOutput);
+    for (auto& nhA : nhAA) {
+        for (auto& nh : nhA) {
+            native_handle_delete(nh);
+        }
+    }
+    return Void();
+!!!1468293.cpp!!!	setSidebandStream(in stream : hidl_handle) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setSidebandStream(NativeHandle::create(
+            stream ? native_handle_clone(stream) : NULL, true)));
+!!!1468421.cpp!!!	allocateBuffers(in width : uint32_t, in height : uint32_t, in format : PixelFormat, in usage : uint32_t) : Return<void>
+    mBase->allocateBuffers(
+            width, height,
+            static_cast<::android::PixelFormat>(format),
+            usage);
+    return Void();
+!!!1468549.cpp!!!	allowAllocation(in allow : bool) : Return<int32_t>
+    return static_cast<int32_t>(mBase->allowAllocation(allow));
+!!!1468677.cpp!!!	setGenerationNumber(in generationNumber : uint32_t) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setGenerationNumber(generationNumber));
+!!!1468805.cpp!!!	getConsumerName(in _hidl_cb : getConsumerName_cb) : Return<void>
+    _hidl_cb(mBase->getConsumerName().string());
+    return Void();
+!!!1468933.cpp!!!	setSharedBufferMode(in sharedBufferMode : bool) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setSharedBufferMode(sharedBufferMode));
+!!!1469061.cpp!!!	setAutoRefresh(in autoRefresh : bool) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setAutoRefresh(autoRefresh));
+!!!1469189.cpp!!!	setDequeueTimeout(in timeoutNs : int64_t) : Return<int32_t>
+    return static_cast<int32_t>(mBase->setDequeueTimeout(timeoutNs));
+!!!1469317.cpp!!!	getLastQueuedBuffer(in _hidl_cb : getLastQueuedBuffer_cb) : Return<void>
+    sp<GraphicBuffer> lOutBuffer = new GraphicBuffer();
+    sp<Fence> lOutFence = new Fence();
+    float lOutTransformMatrix[16];
+    status_t status = mBase->getLastQueuedBuffer(
+            &lOutBuffer, &lOutFence, lOutTransformMatrix);
+
+    AnwBuffer tOutBuffer;
+    if (lOutBuffer != nullptr) {
+        wrapAs(&tOutBuffer, *lOutBuffer);
+    }
+    hidl_handle tOutFence;
+    native_handle_t* nh = nullptr;
+    if ((lOutFence == nullptr) || !wrapAs(&tOutFence, &nh, *lOutFence)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::getLastQueuedBuffer - "
+                "Invalid output fence";
+        _hidl_cb(static_cast<int32_t>(status),
+                tOutBuffer,
+                tOutFence,
+                hidl_array<float, 16>());
+        return Void();
+    }
+    hidl_array<float, 16> tOutTransformMatrix(lOutTransformMatrix);
+
+    _hidl_cb(static_cast<int32_t>(status), tOutBuffer, tOutFence, tOutTransformMatrix);
+    native_handle_delete(nh);
+    return Void();
+!!!1469445.cpp!!!	getFrameTimestamps(in _hidl_cb : getFrameTimestamps_cb) : Return<void>
+    ::android::FrameEventHistoryDelta lDelta;
+    mBase->getFrameTimestamps(&lDelta);
+
+    FrameEventHistoryDelta tDelta;
+    std::vector<std::vector<native_handle_t*> > nhAA;
+    if (!wrapAs(&tDelta, &nhAA, lDelta)) {
+        LOG(ERROR) << "TWGraphicBufferProducer::getFrameTimestamps - "
+                "Invalid output frame timestamps";
+        _hidl_cb(tDelta);
+        return Void();
+    }
+
+    _hidl_cb(tDelta);
+    for (auto& nhA : nhAA) {
+        for (auto& nh : nhA) {
+            native_handle_delete(nh);
+        }
+    }
+    return Void();
+!!!1469573.cpp!!!	getUniqueId(in _hidl_cb : getUniqueId_cb) : Return<void>
+    uint64_t outId;
+    status_t status = mBase->getUniqueId(&outId);
+    _hidl_cb(static_cast<int32_t>(status), outId);
+    return Void();

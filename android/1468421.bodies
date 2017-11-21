@@ -1,0 +1,56 @@
+class ReceiverInfo
+!!!9366149.java!!!	addView(inout v : DateTimeView) : void
+            synchronized (mAttachedViews) {
+                final boolean register = mAttachedViews.isEmpty();
+                mAttachedViews.add(v);
+                if (register) {
+                    register(getApplicationContextIfAvailable(v.getContext()));
+                }
+            }
+!!!9366277.java!!!	removeView(inout v : DateTimeView) : void
+            synchronized (mAttachedViews) {
+                mAttachedViews.remove(v);
+                if (mAttachedViews.isEmpty()) {
+                    unregister(getApplicationContextIfAvailable(v.getContext()));
+                }
+            }
+!!!9366405.java!!!	updateAll() : void
+            synchronized (mAttachedViews) {
+                final int count = mAttachedViews.size();
+                for (int i = 0; i < count; i++) {
+                    DateTimeView view = mAttachedViews.get(i);
+                    view.post(() -> view.clearFormatAndUpdate());
+                }
+            }
+!!!9366533.java!!!	getSoonestUpdateTime() : long
+            long result = Long.MAX_VALUE;
+            synchronized (mAttachedViews) {
+                final int count = mAttachedViews.size();
+                for (int i = 0; i < count; i++) {
+                    final long time = mAttachedViews.get(i).mUpdateTimeMillis;
+                    if (time < result) {
+                        result = time;
+                    }
+                }
+            }
+            return result;
+!!!9366661.java!!!	getApplicationContextIfAvailable(inout context : Context) : Context
+            final Context ac = context.getApplicationContext();
+            return ac != null ? ac : ActivityThread.currentApplication().getApplicationContext();
+!!!9366789.java!!!	register(inout context : Context) : void
+            final IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_TIME_TICK);
+            filter.addAction(Intent.ACTION_TIME_CHANGED);
+            filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
+            filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            context.registerReceiver(mReceiver, filter, null, mHandler);
+!!!9366917.java!!!	unregister(inout context : Context) : void
+            context.unregisterReceiver(mReceiver);
+!!!9367045.java!!!	setHandler(inout handler : Handler) : void
+            mHandler = handler;
+            synchronized (mAttachedViews) {
+                if (!mAttachedViews.isEmpty()) {
+                    unregister(mAttachedViews.get(0).getContext());
+                    register(mAttachedViews.get(0).getContext());
+                }
+            }

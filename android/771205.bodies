@@ -1,0 +1,164 @@
+class DozeMachine
+!!!3193733.java!!!	DozeMachine(inout service : DozeMachine::Service, inout config : AmbientDisplayConfiguration, inout wakeLock : WakeLock)
+        mDozeService = service;
+        mConfig = config;
+        mWakeLock = wakeLock;
+!!!3193861.java!!!	setParts(inout parts : DozeMachine::Part [[]]) : void
+        Preconditions.checkState(mParts == null);
+        mParts = parts;
+!!!3193989.java!!!	requestState(inout requestedState : DozeMachine::State) : void
+        Preconditions.checkArgument(requestedState != State.DOZE_REQUEST_PULSE);
+        requestState(requestedState, DozeLog.PULSE_REASON_NONE);
+!!!3194117.java!!!	requestPulse(in pulseReason : int) : void
+        // Must not be called during a transition. There's no inherent problem with that,
+        // but there's currently no need to execute from a transition and it simplifies the
+        // code to not have to worry about keeping the pulseReason in mQueuedRequests.
+        Preconditions.checkState(!isExecutingTransition());
+        requestState(State.DOZE_REQUEST_PULSE, pulseReason);
+!!!3194245.java!!!	requestState(inout requestedState : DozeMachine::State, in pulseReason : int) : void
+        Assert.isMainThread();
+        if (DEBUG) {
+            Log.i(TAG, "request: current=" + mState + " req=" + requestedState,
+                    new Throwable("here"));
+        }
+
+        boolean runNow = !isExecutingTransition();
+        mQueuedRequests.add(requestedState);
+        if (runNow) {
+            mWakeLock.acquire();
+            for (int i = 0; i < mQueuedRequests.size(); i++) {
+                // Transitions in Parts can call back into requestState, which will
+                // cause mQueuedRequests to grow.
+                transitionTo(mQueuedRequests.get(i), pulseReason);
+            }
+            mQueuedRequests.clear();
+            mWakeLock.release();
+        }
+!!!3194373.java!!!	getState() : DozeMachine::State
+        Assert.isMainThread();
+        Preconditions.checkState(!isExecutingTransition());
+        return mState;
+!!!3194501.java!!!	getPulseReason() : int
+        Assert.isMainThread();
+        Preconditions.checkState(mState == State.DOZE_REQUEST_PULSE
+                || mState == State.DOZE_PULSING
+                || mState == State.DOZE_PULSE_DONE, "must be in pulsing state, but is " + mState);
+        return mPulseReason;
+!!!3194629.java!!!	wakeUp() : void
+        mDozeService.requestWakeUp();
+!!!3194757.java!!!	isExecutingTransition() : boolean
+        return !mQueuedRequests.isEmpty();
+!!!3194885.java!!!	transitionTo(inout requestedState : DozeMachine::State, in pulseReason : int) : void
+        State newState = transitionPolicy(requestedState);
+
+        if (DEBUG) {
+            Log.i(TAG, "transition: old=" + mState + " req=" + requestedState + " new=" + newState);
+        }
+
+        if (newState == mState) {
+            return;
+        }
+
+        validateTransition(newState);
+
+        State oldState = mState;
+        mState = newState;
+
+        updatePulseReason(newState, oldState, pulseReason);
+        performTransitionOnComponents(oldState, newState);
+        updateScreenState(newState);
+        updateWakeLockState(newState);
+
+        resolveIntermediateState(newState);
+!!!3195013.java!!!	updatePulseReason(inout newState : DozeMachine::State, inout oldState : DozeMachine::State, in pulseReason : int) : void
+        if (newState == State.DOZE_REQUEST_PULSE) {
+            mPulseReason = pulseReason;
+        } else if (oldState == State.DOZE_PULSE_DONE) {
+            mPulseReason = DozeLog.PULSE_REASON_NONE;
+        }
+!!!3195141.java!!!	performTransitionOnComponents(inout oldState : DozeMachine::State, inout newState : DozeMachine::State) : void
+        for (Part p : mParts) {
+            p.transitionTo(oldState, newState);
+        }
+
+        switch (newState) {
+            case FINISH:
+                mDozeService.finish();
+                break;
+            default:
+        }
+!!!3195269.java!!!	validateTransition(inout newState : DozeMachine::State) : void
+        try {
+            switch (mState) {
+                case FINISH:
+                    Preconditions.checkState(newState == State.FINISH);
+                    break;
+                case UNINITIALIZED:
+                    Preconditions.checkState(newState == State.INITIALIZED);
+                    break;
+            }
+            switch (newState) {
+                case UNINITIALIZED:
+                    throw new IllegalArgumentException("can't transition to UNINITIALIZED");
+                case INITIALIZED:
+                    Preconditions.checkState(mState == State.UNINITIALIZED);
+                    break;
+                case DOZE_PULSING:
+                    Preconditions.checkState(mState == State.DOZE_REQUEST_PULSE);
+                    break;
+                case DOZE_PULSE_DONE:
+                    Preconditions.checkState(
+                            mState == State.DOZE_REQUEST_PULSE || mState == State.DOZE_PULSING);
+                    break;
+                default:
+                    break;
+            }
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Illegal Transition: " + mState + " -> " + newState, e);
+        }
+!!!3195397.java!!!	transitionPolicy(inout requestedState : DozeMachine::State) : DozeMachine::State
+        if (mState == State.FINISH) {
+            return State.FINISH;
+        }
+        if ((mState == State.DOZE_AOD_PAUSED || mState == State.DOZE_AOD || mState == State.DOZE)
+                && requestedState == State.DOZE_PULSE_DONE) {
+            Log.i(TAG, "Dropping pulse done because current state is already done: " + mState);
+            return mState;
+        }
+        if (requestedState == State.DOZE_REQUEST_PULSE && !mState.canPulse()) {
+            Log.i(TAG, "Dropping pulse request because current state can't pulse: " + mState);
+            return mState;
+        }
+        return requestedState;
+!!!3195525.java!!!	updateWakeLockState(inout newState : DozeMachine::State) : void
+        boolean staysAwake = newState.staysAwake();
+        if (mWakeLockHeldForCurrentState && !staysAwake) {
+            mWakeLock.release();
+            mWakeLockHeldForCurrentState = false;
+        } else if (!mWakeLockHeldForCurrentState && staysAwake) {
+            mWakeLock.acquire();
+            mWakeLockHeldForCurrentState = true;
+        }
+!!!3195653.java!!!	updateScreenState(inout newState : DozeMachine::State) : void
+        int state = newState.screenState();
+        if (state != Display.STATE_UNKNOWN) {
+            mDozeService.setDozeScreenState(state);
+        }
+!!!3195781.java!!!	resolveIntermediateState(inout state : DozeMachine::State) : void
+        switch (state) {
+            case INITIALIZED:
+            case DOZE_PULSE_DONE:
+                transitionTo(mConfig.alwaysOnEnabled(UserHandle.USER_CURRENT)
+                        ? DozeMachine.State.DOZE_AOD : DozeMachine.State.DOZE,
+                        DozeLog.PULSE_REASON_NONE);
+                break;
+            default:
+                break;
+        }
+!!!3195909.java!!!	dump(inout pw : PrintWriter) : void
+        pw.print(" state="); pw.println(mState);
+        pw.print(" wakeLockHeldForCurrentState="); pw.println(mWakeLockHeldForCurrentState);
+        pw.println("Parts:");
+        for (Part p : mParts) {
+            p.dump(pw);
+        }

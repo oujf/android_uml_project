@@ -1,0 +1,142 @@
+class LightBarController
+!!!3934213.java!!!	LightBarController()
+        mStatusBarIconController = Dependency.get(DarkIconDispatcher.class);
+        mBatteryController = Dependency.get(BatteryController.class);
+        mBatteryController.addCallback(this);
+!!!3934341.java!!!	setNavigationBar(inout navigationBar : LightBarTransitionsController) : void
+        mNavigationBarController = navigationBar;
+!!!3934469.java!!!	setFingerprintUnlockController(inout fingerprintUnlockController : FingerprintUnlockController) : void
+        mFingerprintUnlockController = fingerprintUnlockController;
+!!!3934597.java!!!	onSystemUiVisibilityChanged(in fullscreenStackVis : int, in dockedStackVis : int, in mask : int, inout fullscreenStackBounds : Rect, inout dockedStackBounds : Rect, inout sbModeChanged : boolean, in statusBarMode : int) : void
+        int oldFullscreen = mFullscreenStackVisibility;
+        int newFullscreen = (oldFullscreen & ~mask) | (fullscreenStackVis & mask);
+        int diffFullscreen = newFullscreen ^ oldFullscreen;
+        int oldDocked = mDockedStackVisibility;
+        int newDocked = (oldDocked & ~mask) | (dockedStackVis & mask);
+        int diffDocked = newDocked ^ oldDocked;
+        if ((diffFullscreen & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) != 0
+                || (diffDocked & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) != 0
+                || sbModeChanged
+                || !mLastFullscreenBounds.equals(fullscreenStackBounds)
+                || !mLastDockedBounds.equals(dockedStackBounds)) {
+
+            mFullscreenLight = isLight(newFullscreen, statusBarMode,
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            mDockedLight = isLight(newDocked, statusBarMode, View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            updateStatus(fullscreenStackBounds, dockedStackBounds);
+        }
+
+        mFullscreenStackVisibility = newFullscreen;
+        mDockedStackVisibility = newDocked;
+        mLastStatusBarMode = statusBarMode;
+        mLastFullscreenBounds.set(fullscreenStackBounds);
+        mLastDockedBounds.set(dockedStackBounds);
+!!!3934725.java!!!	onNavigationVisibilityChanged(in vis : int, in mask : int, inout nbModeChanged : boolean, in navigationBarMode : int) : void
+        int oldVis = mSystemUiVisibility;
+        int newVis = (oldVis & ~mask) | (vis & mask);
+        int diffVis = newVis ^ oldVis;
+        if ((diffVis & View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) != 0
+                || nbModeChanged) {
+            boolean last = mNavigationLight;
+            mHasLightNavigationBar = isLight(vis, navigationBarMode,
+                    View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            mNavigationLight = mHasLightNavigationBar && mScrimAlphaBelowThreshold;
+            if (mNavigationLight != last) {
+                updateNavigation();
+            }
+        }
+        mSystemUiVisibility = newVis;
+        mLastNavigationBarMode = navigationBarMode;
+!!!3934853.java!!!	reevaluate() : void
+        onSystemUiVisibilityChanged(mFullscreenStackVisibility,
+                mDockedStackVisibility, 0 /* mask */, mLastFullscreenBounds, mLastDockedBounds,
+                true /* sbModeChange*/, mLastStatusBarMode);
+        onNavigationVisibilityChanged(mSystemUiVisibility, 0 /* mask */, true /* nbModeChanged */,
+                mLastNavigationBarMode);
+!!!3934981.java!!!	setScrimAlpha(in alpha : float) : void
+        mScrimAlpha = alpha;
+        boolean belowThresholdBefore = mScrimAlphaBelowThreshold;
+        mScrimAlphaBelowThreshold = mScrimAlpha < NAV_BAR_INVERSION_SCRIM_ALPHA_THRESHOLD;
+        if (mHasLightNavigationBar && belowThresholdBefore != mScrimAlphaBelowThreshold) {
+            reevaluate();
+        }
+!!!3935109.java!!!	isLight(in vis : int, in barMode : int, in flag : int) : boolean
+        boolean isTransparentBar = (barMode == MODE_TRANSPARENT
+                || barMode == MODE_LIGHTS_OUT_TRANSPARENT);
+        boolean allowLight = isTransparentBar && !mBatteryController.isPowerSave();
+        boolean light = (vis & flag) != 0;
+        return allowLight && light;
+!!!3935237.java!!!	animateChange() : boolean
+        if (mFingerprintUnlockController == null) {
+            return false;
+        }
+        int unlockMode = mFingerprintUnlockController.getMode();
+        return unlockMode != FingerprintUnlockController.MODE_WAKE_AND_UNLOCK_PULSING
+                && unlockMode != FingerprintUnlockController.MODE_WAKE_AND_UNLOCK;
+!!!3935365.java!!!	updateStatus(inout fullscreenStackBounds : Rect, inout dockedStackBounds : Rect) : void
+        boolean hasDockedStack = !dockedStackBounds.isEmpty();
+
+        // If both are light or fullscreen is light and there is no docked stack, all icons get
+        // dark.
+        if ((mFullscreenLight && mDockedLight) || (mFullscreenLight && !hasDockedStack)) {
+            mStatusBarIconController.setIconsDarkArea(null);
+            mStatusBarIconController.getTransitionsController().setIconsDark(true, animateChange());
+
+        }
+
+        // If no one is light or the fullscreen is not light and there is no docked stack,
+        // all icons become white.
+        else if ((!mFullscreenLight && !mDockedLight) || (!mFullscreenLight && !hasDockedStack)) {
+            mStatusBarIconController.getTransitionsController().setIconsDark(
+                    false, animateChange());
+        }
+
+        // Not the same for every stack, magic!
+        else {
+            Rect bounds = mFullscreenLight ? fullscreenStackBounds : dockedStackBounds;
+            if (bounds.isEmpty()) {
+                mStatusBarIconController.setIconsDarkArea(null);
+            } else {
+                mStatusBarIconController.setIconsDarkArea(bounds);
+            }
+            mStatusBarIconController.getTransitionsController().setIconsDark(true, animateChange());
+        }
+!!!3935493.java!!!	updateNavigation() : void
+        if (mNavigationBarController != null) {
+            mNavigationBarController.setIconsDark(
+                    mNavigationLight, animateChange());
+        }
+!!!3935621.java!!!	onBatteryLevelChanged(in level : int, inout pluggedIn : boolean, inout charging : boolean) : void
+
+!!!3935749.java!!!	onPowerSaveChanged(inout isPowerSave : boolean) : void
+        reevaluate();
+!!!3935877.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.println("LightBarController: ");
+        pw.print(" mSystemUiVisibility=0x"); pw.print(
+                Integer.toHexString(mSystemUiVisibility));
+        pw.print(" mFullscreenStackVisibility=0x"); pw.print(
+                Integer.toHexString(mFullscreenStackVisibility));
+        pw.print(" mDockedStackVisibility=0x"); pw.println(
+                Integer.toHexString(mDockedStackVisibility));
+
+        pw.print(" mFullscreenLight="); pw.print(mFullscreenLight);
+        pw.print(" mDockedLight="); pw.println(mDockedLight);
+
+        pw.print(" mLastFullscreenBounds="); pw.print(mLastFullscreenBounds);
+        pw.print(" mLastDockedBounds="); pw.println(mLastDockedBounds);
+
+        pw.print(" mNavigationLight="); pw.print(mNavigationLight);
+        pw.print(" mHasLightNavigationBar="); pw.println(mHasLightNavigationBar);
+
+        pw.print(" mLastStatusBarMode="); pw.print(mLastStatusBarMode);
+        pw.print(" mLastNavigationBarMode="); pw.println(mLastNavigationBarMode);
+
+        pw.print(" mScrimAlpha="); pw.print(mScrimAlpha);
+        pw.print(" mScrimAlphaBelowThreshold="); pw.println(mScrimAlphaBelowThreshold);
+        pw.println();
+        pw.println(" StatusBarTransitionsController:");
+        mStatusBarIconController.getTransitionsController().dump(fd, pw, args);
+        pw.println();
+        pw.println(" NavigationBarTransitionsController:");
+        mNavigationBarController.dump(fd, pw, args);
+        pw.println();

@@ -1,0 +1,418 @@
+class NavigationBarFragment
+!!!3946373.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+        mCommandQueue = SysUiServiceProvider.getComponent(getContext(), CommandQueue.class);
+        mCommandQueue.addCallbacks(this);
+        mStatusBar = SysUiServiceProvider.getComponent(getContext(), StatusBar.class);
+        mRecents = SysUiServiceProvider.getComponent(getContext(), Recents.class);
+        mDivider = SysUiServiceProvider.getComponent(getContext(), Divider.class);
+        mWindowManager = getContext().getSystemService(WindowManager.class);
+        mAccessibilityManager = getContext().getSystemService(AccessibilityManager.class);
+        Dependency.get(AccessibilityManagerWrapper.class).addCallback(
+                mAccessibilityListener);
+        mContentResolver = getContext().getContentResolver();
+        mMagnificationObserver = new MagnificationContentObserver(
+                getContext().getMainThreadHandler());
+        mContentResolver.registerContentObserver(Settings.Secure.getUriFor(
+                Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_NAVBAR_ENABLED), false,
+                mMagnificationObserver, UserHandle.USER_ALL);
+
+        if (savedInstanceState != null) {
+            mDisabledFlags1 = savedInstanceState.getInt(EXTRA_DISABLE_STATE, 0);
+        }
+        mAssistManager = Dependency.get(AssistManager.class);
+
+        try {
+            WindowManagerGlobal.getWindowManagerService()
+                    .watchRotation(mRotationWatcher, getContext().getDisplay().getDisplayId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!3946501.java!!!	onDestroy() : void
+        super.onDestroy();
+        mCommandQueue.removeCallbacks(this);
+        Dependency.get(AccessibilityManagerWrapper.class).removeCallback(
+                mAccessibilityListener);
+        mContentResolver.unregisterContentObserver(mMagnificationObserver);
+        try {
+            WindowManagerGlobal.getWindowManagerService()
+                    .removeRotationWatcher(mRotationWatcher);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!3946629.java!!!	onCreateView(inout inflater : LayoutInflater, inout container : ViewGroup, inout savedInstanceState : Bundle) : View
+        return inflater.inflate(R.layout.navigation_bar, container, false);
+!!!3946757.java!!!	onViewCreated(inout view : View, inout savedInstanceState : Bundle) : void
+        super.onViewCreated(view, savedInstanceState);
+        mNavigationBarView = (NavigationBarView) view;
+
+        mNavigationBarView.setDisabledFlags(mDisabledFlags1);
+        mNavigationBarView.setComponents(mRecents, mDivider);
+        mNavigationBarView.setOnVerticalChangedListener(this::onVerticalChanged);
+        mNavigationBarView.setOnTouchListener(this::onNavigationTouch);
+        if (savedInstanceState != null) {
+            mNavigationBarView.getLightTransitionsController().restoreState(savedInstanceState);
+        }
+
+        prepareNavigationBarView();
+        checkNavBarModes();
+
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        getContext().registerReceiverAsUser(mBroadcastReceiver, UserHandle.ALL, filter, null, null);
+        PowerManager pm = getContext().getSystemService(PowerManager.class);
+        notifyNavigationBarScreenOn(pm.isScreenOn());
+!!!3946885.java!!!	onDestroyView() : void
+        super.onDestroyView();
+        mNavigationBarView.getLightTransitionsController().destroy(getContext());
+        getContext().unregisterReceiver(mBroadcastReceiver);
+!!!3947013.java!!!	onSaveInstanceState(inout outState : Bundle) : void
+        super.onSaveInstanceState(outState);
+        outState.putInt(EXTRA_DISABLE_STATE, mDisabledFlags1);
+        if (mNavigationBarView != null) {
+            mNavigationBarView.getLightTransitionsController().saveState(outState);
+        }
+!!!3947141.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        final Locale locale = getContext().getResources().getConfiguration().locale;
+        final int ld = TextUtils.getLayoutDirectionFromLocale(locale);
+        if (!locale.equals(mLocale) || ld != mLayoutDirection) {
+            if (DEBUG) {
+                Log.v(TAG, String.format(
+                        "config changed locale/LD: %s (%d) -> %s (%d)", mLocale, mLayoutDirection,
+                        locale, ld));
+            }
+            mLocale = locale;
+            mLayoutDirection = ld;
+            refreshLayout(ld);
+        }
+        repositionNavigationBar();
+!!!3947269.java!!!	dump(in prefix : String, inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        if (mNavigationBarView != null) {
+            pw.print("  mNavigationBarWindowState=");
+            pw.println(windowStateToString(mNavigationBarWindowState));
+            pw.print("  mNavigationBarMode=");
+            pw.println(BarTransitions.modeToString(mNavigationBarMode));
+            dumpBarTransitions(pw, "mNavigationBarView", mNavigationBarView.getBarTransitions());
+        }
+
+        pw.print("  mNavigationBarView=");
+        if (mNavigationBarView == null) {
+            pw.println("null");
+        } else {
+            mNavigationBarView.dump(fd, pw, args);
+        }
+!!!3947397.java!!!	setImeWindowStatus(inout token : IBinder, in vis : int, in backDisposition : int, inout showImeSwitcher : boolean) : void
+        boolean imeShown = (vis & InputMethodService.IME_VISIBLE) != 0;
+        int hints = mNavigationIconHints;
+        if ((backDisposition == InputMethodService.BACK_DISPOSITION_WILL_DISMISS) || imeShown) {
+            hints |= NAVIGATION_HINT_BACK_ALT;
+        } else {
+            hints &= ~NAVIGATION_HINT_BACK_ALT;
+        }
+        if (showImeSwitcher) {
+            hints |= NAVIGATION_HINT_IME_SHOWN;
+        } else {
+            hints &= ~NAVIGATION_HINT_IME_SHOWN;
+        }
+        if (hints == mNavigationIconHints) return;
+
+        mNavigationIconHints = hints;
+
+        if (mNavigationBarView != null) {
+            mNavigationBarView.setNavigationIconHints(hints);
+        }
+        mStatusBar.checkBarModes();
+!!!3947525.java!!!	topAppWindowChanged(inout showMenu : boolean) : void
+        if (mNavigationBarView != null) {
+            mNavigationBarView.setMenuVisibility(showMenu);
+        }
+!!!3947653.java!!!	setWindowState(in window : int, in state : int) : void
+        if (mNavigationBarView != null
+                && window == StatusBarManager.WINDOW_NAVIGATION_BAR
+                && mNavigationBarWindowState != state) {
+            mNavigationBarWindowState = state;
+            if (DEBUG_WINDOW_STATE) Log.d(TAG, "Navigation bar " + windowStateToString(state));
+        }
+!!!3947781.java!!!	setCurrentSysuiVisibility(in systemUiVisibility : int) : void
+        mSystemUiVisibility = systemUiVisibility;
+        mNavigationBarMode = mStatusBar.computeBarMode(0, mSystemUiVisibility,
+                View.NAVIGATION_BAR_TRANSIENT, View.NAVIGATION_BAR_TRANSLUCENT,
+                View.NAVIGATION_BAR_TRANSPARENT);
+        checkNavBarModes();
+        mStatusBar.touchAutoHide();
+        mLightBarController.onNavigationVisibilityChanged(mSystemUiVisibility, 0 /* mask */,
+                true /* nbModeChanged */, mNavigationBarMode);
+!!!3947909.java!!!	setSystemUiVisibility(in vis : int, in fullscreenStackVis : int, in dockedStackVis : int, in mask : int, inout fullscreenStackBounds : Rect, inout dockedStackBounds : Rect) : void
+        final int oldVal = mSystemUiVisibility;
+        final int newVal = (oldVal & ~mask) | (vis & mask);
+        final int diff = newVal ^ oldVal;
+        boolean nbModeChanged = false;
+        if (diff != 0) {
+            mSystemUiVisibility = newVal;
+
+            // update navigation bar mode
+            final int nbMode = getView() == null
+                    ? -1 : mStatusBar.computeBarMode(oldVal, newVal,
+                    View.NAVIGATION_BAR_TRANSIENT, View.NAVIGATION_BAR_TRANSLUCENT,
+                    View.NAVIGATION_BAR_TRANSPARENT);
+            nbModeChanged = nbMode != -1;
+            if (nbModeChanged) {
+                if (mNavigationBarMode != nbMode) {
+                    mNavigationBarMode = nbMode;
+                    checkNavBarModes();
+                }
+                mStatusBar.touchAutoHide();
+            }
+        }
+
+        mLightBarController.onNavigationVisibilityChanged(vis, mask, nbModeChanged,
+                mNavigationBarMode);
+!!!3948037.java!!!	disable(in state1 : int, in state2 : int, inout animate : boolean) : void
+        // All navigation bar flags are in state1.
+        int masked = state1 & (StatusBarManager.DISABLE_HOME
+                | StatusBarManager.DISABLE_RECENT
+                | StatusBarManager.DISABLE_BACK
+                | StatusBarManager.DISABLE_SEARCH);
+        if (masked != mDisabledFlags1) {
+            mDisabledFlags1 = masked;
+            if (mNavigationBarView != null) mNavigationBarView.setDisabledFlags(state1);
+        }
+!!!3948165.java!!!	refreshLayout(in layoutDirection : int) : void
+        if (mNavigationBarView != null) {
+            mNavigationBarView.setLayoutDirection(layoutDirection);
+        }
+!!!3948293.java!!!	shouldDisableNavbarGestures() : boolean
+        return !mStatusBar.isDeviceProvisioned()
+                || (mDisabledFlags1 & StatusBarManager.DISABLE_SEARCH) != 0;
+!!!3948421.java!!!	repositionNavigationBar() : void
+        if (mNavigationBarView == null || !mNavigationBarView.isAttachedToWindow()) return;
+
+        prepareNavigationBarView();
+
+        mWindowManager.updateViewLayout((View) mNavigationBarView.getParent(),
+                ((View) mNavigationBarView.getParent()).getLayoutParams());
+!!!3948549.java!!!	notifyNavigationBarScreenOn(inout screenOn : boolean) : void
+        mNavigationBarView.notifyScreenOn(screenOn);
+!!!3948677.java!!!	prepareNavigationBarView() : void
+        mNavigationBarView.reorient();
+
+        ButtonDispatcher recentsButton = mNavigationBarView.getRecentsButton();
+        recentsButton.setOnClickListener(this::onRecentsClick);
+        recentsButton.setOnTouchListener(this::onRecentsTouch);
+        recentsButton.setLongClickable(true);
+        recentsButton.setOnLongClickListener(this::onLongPressBackRecents);
+
+        ButtonDispatcher backButton = mNavigationBarView.getBackButton();
+        backButton.setLongClickable(true);
+        backButton.setOnLongClickListener(this::onLongPressBackRecents);
+
+        ButtonDispatcher homeButton = mNavigationBarView.getHomeButton();
+        homeButton.setOnTouchListener(this::onHomeTouch);
+        homeButton.setOnLongClickListener(this::onHomeLongClick);
+
+        ButtonDispatcher accessibilityButton = mNavigationBarView.getAccessibilityButton();
+        accessibilityButton.setOnClickListener(this::onAccessibilityClick);
+        accessibilityButton.setOnLongClickListener(this::onAccessibilityLongClick);
+        updateAccessibilityServicesState(mAccessibilityManager);
+!!!3948805.java!!!	onHomeTouch(inout v : View, inout event : MotionEvent) : boolean
+        if (mHomeBlockedThisTouch && event.getActionMasked() != MotionEvent.ACTION_DOWN) {
+            return true;
+        }
+        // If an incoming call is ringing, HOME is totally disabled.
+        // (The user is already on the InCallUI at this point,
+        // and his ONLY options are to answer or reject the call.)
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                mHomeBlockedThisTouch = false;
+                TelecomManager telecomManager =
+                        getContext().getSystemService(TelecomManager.class);
+                if (telecomManager != null && telecomManager.isRinging()) {
+                    if (mStatusBar.isKeyguardShowing()) {
+                        Log.i(TAG, "Ignoring HOME; there's a ringing incoming call. " +
+                                "No heads up");
+                        mHomeBlockedThisTouch = true;
+                        return true;
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                mStatusBar.awakenDreams();
+                break;
+        }
+        return false;
+!!!3948933.java!!!	onVerticalChanged(inout isVertical : boolean) : void
+        mStatusBar.setQsScrimEnabled(!isVertical);
+!!!3949061.java!!!	onNavigationTouch(inout v : View, inout event : MotionEvent) : boolean
+        mStatusBar.checkUserAutohide(v, event);
+        return false;
+!!!3949189.java!!!	onHomeLongClick(inout v : View) : boolean
+        if (shouldDisableNavbarGestures()) {
+            return false;
+        }
+        MetricsLogger.action(getContext(), MetricsEvent.ACTION_ASSIST_LONG_PRESS);
+        mAssistManager.startAssist(new Bundle() /* args */);
+        mStatusBar.awakenDreams();
+        if (mNavigationBarView != null) {
+            mNavigationBarView.abortCurrentGesture();
+        }
+        return true;
+!!!3949317.java!!!	onRecentsTouch(inout v : View, inout event : MotionEvent) : boolean
+        int action = event.getAction() & MotionEvent.ACTION_MASK;
+        if (action == MotionEvent.ACTION_DOWN) {
+            mCommandQueue.preloadRecentApps();
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            mCommandQueue.cancelPreloadRecentApps();
+        } else if (action == MotionEvent.ACTION_UP) {
+            if (!v.isPressed()) {
+                mCommandQueue.cancelPreloadRecentApps();
+            }
+        }
+        return false;
+!!!3949445.java!!!	onRecentsClick(inout v : View) : void
+        if (LatencyTracker.isEnabled(getContext())) {
+            LatencyTracker.getInstance(getContext()).onActionStart(
+                    LatencyTracker.ACTION_TOGGLE_RECENTS);
+        }
+        mStatusBar.awakenDreams();
+        mCommandQueue.toggleRecentApps();
+!!!3949573.java!!!	onLongPressBackRecents(inout v : View) : boolean
+        try {
+            boolean sendBackLongPress = false;
+            IActivityManager activityManager = ActivityManagerNative.getDefault();
+            boolean touchExplorationEnabled = mAccessibilityManager.isTouchExplorationEnabled();
+            boolean inLockTaskMode = activityManager.isInLockTaskMode();
+            if (inLockTaskMode && !touchExplorationEnabled) {
+                long time = System.currentTimeMillis();
+                // If we recently long-pressed the other button then they were
+                // long-pressed 'together'
+                if ((time - mLastLockToAppLongPress) < LOCK_TO_APP_GESTURE_TOLERENCE) {
+                    activityManager.stopLockTaskMode();
+                    // When exiting refresh disabled flags.
+                    mNavigationBarView.setDisabledFlags(mDisabledFlags1, true);
+                    return true;
+                } else if ((v.getId() == R.id.back)
+                        && !mNavigationBarView.getRecentsButton().getCurrentView().isPressed()) {
+                    // If we aren't pressing recents right now then they presses
+                    // won't be together, so send the standard long-press action.
+                    sendBackLongPress = true;
+                }
+                mLastLockToAppLongPress = time;
+            } else {
+                // If this is back still need to handle sending the long-press event.
+                if (v.getId() == R.id.back) {
+                    sendBackLongPress = true;
+                } else if (touchExplorationEnabled && inLockTaskMode) {
+                    // When in accessibility mode a long press that is recents (not back)
+                    // should stop lock task.
+                    activityManager.stopLockTaskMode();
+                    // When exiting refresh disabled flags.
+                    mNavigationBarView.setDisabledFlags(mDisabledFlags1, true);
+                    return true;
+                } else if (v.getId() == R.id.recent_apps) {
+                    return onLongPressRecents();
+                }
+            }
+            if (sendBackLongPress) {
+                KeyButtonView keyButtonView = (KeyButtonView) v;
+                keyButtonView.sendEvent(KeyEvent.ACTION_DOWN, KeyEvent.FLAG_LONG_PRESS);
+                keyButtonView.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_LONG_CLICKED);
+                return true;
+            }
+        } catch (RemoteException e) {
+            Log.d(TAG, "Unable to reach activity manager", e);
+        }
+        return false;
+!!!3949701.java!!!	onLongPressRecents() : boolean
+        if (mRecents == null || !ActivityManager.supportsMultiWindow(getContext())
+                || !mDivider.getView().getSnapAlgorithm().isSplitScreenFeasible()) {
+            return false;
+        }
+
+        return mStatusBar.toggleSplitScreenMode(MetricsEvent.ACTION_WINDOW_DOCK_LONGPRESS,
+                MetricsEvent.ACTION_WINDOW_UNDOCK_LONGPRESS);
+!!!3949829.java!!!	onAccessibilityClick(inout v : View) : void
+        mAccessibilityManager.notifyAccessibilityButtonClicked();
+!!!3949957.java!!!	onAccessibilityLongClick(inout v : View) : boolean
+        Intent intent = new Intent(AccessibilityManager.ACTION_CHOOSE_ACCESSIBILITY_BUTTON);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        v.getContext().startActivityAsUser(intent, UserHandle.CURRENT);
+        return true;
+!!!3950085.java!!!	updateAccessibilityServicesState(inout accessibilityManager : AccessibilityManager) : void
+        int requestingServices = 0;
+        try {
+            if (Settings.Secure.getIntForUser(mContentResolver,
+                    Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_NAVBAR_ENABLED,
+                    UserHandle.USER_CURRENT) == 1) {
+                requestingServices++;
+            }
+        } catch (Settings.SettingNotFoundException e) {
+        }
+
+        // AccessibilityManagerService resolves services for the current user since the local
+        // AccessibilityManager is created from a Context with the INTERACT_ACROSS_USERS permission
+        final List<AccessibilityServiceInfo> services =
+                accessibilityManager.getEnabledAccessibilityServiceList(
+                        AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+        for (int i = services.size() - 1; i >= 0; --i) {
+            AccessibilityServiceInfo info = services.get(i);
+            if ((info.flags & AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON) != 0) {
+                requestingServices++;
+            }
+        }
+
+        final boolean showAccessibilityButton = requestingServices >= 1;
+        final boolean targetSelection = requestingServices >= 2;
+        mNavigationBarView.setAccessibilityButtonState(showAccessibilityButton, targetSelection);
+!!!3950213.java!!!	setLightBarController(inout lightBarController : LightBarController) : void
+        mLightBarController = lightBarController;
+        mLightBarController.setNavigationBar(mNavigationBarView.getLightTransitionsController());
+!!!3950341.java!!!	isSemiTransparent() : boolean
+        return mNavigationBarMode == MODE_SEMI_TRANSPARENT;
+!!!3950469.java!!!	onKeyguardOccludedChanged(inout keyguardOccluded : boolean) : void
+        mNavigationBarView.onKeyguardOccludedChanged(keyguardOccluded);
+!!!3950597.java!!!	disableAnimationsDuringHide(in delay : long) : void
+        mNavigationBarView.setLayoutTransitionsEnabled(false);
+        mNavigationBarView.postDelayed(() -> mNavigationBarView.setLayoutTransitionsEnabled(true),
+                delay + StackStateAnimator.ANIMATION_DURATION_GO_TO_FULL_SHADE);
+!!!3950725.java!!!	getBarTransitions() : BarTransitions
+        return mNavigationBarView.getBarTransitions();
+!!!3950853.java!!!	checkNavBarModes() : void
+        mStatusBar.checkBarMode(mNavigationBarMode,
+                mNavigationBarWindowState, mNavigationBarView.getBarTransitions());
+!!!3950981.java!!!	finishBarAnimations() : void
+        mNavigationBarView.getBarTransitions().finishAnimations();
+!!!3951365.java!!!	create(inout context : Context, inout listener : FragmentHostManager::FragmentListener) : View
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_NAVIGATION_BAR,
+                WindowManager.LayoutParams.FLAG_TOUCHABLE_WHEN_WAKING
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                        | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
+                        | WindowManager.LayoutParams.FLAG_SLIPPERY,
+                PixelFormat.TRANSLUCENT);
+        lp.token = new Binder();
+        // this will allow the navbar to run in an overlay on devices that support this
+        if (ActivityManager.isHighEndGfx()) {
+            lp.flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+        }
+        lp.setTitle("NavigationBar");
+        lp.windowAnimations = 0;
+
+        View navigationBarView = LayoutInflater.from(context).inflate(
+                R.layout.navigation_bar_window, null);
+
+        if (DEBUG) Log.v(TAG, "addNavigationBar: about to add " + navigationBarView);
+        if (navigationBarView == null) return null;
+
+        context.getSystemService(WindowManager.class).addView(navigationBarView, lp);
+        FragmentHostManager fragmentHost = FragmentHostManager.get(navigationBarView);
+        NavigationBarFragment fragment = new NavigationBarFragment();
+        fragmentHost.getFragmentManager().beginTransaction()
+                .replace(R.id.navigation_bar_frame, fragment, TAG)
+                .commit();
+        fragmentHost.addTagListener(TAG, listener);
+        return navigationBarView;

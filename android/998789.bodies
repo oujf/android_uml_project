@@ -1,0 +1,90 @@
+class GetAuthTokenByTypeAndFeaturesTask
+!!!4853637.java!!!	GetAuthTokenByTypeAndFeaturesTask(in accountType : String, in authTokenType : String, in features : String [[]], inout activityForPrompting : Activity, in addAccountOptions : Bundle, in loginOptions : Bundle, inout callback : AccountManagerCallback, inout handler : Handler)
+            super(activityForPrompting, handler, callback);
+            if (accountType == null) throw new IllegalArgumentException("account type is null");
+            mAccountType = accountType;
+            mAuthTokenType = authTokenType;
+            mFeatures = features;
+            mAddAccountOptions = addAccountOptions;
+            mLoginOptions = loginOptions;
+            mMyCallback = this;
+!!!4853765.java!!!	doWork() : void
+            getAccountByTypeAndFeatures(mAccountType, mFeatures,
+                    new AccountManagerCallback<Bundle>() {
+                        @Override
+                        public void run(AccountManagerFuture<Bundle> future) {
+                            String accountName = null;
+                            String accountType = null;
+                            try {
+                                Bundle result = future.getResult();
+                                accountName = result.getString(AccountManager.KEY_ACCOUNT_NAME);
+                                accountType = result.getString(AccountManager.KEY_ACCOUNT_TYPE);
+                            } catch (OperationCanceledException e) {
+                                setException(e);
+                                return;
+                            } catch (IOException e) {
+                                setException(e);
+                                return;
+                            } catch (AuthenticatorException e) {
+                                setException(e);
+                                return;
+                            }
+
+                            if (accountName == null) {
+                                if (mActivity != null) {
+                                    // no accounts, add one now. pretend that the user directly
+                                    // made this request
+                                    mFuture = addAccount(mAccountType, mAuthTokenType, mFeatures,
+                                            mAddAccountOptions, mActivity, mMyCallback, mHandler);
+                                } else {
+                                    // send result since we can't prompt to add an account
+                                    Bundle result = new Bundle();
+                                    result.putString(KEY_ACCOUNT_NAME, null);
+                                    result.putString(KEY_ACCOUNT_TYPE, null);
+                                    result.putString(KEY_AUTHTOKEN, null);
+                                    result.putBinder(KEY_ACCOUNT_ACCESS_ID, null);
+                                    try {
+                                        mResponse.onResult(result);
+                                    } catch (RemoteException e) {
+                                        // this will never happen
+                                    }
+                                    // we are done
+                                }
+                            } else {
+                                mNumAccounts = 1;
+                                Account account = new Account(accountName, accountType);
+                                // have a single account, return an authtoken for it
+                                if (mActivity == null) {
+                                    mFuture = getAuthToken(account, mAuthTokenType,
+                                            false /* notifyAuthFailure */, mMyCallback, mHandler);
+                                } else {
+                                    mFuture = getAuthToken(account, mAuthTokenType, mLoginOptions,
+                                            mActivity, mMyCallback, mHandler);
+                                }
+                            }
+                        }}, mHandler);
+!!!4853893.java!!!	run(inout future : AccountManagerFuture) : void
+            try {
+                final Bundle result = future.getResult();
+                if (mNumAccounts == 0) {
+                    final String accountName = result.getString(KEY_ACCOUNT_NAME);
+                    final String accountType = result.getString(KEY_ACCOUNT_TYPE);
+                    if (TextUtils.isEmpty(accountName) || TextUtils.isEmpty(accountType)) {
+                        setException(new AuthenticatorException("account not in result"));
+                        return;
+                    }
+                    final String accessId = result.getString(KEY_ACCOUNT_ACCESS_ID);
+                    final Account account = new Account(accountName, accountType, accessId);
+                    mNumAccounts = 1;
+                    getAuthToken(account, mAuthTokenType, null /* options */, mActivity,
+                            mMyCallback, mHandler);
+                    return;
+                }
+                set(result);
+            } catch (OperationCanceledException e) {
+                cancel(true /* mayInterruptIfRUnning */);
+            } catch (IOException e) {
+                setException(e);
+            } catch (AuthenticatorException e) {
+                setException(e);
+            }

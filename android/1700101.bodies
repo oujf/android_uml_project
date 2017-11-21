@@ -1,0 +1,77 @@
+class BatteryController
+!!!11719941.java!!!	get(inout taskManagerService : JobSchedulerService) : BatteryController
+        synchronized (sCreationLock) {
+            if (sController == null) {
+                sController = new BatteryController(taskManagerService,
+                        taskManagerService.getContext(), taskManagerService.getLock());
+            }
+        }
+        return sController;
+!!!11720069.java!!!	getTracker() : BatteryController::ChargingTracker
+        return mChargeTracker;
+!!!11720197.java!!!	getForTesting(inout stateChangedListener : StateChangedListener, inout context : Context) : BatteryController
+        return new BatteryController(stateChangedListener, context, new Object());
+!!!11720325.java!!!	BatteryController(inout stateChangedListener : StateChangedListener, inout context : Context, inout lock : Object)
+        super(stateChangedListener, context, lock);
+        mChargeTracker = new ChargingTracker();
+        mChargeTracker.startTracking();
+!!!11720453.java!!!	maybeStartTrackingJobLocked(inout taskStatus : JobStatus, inout lastJob : JobStatus) : void
+        if (taskStatus.hasPowerConstraint()) {
+            mTrackedTasks.add(taskStatus);
+            taskStatus.setTrackingController(JobStatus.TRACKING_BATTERY);
+            taskStatus.setChargingConstraintSatisfied(mChargeTracker.isOnStablePower());
+            taskStatus.setBatteryNotLowConstraintSatisfied(mChargeTracker.isBatteryNotLow());
+        }
+!!!11720581.java!!!	maybeStopTrackingJobLocked(inout taskStatus : JobStatus, inout incomingJob : JobStatus, inout forUpdate : boolean) : void
+        if (taskStatus.clearTrackingController(JobStatus.TRACKING_BATTERY)) {
+            mTrackedTasks.remove(taskStatus);
+        }
+!!!11720709.java!!!	maybeReportNewChargingStateLocked() : void
+        final boolean stablePower = mChargeTracker.isOnStablePower();
+        final boolean batteryNotLow = mChargeTracker.isBatteryNotLow();
+        if (DEBUG) {
+            Slog.d(TAG, "maybeReportNewChargingStateLocked: " + stablePower);
+        }
+        boolean reportChange = false;
+        for (int i = mTrackedTasks.size() - 1; i >= 0; i--) {
+            final JobStatus ts = mTrackedTasks.valueAt(i);
+            boolean previous = ts.setChargingConstraintSatisfied(stablePower);
+            if (previous != stablePower) {
+                reportChange = true;
+            }
+            previous = ts.setBatteryNotLowConstraintSatisfied(batteryNotLow);
+            if (previous != batteryNotLow) {
+                reportChange = true;
+            }
+        }
+        if (stablePower || batteryNotLow) {
+            // If one of our conditions has been satisfied, always schedule any newly ready jobs.
+            mStateChangedListener.onRunJobNow(null);
+        } else if (reportChange) {
+            // Otherwise, just let the job scheduler know the state has changed and take care of it
+            // as it thinks is best.
+            mStateChangedListener.onControllerStateChanged();
+        }
+!!!11721989.java!!!	dumpControllerStateLocked(inout pw : PrintWriter, in filterUid : int) : void
+        pw.print("Battery: stable power = ");
+        pw.print(mChargeTracker.isOnStablePower());
+        pw.print(", not low = ");
+        pw.println(mChargeTracker.isBatteryNotLow());
+        if (mChargeTracker.isMonitoring()) {
+            pw.print("MONITORING: seq=");
+            pw.println(mChargeTracker.getSeq());
+        }
+        pw.print("Tracking ");
+        pw.print(mTrackedTasks.size());
+        pw.println(":");
+        for (int i = 0; i < mTrackedTasks.size(); i++) {
+            final JobStatus js = mTrackedTasks.valueAt(i);
+            if (!js.shouldDump(filterUid)) {
+                continue;
+            }
+            pw.print("  #");
+            js.printUniqueId(pw);
+            pw.print(" from ");
+            UserHandle.formatUid(pw, js.getSourceUid());
+            pw.println();
+        }

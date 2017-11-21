@@ -1,0 +1,68 @@
+class VersionInfo
+!!!3311109.java!!!	hasVersionInfo() : boolean
+        return !mVersions.isEmpty();
+!!!3311237.java!!!	getDefaultVersion() : int
+        return mVersions.get(mDefault).mVersion;
+!!!3311365.java!!!	addClass(inout cls : Class<?>) : VersionInfo
+        if (mDefault == null) {
+            // The legacy default version is from the first class we add.
+            mDefault = cls;
+        }
+        addClass(cls, false);
+        return this;
+!!!3311493.java!!!	addClass(inout cls : Class<?>, inout required : boolean) : void
+        if (mVersions.containsKey(cls)) return;
+        ProvidesInterface provider = cls.getDeclaredAnnotation(ProvidesInterface.class);
+        if (provider != null) {
+            mVersions.put(cls, new Version(provider.version(), true));
+        }
+        Requires requires = cls.getDeclaredAnnotation(Requires.class);
+        if (requires != null) {
+            mVersions.put(requires.target(), new Version(requires.version(), required));
+        }
+        Requirements requirements = cls.getDeclaredAnnotation(Requirements.class);
+        if (requirements != null) {
+            for (Requires r : requirements.value()) {
+                mVersions.put(r.target(), new Version(r.version(), required));
+            }
+        }
+        DependsOn depends = cls.getDeclaredAnnotation(DependsOn.class);
+        if (depends != null) {
+            addClass(depends.target(), true);
+        }
+        Dependencies dependencies = cls.getDeclaredAnnotation(Dependencies.class);
+        if (dependencies != null) {
+            for (DependsOn d : dependencies.value()) {
+                addClass(d.target(), true);
+            }
+        }
+!!!3311621.java!!!	checkVersion(inout plugin : VersionInfo) : void
+        ArrayMap<Class<?>, Version> versions = new ArrayMap<>(mVersions);
+        plugin.mVersions.forEach((aClass, version) -> {
+            Version v = versions.remove(aClass);
+            if (v == null) {
+                v = createVersion(aClass);
+            }
+            if (v == null) {
+                throw new InvalidVersionException(aClass.getSimpleName()
+                        + " does not provide an interface", false);
+            }
+            if (v.mVersion != version.mVersion) {
+                throw new InvalidVersionException(aClass, v.mVersion < version.mVersion, v.mVersion,
+                        version.mVersion);
+            }
+        });
+        versions.forEach((aClass, version) -> {
+            if (version.mRequired) {
+                throw new InvalidVersionException("Missing required dependency "
+                        + aClass.getSimpleName(), false);
+            }
+        });
+!!!3311749.java!!!	createVersion(inout cls : Class<?>) : VersionInfo::Version
+        ProvidesInterface provider = cls.getDeclaredAnnotation(ProvidesInterface.class);
+        if (provider != null) {
+            return new Version(provider.version(), false);
+        }
+        return null;
+!!!3311877.java!!!	hasClass(inout cls : Class<T>) : boolean
+        return mVersions.containsKey(cls);

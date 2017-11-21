@@ -1,0 +1,97 @@
+class BatterySaverPolicy
+!!!12420485.java!!!	BatterySaverPolicy(inout handler : Handler)
+        super(handler);
+!!!12420613.java!!!	start(inout contentResolver : ContentResolver) : void
+        mContentResolver = contentResolver;
+
+        mContentResolver.registerContentObserver(Settings.Global.getUriFor(
+                Settings.Global.BATTERY_SAVER_CONSTANTS), false, this);
+        onChange(true, null);
+!!!12420741.java!!!	onChange(inout selfChange : boolean, inout uri : Uri) : void
+        final String value = Settings.Global.getString(mContentResolver,
+                Settings.Global.BATTERY_SAVER_CONSTANTS);
+        updateConstants(value);
+!!!12420869.java!!!	updateConstants(in value : String) : void
+        synchronized (BatterySaverPolicy.this) {
+            try {
+                mParser.setString(value);
+            } catch (IllegalArgumentException e) {
+                Slog.e(TAG, "Bad battery saver constants");
+            }
+
+            mVibrationDisabled = mParser.getBoolean(KEY_VIBRATION_DISABLED, true);
+            mAnimationDisabled = mParser.getBoolean(KEY_ANIMATION_DISABLED, true);
+            mSoundTriggerDisabled = mParser.getBoolean(KEY_SOUNDTRIGGER_DISABLED, true);
+            mFullBackupDeferred = mParser.getBoolean(KEY_FULLBACKUP_DEFERRED, true);
+            mKeyValueBackupDeferred = mParser.getBoolean(KEY_KEYVALUE_DEFERRED, true);
+            mFireWallDisabled = mParser.getBoolean(KEY_FIREWALL_DISABLED, false);
+            mAdjustBrightnessDisabled = mParser.getBoolean(KEY_ADJUST_BRIGHTNESS_DISABLED, false);
+            mAdjustBrightnessFactor = mParser.getFloat(KEY_ADJUST_BRIGHTNESS_FACTOR, 0.5f);
+            mDataSaverDisabled = mParser.getBoolean(KEY_DATASAVER_DISABLED, true);
+
+            // Get default value from Settings.Secure
+            final int defaultGpsMode = Settings.Secure.getInt(mContentResolver, SECURE_KEY_GPS_MODE,
+                    GPS_MODE_DISABLED_WHEN_SCREEN_OFF);
+            mGpsMode = mParser.getInt(KEY_GPS_MODE, defaultGpsMode);
+        }
+!!!12420997.java!!!	getBatterySaverPolicy(in type : int, inout realMode : boolean) : PowerSaveState
+        synchronized (BatterySaverPolicy.this) {
+            final PowerSaveState.Builder builder = new PowerSaveState.Builder()
+                    .setGlobalBatterySaverEnabled(realMode);
+            if (!realMode) {
+                return builder.setBatterySaverEnabled(realMode)
+                        .build();
+            }
+            switch (type) {
+                case ServiceType.GPS:
+                    return builder.setBatterySaverEnabled(realMode)
+                            .setGpsMode(mGpsMode)
+                            .build();
+                case ServiceType.ANIMATION:
+                    return builder.setBatterySaverEnabled(mAnimationDisabled)
+                            .build();
+                case ServiceType.FULL_BACKUP:
+                    return builder.setBatterySaverEnabled(mFullBackupDeferred)
+                            .build();
+                case ServiceType.KEYVALUE_BACKUP:
+                    return builder.setBatterySaverEnabled(mKeyValueBackupDeferred)
+                            .build();
+                case ServiceType.NETWORK_FIREWALL:
+                    return builder.setBatterySaverEnabled(!mFireWallDisabled)
+                            .build();
+                case ServiceType.SCREEN_BRIGHTNESS:
+                    return builder.setBatterySaverEnabled(!mAdjustBrightnessDisabled)
+                            .setBrightnessFactor(mAdjustBrightnessFactor)
+                            .build();
+                case ServiceType.DATA_SAVER:
+                    return builder.setBatterySaverEnabled(!mDataSaverDisabled)
+                            .build();
+                case ServiceType.SOUND:
+                    return builder.setBatterySaverEnabled(mSoundTriggerDisabled)
+                            .build();
+                case ServiceType.VIBRATION:
+                    return builder.setBatterySaverEnabled(mVibrationDisabled)
+                            .build();
+                default:
+                    return builder.setBatterySaverEnabled(realMode)
+                            .build();
+            }
+        }
+!!!12421125.java!!!	dump(inout pw : PrintWriter) : void
+        pw.println();
+        pw.println("Battery saver policy");
+        pw.println("  Settings " + Settings.Global.BATTERY_SAVER_CONSTANTS);
+        pw.println("  value: " + Settings.Global.getString(mContentResolver,
+                Settings.Global.BATTERY_SAVER_CONSTANTS));
+
+        pw.println();
+        pw.println("  " + KEY_VIBRATION_DISABLED + "=" + mVibrationDisabled);
+        pw.println("  " + KEY_ANIMATION_DISABLED + "=" + mAnimationDisabled);
+        pw.println("  " + KEY_FULLBACKUP_DEFERRED + "=" + mFullBackupDeferred);
+        pw.println("  " + KEY_KEYVALUE_DEFERRED + "=" + mKeyValueBackupDeferred);
+        pw.println("  " + KEY_FIREWALL_DISABLED + "=" + mFireWallDisabled);
+        pw.println("  " + KEY_DATASAVER_DISABLED + "=" + mDataSaverDisabled);
+        pw.println("  " + KEY_ADJUST_BRIGHTNESS_DISABLED + "=" + mAdjustBrightnessDisabled);
+        pw.println("  " + KEY_ADJUST_BRIGHTNESS_FACTOR + "=" + mAdjustBrightnessFactor);
+        pw.println("  " + KEY_GPS_MODE + "=" + mGpsMode);
+

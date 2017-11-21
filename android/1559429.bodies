@@ -1,0 +1,77 @@
+class AnchorInfo
+!!!10418437.java!!!	AnchorInfo()
+            reset();
+!!!10418565.java!!!	reset() : void
+            mPosition = NO_POSITION;
+            mCoordinate = INVALID_OFFSET;
+            mLayoutFromEnd = false;
+            mValid = false;
+!!!10418693.java!!!	assignCoordinateFromPadding() : void
+            mCoordinate = mLayoutFromEnd
+                    ? mOrientationHelper.getEndAfterPadding()
+                    : mOrientationHelper.getStartAfterPadding();
+!!!10418821.java!!!	toString() : String
+            return "AnchorInfo{"
+                    + "mPosition=" + mPosition
+                    + ", mCoordinate=" + mCoordinate
+                    + ", mLayoutFromEnd=" + mLayoutFromEnd
+                    + ", mValid=" + mValid
+                    + '}';
+!!!10418949.java!!!	isViewValidAsAnchor(inout child : View, inout state : RecyclerView::State) : boolean
+            LayoutParams lp = (LayoutParams) child.getLayoutParams();
+            return !lp.isItemRemoved() && lp.getViewLayoutPosition() >= 0
+                    && lp.getViewLayoutPosition() < state.getItemCount();
+!!!10419077.java!!!	assignFromViewAndKeepVisibleRect(inout child : View) : void
+            final int spaceChange = mOrientationHelper.getTotalSpaceChange();
+            if (spaceChange >= 0) {
+                assignFromView(child);
+                return;
+            }
+            mPosition = getPosition(child);
+            if (mLayoutFromEnd) {
+                final int prevLayoutEnd = mOrientationHelper.getEndAfterPadding() - spaceChange;
+                final int childEnd = mOrientationHelper.getDecoratedEnd(child);
+                final int previousEndMargin = prevLayoutEnd - childEnd;
+                mCoordinate = mOrientationHelper.getEndAfterPadding() - previousEndMargin;
+                // ensure we did not push child's top out of bounds because of this
+                if (previousEndMargin > 0) { // we have room to shift bottom if necessary
+                    final int childSize = mOrientationHelper.getDecoratedMeasurement(child);
+                    final int estimatedChildStart = mCoordinate - childSize;
+                    final int layoutStart = mOrientationHelper.getStartAfterPadding();
+                    final int previousStartMargin = mOrientationHelper.getDecoratedStart(child)
+                            - layoutStart;
+                    final int startReference = layoutStart + Math.min(previousStartMargin, 0);
+                    final int startMargin = estimatedChildStart - startReference;
+                    if (startMargin < 0) {
+                        // offset to make top visible but not too much
+                        mCoordinate += Math.min(previousEndMargin, -startMargin);
+                    }
+                }
+            } else {
+                final int childStart = mOrientationHelper.getDecoratedStart(child);
+                final int startMargin = childStart - mOrientationHelper.getStartAfterPadding();
+                mCoordinate = childStart;
+                if (startMargin > 0) { // we have room to fix end as well
+                    final int estimatedEnd = childStart
+                            + mOrientationHelper.getDecoratedMeasurement(child);
+                    final int previousLayoutEnd = mOrientationHelper.getEndAfterPadding()
+                            - spaceChange;
+                    final int previousEndMargin = previousLayoutEnd
+                            - mOrientationHelper.getDecoratedEnd(child);
+                    final int endReference = mOrientationHelper.getEndAfterPadding()
+                            - Math.min(0, previousEndMargin);
+                    final int endMargin = endReference - estimatedEnd;
+                    if (endMargin < 0) {
+                        mCoordinate -= Math.min(startMargin, -endMargin);
+                    }
+                }
+            }
+!!!10419205.java!!!	assignFromView(inout child : View) : void
+            if (mLayoutFromEnd) {
+                mCoordinate = mOrientationHelper.getDecoratedEnd(child)
+                        + mOrientationHelper.getTotalSpaceChange();
+            } else {
+                mCoordinate = mOrientationHelper.getDecoratedStart(child);
+            }
+
+            mPosition = getPosition(child);

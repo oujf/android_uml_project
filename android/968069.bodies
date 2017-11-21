@@ -1,0 +1,72 @@
+class StrokeDescription
+!!!4548741.java!!!	StrokeDescription(inout path : Path, in startTime : long, in duration : long)
+            this(path, startTime, duration, false);
+!!!4548869.java!!!	StrokeDescription(inout path : Path, in startTime : long, in duration : long, inout willContinue : boolean)
+            mContinued = willContinue;
+            Preconditions.checkArgument(duration > 0, "Duration must be positive");
+            Preconditions.checkArgument(startTime >= 0, "Start time must not be negative");
+            Preconditions.checkArgument(!path.isEmpty(), "Path is empty");
+            RectF bounds = new RectF();
+            path.computeBounds(bounds, false /* unused */);
+            Preconditions.checkArgument((bounds.bottom >= 0) && (bounds.top >= 0)
+                    && (bounds.right >= 0) && (bounds.left >= 0),
+                    "Path bounds must not be negative");
+            mPath = new Path(path);
+            mPathMeasure = new PathMeasure(path, false);
+            if (mPathMeasure.getLength() == 0) {
+                // Treat zero-length paths as taps
+                Path tempPath = new Path(path);
+                tempPath.lineTo(-1, -1);
+                mTapLocation = new float[2];
+                PathMeasure pathMeasure = new PathMeasure(tempPath, false);
+                pathMeasure.getPosTan(0, mTapLocation, null);
+            }
+            if (mPathMeasure.nextContour()) {
+                throw new IllegalArgumentException("Path has more than one contour");
+            }
+            /*
+             * Calling nextContour has moved mPathMeasure off the first contour, which is the only
+             * one we care about. Set the path again to go back to the first contour.
+             */
+            mPathMeasure.setPath(mPath, false);
+            mStartTime = startTime;
+            mEndTime = startTime + duration;
+            mTimeToLengthConversion = getLength() / duration;
+            mId = sIdCounter++;
+!!!4548997.java!!!	getPath() : Path
+            return new Path(mPath);
+!!!4549125.java!!!	getStartTime() : long
+            return mStartTime;
+!!!4549253.java!!!	getDuration() : long
+            return mEndTime - mStartTime;
+!!!4549381.java!!!	getId() : int
+            return mId;
+!!!4549509.java!!!	continueStroke(inout path : Path, in startTime : long, in duration : long, inout willContinue : boolean) : GestureDescription::StrokeDescription
+            if (!mContinued) {
+                throw new IllegalStateException(
+                        "Only strokes marked willContinue can be continued");
+            }
+            StrokeDescription strokeDescription =
+                    new StrokeDescription(path, startTime, duration, willContinue);
+            strokeDescription.mContinuedStrokeId = mId;
+            return strokeDescription;
+!!!4549637.java!!!	willContinue() : boolean
+            return mContinued;
+!!!4549765.java!!!	getContinuedStrokeId() : int
+            return mContinuedStrokeId;
+!!!4549893.java!!!	getLength() : float
+            return mPathMeasure.getLength();
+!!!4550021.java!!!	getPosForTime(in time : long, inout pos : float [[]]) : boolean
+            if (mTapLocation != null) {
+                pos[0] = mTapLocation[0];
+                pos[1] = mTapLocation[1];
+                return true;
+            }
+            if (time == mEndTime) {
+                // Close to the end time, roundoff can be a problem
+                return mPathMeasure.getPosTan(getLength(), pos, null);
+            }
+            float length = mTimeToLengthConversion * ((float) (time - mStartTime));
+            return mPathMeasure.getPosTan(length, pos, null);
+!!!4550149.java!!!	hasPointForTime(in time : long) : boolean
+            return ((time >= mStartTime) && (time <= mEndTime));

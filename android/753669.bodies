@@ -1,0 +1,103 @@
+class LightBarTransitionsController
+!!!3936005.java!!!	LightBarTransitionsController(inout context : Context, inout applier : LightBarTransitionsController::DarkIntensityApplier)
+        mApplier = applier;
+        mHandler = new Handler();
+        mKeyguardMonitor = Dependency.get(KeyguardMonitor.class);
+        SysUiServiceProvider.getComponent(context, CommandQueue.class)
+                .addCallbacks(this);
+!!!3936133.java!!!	destroy(inout context : Context) : void
+        SysUiServiceProvider.getComponent(context, CommandQueue.class)
+                .removeCallbacks(this);
+!!!3936261.java!!!	saveState(inout outState : Bundle) : void
+        float intensity = mTintAnimator != null && mTintAnimator.isRunning()
+                ?  mNextDarkIntensity : mDarkIntensity;
+        outState.putFloat(EXTRA_DARK_INTENSITY, intensity);
+!!!3936389.java!!!	restoreState(inout savedInstanceState : Bundle) : void
+        setIconTintInternal(savedInstanceState.getFloat(EXTRA_DARK_INTENSITY, 0));
+!!!3936517.java!!!	appTransitionPending(inout forced : boolean) : void
+        if (mKeyguardMonitor.isKeyguardGoingAway() && !forced) {
+            return;
+        }
+        mTransitionPending = true;
+!!!3936645.java!!!	appTransitionCancelled() : void
+        if (mTransitionPending && mTintChangePending) {
+            mTintChangePending = false;
+            animateIconTint(mPendingDarkIntensity, 0 /* delay */, DEFAULT_TINT_ANIMATION_DURATION);
+        }
+        mTransitionPending = false;
+!!!3936773.java!!!	appTransitionStarting(in startTime : long, in duration : long, inout forced : boolean) : void
+        if (mKeyguardMonitor.isKeyguardGoingAway() && !forced) {
+            return;
+        }
+        if (mTransitionPending && mTintChangePending) {
+            mTintChangePending = false;
+            animateIconTint(mPendingDarkIntensity,
+                    Math.max(0, startTime - SystemClock.uptimeMillis()),
+                    duration);
+
+        } else if (mTransitionPending) {
+
+            // If we don't have a pending tint change yet, the change might come in the future until
+            // startTime is reached.
+            mTransitionDeferring = true;
+            mTransitionDeferringStartTime = startTime;
+            mTransitionDeferringDuration = duration;
+            mHandler.removeCallbacks(mTransitionDeferringDoneRunnable);
+            mHandler.postAtTime(mTransitionDeferringDoneRunnable, startTime);
+        }
+        mTransitionPending = false;
+!!!3936901.java!!!	setIconsDark(inout dark : boolean, inout animate : boolean) : void
+        if (!animate) {
+            setIconTintInternal(dark ? 1.0f : 0.0f);
+        } else if (mTransitionPending) {
+            deferIconTintChange(dark ? 1.0f : 0.0f);
+        } else if (mTransitionDeferring) {
+            animateIconTint(dark ? 1.0f : 0.0f,
+                    Math.max(0, mTransitionDeferringStartTime - SystemClock.uptimeMillis()),
+                    mTransitionDeferringDuration);
+        } else {
+            animateIconTint(dark ? 1.0f : 0.0f, 0 /* delay */, DEFAULT_TINT_ANIMATION_DURATION);
+        }
+!!!3937029.java!!!	getCurrentDarkIntensity() : float
+        return mDarkIntensity;
+!!!3937157.java!!!	deferIconTintChange(in darkIntensity : float) : void
+        if (mTintChangePending && darkIntensity == mPendingDarkIntensity) {
+            return;
+        }
+        mTintChangePending = true;
+        mPendingDarkIntensity = darkIntensity;
+!!!3937285.java!!!	animateIconTint(in targetDarkIntensity : float, in delay : long, in duration : long) : void
+        if (mTintAnimator != null) {
+            mTintAnimator.cancel();
+        }
+        if (mDarkIntensity == targetDarkIntensity) {
+            return;
+        }
+        mNextDarkIntensity = targetDarkIntensity;
+        mTintAnimator = ValueAnimator.ofFloat(mDarkIntensity, targetDarkIntensity);
+        mTintAnimator.addUpdateListener(
+                animation -> setIconTintInternal((Float) animation.getAnimatedValue()));
+        mTintAnimator.setDuration(duration);
+        mTintAnimator.setStartDelay(delay);
+        mTintAnimator.setInterpolator(Interpolators.FAST_OUT_SLOW_IN);
+        mTintAnimator.start();
+!!!3937413.java!!!	setIconTintInternal(in darkIntensity : float) : void
+        mDarkIntensity = darkIntensity;
+        mApplier.applyDarkIntensity(darkIntensity);
+!!!3937541.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.print("  mTransitionDeferring="); pw.print(mTransitionDeferring);
+        if (mTransitionDeferring) {
+            pw.println();
+            pw.print("   mTransitionDeferringStartTime=");
+            pw.println(TimeUtils.formatUptime(mTransitionDeferringStartTime));
+
+            pw.print("   mTransitionDeferringDuration=");
+            TimeUtils.formatDuration(mTransitionDeferringDuration, pw);
+            pw.println();
+        }
+        pw.print("  mTransitionPending="); pw.print(mTransitionPending);
+        pw.print(" mTintChangePending="); pw.println(mTintChangePending);
+
+        pw.print("  mPendingDarkIntensity="); pw.print(mPendingDarkIntensity);
+        pw.print(" mDarkIntensity="); pw.print(mDarkIntensity);
+        pw.print(" mNextDarkIntensity="); pw.println(mNextDarkIntensity);

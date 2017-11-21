@@ -1,0 +1,584 @@
+class AccountsDb
+!!!10951301.java!!!	AccountsDb(inout deDatabase : AccountsDb::DeDatabaseHelper, inout context : Context, inout preNDatabaseFile : File)
+        mDeDatabase = deDatabase;
+        mContext = context;
+        mPreNDatabaseFile = preNDatabaseFile;
+!!!10952325.java!!!	findAuthtokenForAllAccounts(in accountType : String, in authToken : String) : Cursor
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        return db.rawQuery(
+                "SELECT " + CE_TABLE_AUTHTOKENS + "." + AUTHTOKENS_ID
+                        + ", " + CE_TABLE_ACCOUNTS + "." + ACCOUNTS_NAME
+                        + ", " + CE_TABLE_AUTHTOKENS + "." + AUTHTOKENS_TYPE
+                        + " FROM " + CE_TABLE_ACCOUNTS
+                        + " JOIN " + CE_TABLE_AUTHTOKENS
+                        + " ON " + CE_TABLE_ACCOUNTS + "." + ACCOUNTS_ID
+                        + " = " + CE_TABLE_AUTHTOKENS + "." + AUTHTOKENS_ACCOUNTS_ID
+                        + " WHERE " + CE_TABLE_AUTHTOKENS + "." + AUTHTOKENS_AUTHTOKEN
+                        + " = ? AND " + CE_TABLE_ACCOUNTS + "." + ACCOUNTS_TYPE + " = ?",
+                new String[]{authToken, accountType});
+!!!10952453.java!!!	findAuthTokensByAccount(inout account : Account) : Map<String, String>
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        HashMap<String, String> authTokensForAccount = new HashMap<>();
+        Cursor cursor = db.query(CE_TABLE_AUTHTOKENS,
+                COLUMNS_AUTHTOKENS_TYPE_AND_AUTHTOKEN,
+                SELECTION_ACCOUNTS_ID_BY_ACCOUNT,
+                new String[] {account.name, account.type},
+                null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                final String type = cursor.getString(0);
+                final String authToken = cursor.getString(1);
+                authTokensForAccount.put(type, authToken);
+            }
+        } finally {
+            cursor.close();
+        }
+        return authTokensForAccount;
+!!!10952581.java!!!	deleteAuthtokensByAccountIdAndType(in accountId : long, in authtokenType : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        return db.delete(CE_TABLE_AUTHTOKENS,
+                AUTHTOKENS_ACCOUNTS_ID + "=?" + " AND " + AUTHTOKENS_TYPE + "=?",
+                new String[]{String.valueOf(accountId), authtokenType}) > 0;
+!!!10952709.java!!!	deleteAuthToken(in authTokenId : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        return db.delete(
+                CE_TABLE_AUTHTOKENS, AUTHTOKENS_ID + "= ?",
+                new String[]{authTokenId}) > 0;
+!!!10952837.java!!!	insertAuthToken(in accountId : long, in authTokenType : String, in authToken : String) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        ContentValues values = new ContentValues();
+        values.put(AUTHTOKENS_ACCOUNTS_ID, accountId);
+        values.put(AUTHTOKENS_TYPE, authTokenType);
+        values.put(AUTHTOKENS_AUTHTOKEN, authToken);
+        return db.insert(
+                CE_TABLE_AUTHTOKENS, AUTHTOKENS_AUTHTOKEN, values);
+!!!10952965.java!!!	updateCeAccountPassword(in accountId : long, in password : String) : int
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_PASSWORD, password);
+        return db.update(
+                CE_TABLE_ACCOUNTS, values, ACCOUNTS_ID + "=?",
+                new String[] {String.valueOf(accountId)});
+!!!10953093.java!!!	renameCeAccount(in accountId : long, in newName : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, newName);
+        final String[] argsAccountId = {String.valueOf(accountId)};
+        return db.update(
+                CE_TABLE_ACCOUNTS, values, ACCOUNTS_ID + "=?", argsAccountId) > 0;
+!!!10953221.java!!!	deleteAuthTokensByAccountId(in accountId : long) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        return db.delete(CE_TABLE_AUTHTOKENS, AUTHTOKENS_ACCOUNTS_ID + "=?",
+                new String[] {String.valueOf(accountId)}) > 0;
+!!!10953349.java!!!	findExtrasIdByAccountId(in accountId : long, in key : String) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        Cursor cursor = db.query(
+                CE_TABLE_EXTRAS, new String[]{EXTRAS_ID},
+                EXTRAS_ACCOUNTS_ID + "=" + accountId + " AND " + EXTRAS_KEY + "=?",
+                new String[]{key}, null, null, null);
+        try {
+            if (cursor.moveToNext()) {
+                return cursor.getLong(0);
+            }
+            return -1;
+        } finally {
+            cursor.close();
+        }
+!!!10953477.java!!!	updateExtra(in extrasId : long, in value : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        ContentValues values = new ContentValues();
+        values.put(EXTRAS_VALUE, value);
+        int rows = db.update(
+                TABLE_EXTRAS, values, EXTRAS_ID + "=?",
+                new String[]{String.valueOf(extrasId)});
+        return rows == 1;
+!!!10953605.java!!!	insertExtra(in accountId : long, in key : String, in value : String) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        ContentValues values = new ContentValues();
+        values.put(EXTRAS_KEY, key);
+        values.put(EXTRAS_ACCOUNTS_ID, accountId);
+        values.put(EXTRAS_VALUE, value);
+        return db.insert(CE_TABLE_EXTRAS, EXTRAS_KEY, values);
+!!!10953733.java!!!	findUserExtrasForAccount(inout account : Account) : Map<String, String>
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        Map<String, String> userExtrasForAccount = new HashMap<>();
+        String[] selectionArgs = {account.name, account.type};
+        try (Cursor cursor = db.query(CE_TABLE_EXTRAS,
+                COLUMNS_EXTRAS_KEY_AND_VALUE,
+                SELECTION_ACCOUNTS_ID_BY_ACCOUNT,
+                selectionArgs,
+                null, null, null)) {
+            while (cursor.moveToNext()) {
+                final String tmpkey = cursor.getString(0);
+                final String value = cursor.getString(1);
+                userExtrasForAccount.put(tmpkey, value);
+            }
+        }
+        return userExtrasForAccount;
+!!!10953861.java!!!	findCeAccountId(inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        String[] columns = { ACCOUNTS_ID };
+        String selection = "name=? AND type=?";
+        String[] selectionArgs = {account.name, account.type};
+        try (Cursor cursor = db.query(CE_TABLE_ACCOUNTS, columns, selection, selectionArgs,
+                null, null, null)) {
+            if (cursor.moveToNext()) {
+                return cursor.getLong(0);
+            }
+            return -1;
+        }
+!!!10953989.java!!!	findAccountPasswordByNameAndType(in name : String, in type : String) : String
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        String selection = ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE + "=?";
+        String[] selectionArgs = {name, type};
+        String[] columns = {ACCOUNTS_PASSWORD};
+        try (Cursor cursor = db.query(CE_TABLE_ACCOUNTS, columns, selection, selectionArgs,
+                null, null, null)) {
+            if (cursor.moveToNext()) {
+                return cursor.getString(0);
+            }
+            return null;
+        }
+!!!10954117.java!!!	insertCeAccount(inout account : Account, in password : String) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, account.name);
+        values.put(ACCOUNTS_TYPE, account.type);
+        values.put(ACCOUNTS_PASSWORD, password);
+        return db.insert(
+                CE_TABLE_ACCOUNTS, ACCOUNTS_NAME, values);
+!!!10955909.java!!!	deleteDeAccount(in accountId : long) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(TABLE_ACCOUNTS, ACCOUNTS_ID + "=" + accountId, null) > 0;
+!!!10956037.java!!!	insertSharedAccount(inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, account.name);
+        values.put(ACCOUNTS_TYPE, account.type);
+        return db.insert(
+                TABLE_SHARED_ACCOUNTS, ACCOUNTS_NAME, values);
+!!!10956165.java!!!	deleteSharedAccount(inout account : Account) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(TABLE_SHARED_ACCOUNTS, ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE + "=?",
+                new String[]{account.name, account.type}) > 0;
+!!!10956293.java!!!	renameSharedAccount(inout account : Account, in newName : String) : int
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, newName);
+        return db.update(TABLE_SHARED_ACCOUNTS,
+                values,
+                ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE + "=?",
+                new String[] {account.name, account.type});
+!!!10956421.java!!!	getSharedAccounts() : Account
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        ArrayList<Account> accountList = new ArrayList<>();
+        Cursor cursor = null;
+        try {
+            cursor = db.query(TABLE_SHARED_ACCOUNTS, new String[] {ACCOUNTS_NAME, ACCOUNTS_TYPE},
+                    null, null, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(ACCOUNTS_NAME);
+                int typeIndex = cursor.getColumnIndex(ACCOUNTS_TYPE);
+                do {
+                    accountList.add(new Account(cursor.getString(nameIndex),
+                            cursor.getString(typeIndex)));
+                } while (cursor.moveToNext());
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        return accountList;
+!!!10956549.java!!!	findSharedAccountId(inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Cursor cursor = db.query(TABLE_SHARED_ACCOUNTS, new String[]{
+                        ACCOUNTS_ID},
+                "name=? AND type=?", new String[]{account.name, account.type}, null, null,
+                null);
+        try {
+            if (cursor.moveToNext()) {
+                return cursor.getLong(0);
+            }
+            return -1;
+        } finally {
+            cursor.close();
+        }
+!!!10956677.java!!!	findAccountLastAuthenticatedTime(inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        return DatabaseUtils.longForQuery(db,
+                "SELECT " + AccountsDb.ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS
+                        + " FROM " + TABLE_ACCOUNTS + " WHERE " + ACCOUNTS_NAME + "=? AND "
+                        + ACCOUNTS_TYPE + "=?",
+                new String[] {account.name, account.type});
+!!!10956805.java!!!	updateAccountLastAuthenticatedTime(inout account : Account) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS, System.currentTimeMillis());
+        int rowCount = db.update(TABLE_ACCOUNTS,
+                values,
+                ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE + "=?",
+                new String[] { account.name, account.type });
+        return rowCount > 0;
+!!!10956933.java!!!	dumpDeAccountsTable(inout pw : PrintWriter) : void
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Cursor cursor = db.query(
+                TABLE_ACCOUNTS, ACCOUNT_TYPE_COUNT_PROJECTION,
+                null, null, ACCOUNTS_TYPE, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                // print type,count
+                pw.println(cursor.getString(0) + "," + cursor.getString(1));
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+!!!10957061.java!!!	findDeAccountId(inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        String[] columns = {ACCOUNTS_ID};
+        String selection = "name=? AND type=?";
+        String[] selectionArgs = {account.name, account.type};
+        try (Cursor cursor = db.query(TABLE_ACCOUNTS, columns, selection, selectionArgs,
+                null, null, null)) {
+            if (cursor.moveToNext()) {
+                return cursor.getLong(0);
+            }
+            return -1;
+        }
+!!!10957189.java!!!	findAllDeAccounts() : Account
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        LinkedHashMap<Long, Account> map = new LinkedHashMap<>();
+        String[] columns = {ACCOUNTS_ID, ACCOUNTS_TYPE, ACCOUNTS_NAME};
+        try (Cursor cursor = db.query(TABLE_ACCOUNTS, columns,
+                null, null, null, null, ACCOUNTS_ID)) {
+            while (cursor.moveToNext()) {
+                final long accountId = cursor.getLong(0);
+                final String accountType = cursor.getString(1);
+                final String accountName = cursor.getString(2);
+
+                final Account account = new Account(accountName, accountType);
+                map.put(accountId, account);
+            }
+        }
+        return map;
+!!!10957317.java!!!	findDeAccountPreviousName(inout account : Account) : String
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        String[] columns = {ACCOUNTS_PREVIOUS_NAME};
+        String selection = ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE + "=?";
+        String[] selectionArgs = {account.name, account.type};
+        try (Cursor cursor = db.query(TABLE_ACCOUNTS, columns, selection, selectionArgs,
+                null, null, null)) {
+            if (cursor.moveToNext()) {
+                return cursor.getString(0);
+            }
+        }
+        return null;
+!!!10957445.java!!!	insertDeAccount(inout account : Account, in accountId : long) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_ID, accountId);
+        values.put(ACCOUNTS_NAME, account.name);
+        values.put(ACCOUNTS_TYPE, account.type);
+        values.put(ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS, System.currentTimeMillis());
+        return db.insert(TABLE_ACCOUNTS, ACCOUNTS_NAME, values);
+!!!10957573.java!!!	renameDeAccount(in accountId : long, in newName : String, in previousName : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, newName);
+        values.put(ACCOUNTS_PREVIOUS_NAME, previousName);
+        final String[] argsAccountId = {String.valueOf(accountId)};
+        return db.update(TABLE_ACCOUNTS, values, ACCOUNTS_ID + "=?", argsAccountId) > 0;
+!!!10957701.java!!!	deleteGrantsByAccountIdAuthTokenTypeAndUid(in accountId : long, in authTokenType : String, in uid : long) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(TABLE_GRANTS,
+                GRANTS_ACCOUNTS_ID + "=? AND " + GRANTS_AUTH_TOKEN_TYPE + "=? AND "
+                        + GRANTS_GRANTEE_UID + "=?",
+                new String[] {String.valueOf(accountId), authTokenType, String.valueOf(uid)}) > 0;
+!!!10957829.java!!!	findAllUidGrants() : List<Integer>
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        List<Integer> result = new ArrayList<>();
+        final Cursor cursor = db.query(TABLE_GRANTS,
+                new String[]{GRANTS_GRANTEE_UID},
+                null, null, GRANTS_GRANTEE_UID, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                final int uid = cursor.getInt(0);
+                result.add(uid);
+            }
+        } finally {
+            cursor.close();
+        }
+        return result;
+!!!10957957.java!!!	findMatchingGrantsCount(in uid : int, in authTokenType : String, inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        String[] args = {String.valueOf(uid), authTokenType, account.name, account.type};
+        return DatabaseUtils.longForQuery(db, COUNT_OF_MATCHING_GRANTS, args);
+!!!10958085.java!!!	findMatchingGrantsCountAnyToken(in uid : int, inout account : Account) : long
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        String[] args = {String.valueOf(uid), account.name, account.type};
+        return DatabaseUtils.longForQuery(db, COUNT_OF_MATCHING_GRANTS_ANY_TOKEN, args);
+!!!10958213.java!!!	insertGrant(in accountId : long, in authTokenType : String, in uid : int) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(GRANTS_ACCOUNTS_ID, accountId);
+        values.put(GRANTS_AUTH_TOKEN_TYPE, authTokenType);
+        values.put(GRANTS_GRANTEE_UID, uid);
+        return db.insert(TABLE_GRANTS, GRANTS_ACCOUNTS_ID, values);
+!!!10958341.java!!!	deleteGrantsByUid(in uid : int) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(TABLE_GRANTS, GRANTS_GRANTEE_UID + "=?",
+                new String[] {Integer.toString(uid)}) > 0;
+!!!10958469.java!!!	setAccountVisibility(in accountId : long, in packageName : String, in visibility : int) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(VISIBILITY_ACCOUNTS_ID, String.valueOf(accountId));
+        values.put(VISIBILITY_PACKAGE, packageName);
+        values.put(VISIBILITY_VALUE, String.valueOf(visibility));
+        return (db.replace(TABLE_VISIBILITY, VISIBILITY_VALUE, values) != -1);
+!!!10958597.java!!!	findAccountVisibility(inout account : Account, in packageName : String) : Integer
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        final Cursor cursor = db.query(TABLE_VISIBILITY, new String[] {VISIBILITY_VALUE},
+                SELECTION_ACCOUNTS_ID_BY_ACCOUNT + " AND " + VISIBILITY_PACKAGE + "=? ",
+                new String[] {account.name, account.type, packageName}, null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                return cursor.getInt(0);
+            }
+        } finally {
+            cursor.close();
+        }
+        return null;
+!!!10958725.java!!!	findAccountVisibility(in accountId : long, in packageName : String) : Integer
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        final Cursor cursor = db.query(TABLE_VISIBILITY, new String[] {VISIBILITY_VALUE},
+                VISIBILITY_ACCOUNTS_ID + "=? AND " + VISIBILITY_PACKAGE + "=? ",
+                new String[] {String.valueOf(accountId), packageName}, null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                return cursor.getInt(0);
+            }
+        } finally {
+            cursor.close();
+        }
+        return null;
+!!!10958853.java!!!	findDeAccountByAccountId(in accountId : long) : Account
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        final Cursor cursor = db.query(TABLE_ACCOUNTS, new String[] {ACCOUNTS_NAME, ACCOUNTS_TYPE},
+                ACCOUNTS_ID + "=? ", new String[] {String.valueOf(accountId)}, null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                return new Account(cursor.getString(0), cursor.getString(1));
+            }
+        } finally {
+            cursor.close();
+        }
+        return null;
+!!!10958981.java!!!	findAllVisibilityValuesForAccount(inout account : Account) : Map<String, Integer>
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Map<String, Integer> result = new HashMap<>();
+        final Cursor cursor =
+                db.query(TABLE_VISIBILITY, new String[] {VISIBILITY_PACKAGE, VISIBILITY_VALUE},
+                        SELECTION_ACCOUNTS_ID_BY_ACCOUNT, new String[] {account.name, account.type},
+                        null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                result.put(cursor.getString(0), cursor.getInt(1));
+            }
+        } finally {
+            cursor.close();
+        }
+        return result;
+!!!10959109.java!!!	findAllVisibilityValues() : Account
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Map<Account, Map<String, Integer>> result = new HashMap<>();
+        Cursor cursor = db.rawQuery(
+                "SELECT " + TABLE_VISIBILITY + "." + VISIBILITY_PACKAGE
+                        + ", " + TABLE_VISIBILITY + "." + VISIBILITY_VALUE
+                        + ", " + TABLE_ACCOUNTS + "." + ACCOUNTS_NAME
+                        + ", " + TABLE_ACCOUNTS + "." + ACCOUNTS_TYPE
+                        + " FROM " + TABLE_VISIBILITY
+                        + " JOIN " + TABLE_ACCOUNTS
+                        + " ON " + TABLE_ACCOUNTS + "." + ACCOUNTS_ID
+                        + " = " + TABLE_VISIBILITY + "." + VISIBILITY_ACCOUNTS_ID, null);
+        try {
+            while (cursor.moveToNext()) {
+                String packageName = cursor.getString(0);
+                Integer visibility = cursor.getInt(1);
+                String accountName = cursor.getString(2);
+                String accountType = cursor.getString(3);
+                Account account = new Account(accountName, accountType);
+                Map <String, Integer> accountVisibility = result.get(account);
+                if (accountVisibility == null) {
+                    accountVisibility = new HashMap<>();
+                    result.put(account, accountVisibility);
+                }
+                accountVisibility.put(packageName, visibility);
+            }
+        } finally {
+            cursor.close();
+        }
+        return result;
+!!!10959237.java!!!	deleteAccountVisibilityForPackage(in packageName : String) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(TABLE_VISIBILITY, VISIBILITY_PACKAGE + "=? ",
+                new String[] {packageName}) > 0;
+!!!10959365.java!!!	insertOrReplaceMetaAuthTypeAndUid(in authenticatorType : String, in uid : int) : long
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put(META_KEY,
+                META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + authenticatorType);
+        values.put(META_VALUE, uid);
+        return db.insertWithOnConflict(TABLE_META, null, values,
+                SQLiteDatabase.CONFLICT_REPLACE);
+!!!10959493.java!!!	findMetaAuthUid() : Map<String, Integer>
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Cursor metaCursor = db.query(
+                TABLE_META,
+                new String[]{META_KEY, META_VALUE},
+                SELECTION_META_BY_AUTHENTICATOR_TYPE,
+                new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + "%"},
+                null /* groupBy */,
+                null /* having */,
+                META_KEY);
+        Map<String, Integer> map = new LinkedHashMap<>();
+        try {
+            while (metaCursor.moveToNext()) {
+                String type = TextUtils
+                        .split(metaCursor.getString(0), META_KEY_DELIMITER)[1];
+                String uidStr = metaCursor.getString(1);
+                if (TextUtils.isEmpty(type) || TextUtils.isEmpty(uidStr)) {
+                    // Should never happen.
+                    Slog.e(TAG, "Auth type empty: " + TextUtils.isEmpty(type)
+                            + ", uid empty: " + TextUtils.isEmpty(uidStr));
+                    continue;
+                }
+                int uid = Integer.parseInt(metaCursor.getString(1));
+                map.put(type, uid);
+            }
+        } finally {
+            metaCursor.close();
+        }
+        return map;
+!!!10959621.java!!!	deleteMetaByAuthTypeAndUid(in type : String, in uid : int) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        return db.delete(
+                TABLE_META,
+                META_KEY + "=? AND " + META_VALUE + "=?",
+                new String[]{
+                        META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + type,
+                        String.valueOf(uid)}
+        ) > 0;
+!!!10959749.java!!!	findAllAccountGrants() : Pair
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        try (Cursor cursor = db.rawQuery(ACCOUNT_ACCESS_GRANTS, null)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                return Collections.emptyList();
+            }
+            List<Pair<String, Integer>> results = new ArrayList<>();
+            do {
+                final String accountName = cursor.getString(0);
+                final int uid = cursor.getInt(1);
+                results.add(Pair.create(accountName, uid));
+            } while (cursor.moveToNext());
+            return results;
+        }
+!!!10961413.java!!!	findCeAccountsNotInDe() : Account
+        SQLiteDatabase db = mDeDatabase.getReadableDatabaseUserIsUnlocked();
+        // Select accounts from CE that do not exist in DE
+        Cursor cursor = db.rawQuery(
+                "SELECT " + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE
+                        + " FROM " + CE_TABLE_ACCOUNTS
+                        + " WHERE NOT EXISTS "
+                        + " (SELECT " + ACCOUNTS_ID + " FROM " + TABLE_ACCOUNTS
+                        + " WHERE " + ACCOUNTS_ID + "=" + CE_TABLE_ACCOUNTS + "." + ACCOUNTS_ID
+                        + " )", null);
+        try {
+            List<Account> accounts = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                String accountName = cursor.getString(0);
+                String accountType = cursor.getString(1);
+                accounts.add(new Account(accountName, accountType));
+            }
+            return accounts;
+        } finally {
+            cursor.close();
+        }
+!!!10961541.java!!!	deleteCeAccount(in accountId : long) : boolean
+        SQLiteDatabase db = mDeDatabase.getWritableDatabaseUserIsUnlocked();
+        return db.delete(
+                CE_TABLE_ACCOUNTS, ACCOUNTS_ID + "=" + accountId, null) > 0;
+!!!10961669.java!!!	isCeDatabaseAttached() : boolean
+        return mDeDatabase.mCeAttached;
+!!!10961797.java!!!	beginTransaction() : void
+        mDeDatabase.getWritableDatabase().beginTransaction();
+!!!10961925.java!!!	setTransactionSuccessful() : void
+        mDeDatabase.getWritableDatabase().setTransactionSuccessful();
+!!!10962053.java!!!	endTransaction() : void
+        mDeDatabase.getWritableDatabase().endTransaction();
+!!!10962181.java!!!	attachCeDatabase(inout ceDbFile : File) : void
+        CeDatabaseHelper.create(mContext, mPreNDatabaseFile, ceDbFile);
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        db.execSQL("ATTACH DATABASE '" +  ceDbFile.getPath()+ "' AS ceDb");
+        mDeDatabase.mCeAttached = true;
+!!!10962309.java!!!	calculateDebugTableInsertionPoint() : int
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        String queryCountDebugDbRows = "SELECT COUNT(*) FROM " + TABLE_DEBUG;
+        int size = (int) DatabaseUtils.longForQuery(db, queryCountDebugDbRows, null);
+        if (size < MAX_DEBUG_DB_SIZE) {
+            return size;
+        }
+
+        // This query finds the smallest timestamp value (and if 2 records have
+        // same timestamp, the choose the lower id).
+        queryCountDebugDbRows = "SELECT " + DEBUG_TABLE_KEY +
+                " FROM " + TABLE_DEBUG +
+                " ORDER BY "  + DEBUG_TABLE_TIMESTAMP + "," + DEBUG_TABLE_KEY +
+                " LIMIT 1";
+        return (int) DatabaseUtils.longForQuery(db, queryCountDebugDbRows, null);
+!!!10962437.java!!!	compileSqlStatementForLogging() : SQLiteStatement
+        // TODO b/31708085 Fix debug logging - it eagerly opens database for write without a need
+        SQLiteDatabase db = mDeDatabase.getWritableDatabase();
+        String sql = "INSERT OR REPLACE INTO " + AccountsDb.TABLE_DEBUG
+                + " VALUES (?,?,?,?,?,?)";
+        return db.compileStatement(sql);
+!!!10962565.java!!!	dumpDebugTable(inout pw : PrintWriter) : void
+        SQLiteDatabase db = mDeDatabase.getReadableDatabase();
+        Cursor cursor = db.query(TABLE_DEBUG, null,
+                null, null, null, null, DEBUG_TABLE_TIMESTAMP);
+        pw.println("AccountId, Action_Type, timestamp, UID, TableName, Key");
+        pw.println("Accounts History");
+        try {
+            while (cursor.moveToNext()) {
+                // print type,count
+                pw.println(cursor.getString(0) + "," + cursor.getString(1) + "," +
+                        cursor.getString(2) + "," + cursor.getString(3) + ","
+                        + cursor.getString(4) + "," + cursor.getString(5));
+            }
+        } finally {
+            cursor.close();
+        }
+!!!10962693.java!!!	close() : void
+        mDeDatabase.close();
+!!!10962821.java!!!	deleteDbFileWarnIfFailed(inout dbFile : File) : void
+        if (!SQLiteDatabase.deleteDatabase(dbFile)) {
+            Log.w(TAG, "Database at " + dbFile + " was not deleted successfully");
+        }
+!!!10962949.java!!!	create(inout context : Context, in userId : int, inout preNDatabaseFile : File, inout deDatabaseFile : File) : AccountsDb
+        boolean newDbExists = deDatabaseFile.exists();
+        DeDatabaseHelper deDatabaseHelper = new DeDatabaseHelper(context, userId,
+                deDatabaseFile.getPath());
+        // If the db just created, and there is a legacy db, migrate it
+        if (!newDbExists && preNDatabaseFile.exists()) {
+            // Migrate legacy db to the latest version -  PRE_N_DATABASE_VERSION
+            PreNDatabaseHelper
+                    preNDatabaseHelper = new PreNDatabaseHelper(context, userId,
+                    preNDatabaseFile.getPath());
+            // Open the database to force upgrade if required
+            preNDatabaseHelper.getWritableDatabase();
+            preNDatabaseHelper.close();
+            // Move data without SPII to DE
+            deDatabaseHelper.migratePreNDbToDe(preNDatabaseFile);
+        }
+        return new AccountsDb(deDatabaseHelper, context, preNDatabaseFile);

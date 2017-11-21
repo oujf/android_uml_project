@@ -1,0 +1,247 @@
+class NavigationBarInflaterView
+!!!3953925.java!!!	NavigationBarInflaterView(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        createInflaters();
+        Display display = ((WindowManager)
+                context.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay();
+        Mode displayMode = display.getMode();
+        isRot0Landscape = displayMode.getPhysicalWidth() > displayMode.getPhysicalHeight();
+!!!3954053.java!!!	createInflaters() : void
+        mLayoutInflater = LayoutInflater.from(mContext);
+        Configuration landscape = new Configuration();
+        landscape.setTo(mContext.getResources().getConfiguration());
+        landscape.orientation = Configuration.ORIENTATION_LANDSCAPE;
+        mLandscapeInflater = LayoutInflater.from(mContext.createConfigurationContext(landscape));
+!!!3954181.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        inflateChildren();
+        clearViews();
+        inflateLayout(getDefaultLayout());
+!!!3954309.java!!!	inflateChildren() : void
+        removeAllViews();
+        mRot0 = (FrameLayout) mLayoutInflater.inflate(R.layout.navigation_layout, this, false);
+        mRot0.setId(R.id.rot0);
+        addView(mRot0);
+        mRot90 = (FrameLayout) mLayoutInflater.inflate(R.layout.navigation_layout_rot90, this,
+                false);
+        mRot90.setId(R.id.rot90);
+        addView(mRot90);
+        updateAlternativeOrder();
+        if (getParent() instanceof NavigationBarView) {
+            ((NavigationBarView) getParent()).updateRotatedViews();
+        }
+!!!3954437.java!!!	getDefaultLayout() : String
+        return mContext.getString(R.string.config_navBarLayout);
+!!!3954565.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        Dependency.get(TunerService.class).addTunable(this, NAV_BAR_VIEWS, NAV_BAR_LEFT,
+                NAV_BAR_RIGHT);
+        Dependency.get(PluginManager.class).addPluginListener(this,
+                NavBarButtonProvider.class, true /* Allow multiple */);
+!!!3954693.java!!!	onDetachedFromWindow() : void
+        Dependency.get(TunerService.class).removeTunable(this);
+        Dependency.get(PluginManager.class).removePluginListener(this);
+        super.onDetachedFromWindow();
+!!!3954821.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        if (NAV_BAR_VIEWS.equals(key)) {
+            if (!Objects.equals(mCurrentLayout, newValue)) {
+                clearViews();
+                inflateLayout(newValue);
+            }
+        } else if (NAV_BAR_LEFT.equals(key) || NAV_BAR_RIGHT.equals(key)) {
+            clearViews();
+            inflateLayout(mCurrentLayout);
+        }
+!!!3954949.java!!!	setButtonDispatchers(inout buttonDisatchers : SparseArray<ButtonDispatcher>) : void
+        mButtonDispatchers = buttonDisatchers;
+        for (int i = 0; i < buttonDisatchers.size(); i++) {
+            initiallyFill(buttonDisatchers.valueAt(i));
+        }
+!!!3955077.java!!!	setAlternativeOrder(inout alternativeOrder : boolean) : void
+        if (alternativeOrder != mAlternativeOrder) {
+            mAlternativeOrder = alternativeOrder;
+            updateAlternativeOrder();
+        }
+!!!3955205.java!!!	updateAlternativeOrder() : void
+        updateAlternativeOrder(mRot0.findViewById(R.id.ends_group));
+        updateAlternativeOrder(mRot0.findViewById(R.id.center_group));
+        updateAlternativeOrder(mRot90.findViewById(R.id.ends_group));
+        updateAlternativeOrder(mRot90.findViewById(R.id.center_group));
+!!!3955333.java!!!	updateAlternativeOrder(inout v : View) : void
+        if (v instanceof ReverseLinearLayout) {
+            ((ReverseLinearLayout) v).setAlternativeOrder(mAlternativeOrder);
+        }
+!!!3955461.java!!!	initiallyFill(inout buttonDispatcher : ButtonDispatcher) : void
+        addAll(buttonDispatcher, (ViewGroup) mRot0.findViewById(R.id.ends_group));
+        addAll(buttonDispatcher, (ViewGroup) mRot0.findViewById(R.id.center_group));
+        addAll(buttonDispatcher, (ViewGroup) mRot90.findViewById(R.id.ends_group));
+        addAll(buttonDispatcher, (ViewGroup) mRot90.findViewById(R.id.center_group));
+!!!3955589.java!!!	addAll(inout buttonDispatcher : ButtonDispatcher, inout parent : ViewGroup) : void
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            // Need to manually search for each id, just in case each group has more than one
+            // of a single id.  It probably mostly a waste of time, but shouldn't take long
+            // and will only happen once.
+            if (parent.getChildAt(i).getId() == buttonDispatcher.getId()) {
+                buttonDispatcher.addView(parent.getChildAt(i));
+            } else if (parent.getChildAt(i) instanceof ViewGroup) {
+                addAll(buttonDispatcher, (ViewGroup) parent.getChildAt(i));
+            }
+        }
+!!!3955717.java!!!	inflateLayout(in newLayout : String) : void
+        mCurrentLayout = newLayout;
+        if (newLayout == null) {
+            newLayout = getDefaultLayout();
+        }
+        String[] sets = newLayout.split(GRAVITY_SEPARATOR, 3);
+        String[] start = sets[0].split(BUTTON_SEPARATOR);
+        String[] center = sets[1].split(BUTTON_SEPARATOR);
+        String[] end = sets[2].split(BUTTON_SEPARATOR);
+        // Inflate these in start to end order or accessibility traversal will be messed up.
+        inflateButtons(start, (ViewGroup) mRot0.findViewById(R.id.ends_group), isRot0Landscape);
+        inflateButtons(start, (ViewGroup) mRot90.findViewById(R.id.ends_group), !isRot0Landscape);
+
+        inflateButtons(center, (ViewGroup) mRot0.findViewById(R.id.center_group), isRot0Landscape);
+        inflateButtons(center, (ViewGroup) mRot90.findViewById(R.id.center_group), !isRot0Landscape);
+
+        addGravitySpacer((LinearLayout) mRot0.findViewById(R.id.ends_group));
+        addGravitySpacer((LinearLayout) mRot90.findViewById(R.id.ends_group));
+
+        inflateButtons(end, (ViewGroup) mRot0.findViewById(R.id.ends_group), isRot0Landscape);
+        inflateButtons(end, (ViewGroup) mRot90.findViewById(R.id.ends_group), !isRot0Landscape);
+!!!3955845.java!!!	addGravitySpacer(inout layout : LinearLayout) : void
+        layout.addView(new Space(mContext), new LinearLayout.LayoutParams(0, 0, 1));
+!!!3955973.java!!!	inflateButtons(inout buttons : String [[]], inout parent : ViewGroup, inout landscape : boolean) : void
+        for (int i = 0; i < buttons.length; i++) {
+            inflateButton(buttons[i], parent, landscape);
+        }
+!!!3956101.java!!!	copy(inout layoutParams : ViewGroup.LayoutParams) : ViewGroup.LayoutParams
+        if (layoutParams instanceof LinearLayout.LayoutParams) {
+            return new LinearLayout.LayoutParams(layoutParams.width, layoutParams.height,
+                    ((LinearLayout.LayoutParams) layoutParams).weight);
+        }
+        return new LayoutParams(layoutParams.width, layoutParams.height);
+!!!3956229.java!!!	inflateButton(in buttonSpec : String, inout parent : ViewGroup, inout landscape : boolean) : View
+        LayoutInflater inflater = landscape ? mLandscapeInflater : mLayoutInflater;
+        float size = extractSize(buttonSpec);
+        View v = createView(buttonSpec, parent, inflater, landscape);
+        if (v == null) return null;
+
+        if (size != 0) {
+            ViewGroup.LayoutParams params = v.getLayoutParams();
+            params.width = (int) (params.width * size);
+        }
+        parent.addView(v);
+        addToDispatchers(v);
+        View lastView = landscape ? mLastLandscape : mLastPortrait;
+        if (lastView != null) {
+            v.setAccessibilityTraversalAfter(lastView.getId());
+        }
+        if (landscape) {
+            mLastLandscape = v;
+        } else {
+            mLastPortrait = v;
+        }
+        return v;
+!!!3956357.java!!!	createView(in buttonSpec : String, inout parent : ViewGroup, inout inflater : LayoutInflater, inout landscape : boolean) : View
+        View v = null;
+        String button = extractButton(buttonSpec);
+        if (LEFT.equals(button)) {
+            buttonSpec = Dependency.get(TunerService.class).getValue(NAV_BAR_LEFT, NAVSPACE);
+            button = extractButton(buttonSpec);
+        } else if (RIGHT.equals(button)) {
+            buttonSpec = Dependency.get(TunerService.class).getValue(NAV_BAR_RIGHT, MENU_IME);
+            button = extractButton(buttonSpec);
+        }
+        // Let plugins go first so they can override a standard view if they want.
+        for (NavBarButtonProvider provider : mPlugins) {
+            v = provider.createView(buttonSpec, parent);
+            if (v != null) return v;
+        }
+        if (HOME.equals(button)) {
+            v = inflater.inflate(R.layout.home, parent, false);
+        } else if (BACK.equals(button)) {
+            v = inflater.inflate(R.layout.back, parent, false);
+        } else if (RECENT.equals(button)) {
+            v = inflater.inflate(R.layout.recent_apps, parent, false);
+        } else if (MENU_IME.equals(button)) {
+            v = inflater.inflate(R.layout.menu_ime, parent, false);
+        } else if (NAVSPACE.equals(button)) {
+            v = inflater.inflate(R.layout.nav_key_space, parent, false);
+        } else if (CLIPBOARD.equals(button)) {
+            v = inflater.inflate(R.layout.clipboard, parent, false);
+        } else if (button.startsWith(KEY)) {
+            String uri = extractImage(button);
+            int code = extractKeycode(button);
+            v = inflater.inflate(R.layout.custom_key, parent, false);
+            ((KeyButtonView) v).setCode(code);
+            if (uri != null) {
+                if (uri.contains(":")) {
+                    ((KeyButtonView) v).loadAsync(Icon.createWithContentUri(uri));
+                } else if (uri.contains("/")) {
+                    int index = uri.indexOf('/');
+                    String pkg = uri.substring(0, index);
+                    int id = Integer.parseInt(uri.substring(index + 1));
+                    ((KeyButtonView) v).loadAsync(Icon.createWithResource(pkg, id));
+                }
+            }
+        }
+        return v;
+!!!3956485.java!!!	extractImage(in buttonSpec : String) : String
+        if (!buttonSpec.contains(KEY_IMAGE_DELIM)) {
+            return null;
+        }
+        final int start = buttonSpec.indexOf(KEY_IMAGE_DELIM);
+        String subStr = buttonSpec.substring(start + 1, buttonSpec.indexOf(KEY_CODE_END));
+        return subStr;
+!!!3956613.java!!!	extractKeycode(in buttonSpec : String) : int
+        if (!buttonSpec.contains(KEY_CODE_START)) {
+            return 1;
+        }
+        final int start = buttonSpec.indexOf(KEY_CODE_START);
+        String subStr = buttonSpec.substring(start + 1, buttonSpec.indexOf(KEY_IMAGE_DELIM));
+        return Integer.parseInt(subStr);
+!!!3956741.java!!!	extractSize(in buttonSpec : String) : float
+        if (!buttonSpec.contains(SIZE_MOD_START)) {
+            return 1;
+        }
+        final int sizeStart = buttonSpec.indexOf(SIZE_MOD_START);
+        String sizeStr = buttonSpec.substring(sizeStart + 1, buttonSpec.indexOf(SIZE_MOD_END));
+        return Float.parseFloat(sizeStr);
+!!!3956869.java!!!	extractButton(in buttonSpec : String) : String
+        if (!buttonSpec.contains(SIZE_MOD_START)) {
+            return buttonSpec;
+        }
+        return buttonSpec.substring(0, buttonSpec.indexOf(SIZE_MOD_START));
+!!!3956997.java!!!	addToDispatchers(inout v : View) : void
+        if (mButtonDispatchers != null) {
+            final int indexOfKey = mButtonDispatchers.indexOfKey(v.getId());
+            if (indexOfKey >= 0) {
+                mButtonDispatchers.valueAt(indexOfKey).addView(v);
+            } else if (v instanceof ViewGroup) {
+                final ViewGroup viewGroup = (ViewGroup)v;
+                final int N = viewGroup.getChildCount();
+                for (int i = 0; i < N; i++) {
+                    addToDispatchers(viewGroup.getChildAt(i));
+                }
+            }
+        }
+!!!3957125.java!!!	clearViews() : void
+        if (mButtonDispatchers != null) {
+            for (int i = 0; i < mButtonDispatchers.size(); i++) {
+                mButtonDispatchers.valueAt(i).clear();
+            }
+        }
+        clearAllChildren((ViewGroup) mRot0.findViewById(R.id.nav_buttons));
+        clearAllChildren((ViewGroup) mRot90.findViewById(R.id.nav_buttons));
+!!!3957253.java!!!	clearAllChildren(inout group : ViewGroup) : void
+        for (int i = 0; i < group.getChildCount(); i++) {
+            ((ViewGroup) group.getChildAt(i)).removeAllViews();
+        }
+!!!3957381.java!!!	onPluginConnected(inout plugin : NavBarButtonProvider, inout context : Context) : void
+        mPlugins.add(plugin);
+        clearViews();
+        inflateLayout(mCurrentLayout);
+!!!3957509.java!!!	onPluginDisconnected(inout plugin : NavBarButtonProvider) : void
+        mPlugins.remove(plugin);
+        clearViews();
+        inflateLayout(mCurrentLayout);

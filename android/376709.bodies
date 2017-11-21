@@ -1,0 +1,198 @@
+class Writer
+!!!1085445.cpp!!!	Writer(inout shared : void, in size : size_t)
+    // caching pid and process name
+    pid_t id = ::getpid();
+    char procName[16];
+    int status = prctl(PR_GET_NAME, procName);
+    if (status) {  // error getting process name
+        procName[0] = '\0';
+    }
+    size_t length = strlen(procName);
+    mPidTagSize = length + sizeof(pid_t);
+    mPidTag = new char[mPidTagSize];
+    memcpy(mPidTag, &id, sizeof(pid_t));
+    memcpy(mPidTag + sizeof(pid_t), procName, length);
+!!!1085573.cpp!!!	Writer(in iMemory : sp<IMemory>, in size : size_t)
+    mIMemory = iMemory;
+!!!1085701.cpp!!!	~Writer()
+    delete mFifoWriter;
+    delete mFifo;
+    delete[] mPidTag;
+!!!1085829.cpp!!!	log(in string : char) : void
+    if (!mEnabled) {
+        return;
+    }
+    LOG_ALWAYS_FATAL_IF(string == NULL, "Attempted to log NULL string");
+    size_t length = strlen(string);
+    if (length > Entry::kMaxLength) {
+        length = Entry::kMaxLength;
+    }
+    log(EVENT_STRING, string, length);
+!!!1086085.cpp!!!	logvf(in fmt : char, in ap : va_list) : void
+    if (!mEnabled) {
+        return;
+    }
+    char buffer[Entry::kMaxLength + 1 /*NUL*/];
+    int length = vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    if (length >= (int) sizeof(buffer)) {
+        length = sizeof(buffer) - 1;
+        // NUL termination is not required
+        // buffer[length] = '\0';
+    }
+    if (length >= 0) {
+        log(EVENT_STRING, buffer, length);
+    }
+!!!1086213.cpp!!!	logTimestamp() : void
+    if (!mEnabled) {
+        return;
+    }
+    struct timespec ts;
+    if (!clock_gettime(CLOCK_MONOTONIC, &ts)) {
+        log(EVENT_TIMESTAMP, &ts, sizeof(ts));
+    }
+!!!1086341.cpp!!!	logTimestamp(in ts : timespec) : void
+    if (!mEnabled) {
+        return;
+    }
+    log(EVENT_TIMESTAMP, &ts, sizeof(ts));
+!!!1086469.cpp!!!	logInteger(in x : int) : void
+    if (!mEnabled) {
+        return;
+    }
+    log(EVENT_INTEGER, &x, sizeof(x));
+!!!1086597.cpp!!!	logFloat(in x : float) : void
+    if (!mEnabled) {
+        return;
+    }
+    log(EVENT_FLOAT, &x, sizeof(x));
+!!!1086725.cpp!!!	logPID() : void
+    if (!mEnabled) {
+        return;
+    }
+    log(EVENT_PID, mPidTag, mPidTagSize);
+!!!1086853.cpp!!!	logFormat(in fmt : char) : void
+    if (!mEnabled) {
+        return;
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    Writer::logVFormat(fmt, ap);
+    va_end(ap);
+!!!1086981.cpp!!!	logVFormat(in fmt : char, in argp : va_list) : void
+    if (!mEnabled) {
+        return;
+    }
+    Writer::logStart(fmt);
+    int i;
+    double f;
+    char* s;
+    struct timespec t;
+    Writer::logTimestamp();
+    for (const char *p = fmt; *p != '\0'; p++) {
+        // TODO: implement more complex formatting such as %.3f
+        if (*p != '%') {
+            continue;
+        }
+        switch(*++p) {
+        case 's': // string
+            s = va_arg(argp, char *);
+            Writer::log(s);
+            break;
+
+        case 't': // timestamp
+            t = va_arg(argp, struct timespec);
+            Writer::logTimestamp(t);
+            break;
+
+        case 'd': // integer
+            i = va_arg(argp, int);
+            Writer::logInteger(i);
+            break;
+
+        case 'f': // float
+            f = va_arg(argp, double); // float arguments are promoted to double in vararg lists
+            Writer::logFloat((float)f);
+            break;
+
+        case 'p': // pid
+            Writer::logPID();
+            break;
+
+        // the "%\0" case finishes parsing
+        case '\0':
+            --p;
+            break;
+
+        case '%':
+            break;
+
+        default:
+            ALOGW("NBLog Writer parsed invalid format specifier: %c", *p);
+            break;
+        }
+    }
+    Writer::logEnd();
+!!!1087109.cpp!!!	logStart(in fmt : char) : void
+    if (!mEnabled) {
+        return;
+    }
+    size_t length = strlen(fmt);
+    if (length > Entry::kMaxLength) {
+        length = Entry::kMaxLength;
+    }
+    log(EVENT_START_FMT, fmt, length);
+!!!1087237.cpp!!!	logEnd() : void
+    if (!mEnabled) {
+        return;
+    }
+    Entry entry = Entry(EVENT_END_FMT, NULL, 0);
+    log(&entry, true);
+!!!1087365.cpp!!!	isEnabled() : bool
+    return mEnabled;
+!!!1087493.cpp!!!	setEnabled(in enabled : bool) : bool
+    bool old = mEnabled;
+    mEnabled = enabled && mShared != NULL;
+    return old;
+!!!1088005.cpp!!!	log(in event : NBLog::Event, in data : void, in length : size_t) : void
+    if (!mEnabled) {
+        return;
+    }
+    if (data == NULL || length > Entry::kMaxLength) {
+        // TODO Perhaps it makes sense to display truncated data or at least a
+        //      message that the data is too long?  The current behavior can create
+        //      a confusion for a programmer debugging their code.
+        return;
+    }
+    switch (event) {
+    case EVENT_STRING:
+    case EVENT_TIMESTAMP:
+    case EVENT_INTEGER:
+    case EVENT_FLOAT:
+    case EVENT_PID:
+    case EVENT_START_FMT:
+        break;
+    case EVENT_RESERVED:
+    default:
+        return;
+    }
+    Entry entry(event, data, length);
+    log(&entry, true /*trusted*/);
+!!!1088133.cpp!!!	log(in entry : NBLog::Entry, in trusted : bool = false) : void
+    if (!mEnabled) {
+        return;
+    }
+    if (!trusted) {
+        log(entry->mEvent, entry->mData, entry->mLength);
+        return;
+    }
+    size_t need = entry->mLength + Entry::kOverhead;    // mEvent, mLength, data[length], mLength
+                                                        // need = number of bytes remaining to write
+
+    // FIXME optimize this using memcpy for the data part of the Entry.
+    // The Entry could have a method copyTo(ptr, offset, size) to optimize the copy.
+    uint8_t temp[Entry::kMaxLength + Entry::kOverhead];
+    for (size_t i = 0; i < need; i++) {
+        temp[i] = entry->readAt(i);
+    }
+    mFifoWriter->write(temp, need);

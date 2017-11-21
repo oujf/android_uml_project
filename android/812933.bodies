@@ -1,0 +1,107 @@
+class DndTile
+!!!3437573.java!!!	DndTile(inout host : QSHost)
+        super(host);
+        mController = Dependency.get(ZenModeController.class);
+        mDetailAdapter = new DndDetailAdapter();
+        mContext.registerReceiver(mReceiver, new IntentFilter(ACTION_SET_VISIBLE));
+        mReceiverRegistered = true;
+!!!3437701.java!!!	handleDestroy() : void
+        super.handleDestroy();
+        if (mReceiverRegistered) {
+            mContext.unregisterReceiver(mReceiver);
+            mReceiverRegistered = false;
+        }
+!!!3437829.java!!!	setVisible(inout context : Context, inout visible : boolean) : void
+        Prefs.putBoolean(context, Prefs.Key.DND_TILE_VISIBLE, visible);
+!!!3437957.java!!!	isVisible(inout context : Context) : boolean
+        return Prefs.getBoolean(context, Prefs.Key.DND_TILE_VISIBLE, false /* defaultValue */);
+!!!3438085.java!!!	setCombinedIcon(inout context : Context, inout combined : boolean) : void
+        Prefs.putBoolean(context, Prefs.Key.DND_TILE_COMBINED_ICON, combined);
+!!!3438213.java!!!	isCombinedIcon(inout context : Context) : boolean
+        return Prefs.getBoolean(context, Prefs.Key.DND_TILE_COMBINED_ICON,
+                false /* defaultValue */);
+!!!3438341.java!!!	getDetailAdapter() : DetailAdapter
+        return mDetailAdapter;
+!!!3438469.java!!!	newTileState() : BooleanState
+        return new BooleanState();
+!!!3438597.java!!!	getLongClickIntent() : Intent
+        return ZEN_SETTINGS;
+!!!3438725.java!!!	handleClick() : void
+        if (mState.value) {
+            mController.setZen(ZEN_MODE_OFF, null, TAG);
+        } else {
+            int zen = Prefs.getInt(mContext, Prefs.Key.DND_FAVORITE_ZEN, Global.ZEN_MODE_ALARMS);
+            mController.setZen(zen, null, TAG);
+        }
+!!!3438853.java!!!	handleSecondaryClick() : void
+        if (mController.isVolumeRestricted()) {
+            // Collapse the panels, so the user can see the toast.
+            mHost.collapsePanels();
+            SysUIToast.makeText(mContext, mContext.getString(
+                    com.android.internal.R.string.error_message_change_not_allowed),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        showDetail(true);
+!!!3438981.java!!!	getTileLabel() : CharSequence
+        return mContext.getString(R.string.quick_settings_dnd_label);
+!!!3439109.java!!!	handleUpdateState(inout state : BooleanState, inout arg : Object) : void
+        final int zen = arg instanceof Integer ? (Integer) arg : mController.getZen();
+        final boolean newValue = zen != ZEN_MODE_OFF;
+        final boolean valueChanged = state.value != newValue;
+        state.dualTarget = true;
+        state.value = newValue;
+        state.state = state.value ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
+        checkIfRestrictionEnforcedByAdminOnly(state, UserManager.DISALLOW_ADJUST_VOLUME);
+        switch (zen) {
+            case Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS:
+                state.icon = ResourceIcon.get(R.drawable.ic_qs_dnd_on);
+                state.label = mContext.getString(R.string.quick_settings_dnd_priority_label);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_dnd_priority_on);
+                break;
+            case Global.ZEN_MODE_NO_INTERRUPTIONS:
+                state.icon = TOTAL_SILENCE;
+                state.label = mContext.getString(R.string.quick_settings_dnd_none_label);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_dnd_none_on);
+                break;
+            case ZEN_MODE_ALARMS:
+                state.icon = ResourceIcon.get(R.drawable.ic_qs_dnd_on);
+                state.label = mContext.getString(R.string.quick_settings_dnd_alarms_label);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_dnd_alarms_on);
+                break;
+            default:
+                state.icon = TOTAL_SILENCE.equals(state.icon) ? mDisableTotalSilence : mDisable;
+                state.label = mContext.getString(R.string.quick_settings_dnd_label);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_dnd);
+                break;
+        }
+        if (valueChanged) {
+            fireToggleStateChanged(state.value);
+        }
+        state.dualLabelContentDescription = mContext.getResources().getString(
+                R.string.accessibility_quick_settings_open_settings, getTileLabel());
+        state.expandedAccessibilityClassName = Switch.class.getName();
+!!!3439237.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_DND;
+!!!3439365.java!!!	composeChangeAnnouncement() : String
+        if (mState.value) {
+            return mContext.getString(R.string.accessibility_quick_settings_dnd_changed_on);
+        } else {
+            return mContext.getString(R.string.accessibility_quick_settings_dnd_changed_off);
+        }
+!!!3439493.java!!!	setListening(inout listening : boolean) : void
+        if (mListening == listening) return;
+        mListening = listening;
+        if (mListening) {
+            mController.addCallback(mZenCallback);
+            Prefs.registerListener(mContext, mPrefListener);
+        } else {
+            mController.removeCallback(mZenCallback);
+            Prefs.unregisterListener(mContext, mPrefListener);
+        }
+!!!3439621.java!!!	isAvailable() : boolean
+        return isVisible(mContext);

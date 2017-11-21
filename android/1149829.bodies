@@ -1,0 +1,752 @@
+class ShortcutInfo
+!!!6323717.java!!!	ShortcutInfo(inout b : ShortcutInfo::Builder)
+        mUserId = b.mContext.getUserId();
+
+        mId = Preconditions.checkStringNotEmpty(b.mId, "Shortcut ID must be provided");
+
+        // Note we can't do other null checks here because SM.updateShortcuts() takes partial
+        // information.
+        mPackageName = b.mContext.getPackageName();
+        mActivity = b.mActivity;
+        mIcon = b.mIcon;
+        mTitle = b.mTitle;
+        mTitleResId = b.mTitleResId;
+        mText = b.mText;
+        mTextResId = b.mTextResId;
+        mDisabledMessage = b.mDisabledMessage;
+        mDisabledMessageResId = b.mDisabledMessageResId;
+        mCategories = cloneCategories(b.mCategories);
+        mIntents = cloneIntents(b.mIntents);
+        fixUpIntentExtras();
+        mRank = b.mRank;
+        mExtras = b.mExtras;
+        updateTimestamp();
+!!!6323845.java!!!	fixUpIntentExtras() : void
+        if (mIntents == null) {
+            mIntentPersistableExtrases = null;
+            return;
+        }
+        mIntentPersistableExtrases = new PersistableBundle[mIntents.length];
+        for (int i = 0; i < mIntents.length; i++) {
+            final Intent intent = mIntents[i];
+            final Bundle extras = intent.getExtras();
+            if (extras == null) {
+                mIntentPersistableExtrases[i] = null;
+            } else {
+                mIntentPersistableExtrases[i] = new PersistableBundle(extras);
+                intent.replaceExtras((Bundle) null);
+            }
+        }
+!!!6323973.java!!!	cloneCategories(inout source : Set<String>) : ArraySet
+        if (source == null) {
+            return null;
+        }
+        final ArraySet<String> ret = new ArraySet<>(source.size());
+        for (CharSequence s : source) {
+            if (!TextUtils.isEmpty(s)) {
+                ret.add(s.toString().intern());
+            }
+        }
+        return ret;
+!!!6324101.java!!!	cloneIntents(inout intents : Intent [[]]) : Intent
+        if (intents == null) {
+            return null;
+        }
+        final Intent[] ret = new Intent[intents.length];
+        for (int i = 0; i < ret.length; i++) {
+            if (intents[i] != null) {
+                ret[i] = new Intent(intents[i]);
+            }
+        }
+        return ret;
+!!!6324229.java!!!	clonePersistableBundle(inout bundle : PersistableBundle [[]]) : PersistableBundle
+        if (bundle == null) {
+            return null;
+        }
+        final PersistableBundle[] ret = new PersistableBundle[bundle.length];
+        for (int i = 0; i < ret.length; i++) {
+            if (bundle[i] != null) {
+                ret[i] = new PersistableBundle(bundle[i]);
+            }
+        }
+        return ret;
+!!!6324357.java!!!	enforceMandatoryFields(inout forPinned : boolean) : void
+        Preconditions.checkStringNotEmpty(mId, "Shortcut ID must be provided");
+        if (!forPinned) {
+            Preconditions.checkNotNull(mActivity, "Activity must be provided");
+        }
+        if (mTitle == null && mTitleResId == 0) {
+            throw new IllegalArgumentException("Short label must be provided");
+        }
+        Preconditions.checkNotNull(mIntents, "Shortcut Intent must be provided");
+        Preconditions.checkArgument(mIntents.length > 0, "Shortcut Intent must be provided");
+!!!6324485.java!!!	ShortcutInfo(inout source : ShortcutInfo, in cloneFlags : int)
+        mUserId = source.mUserId;
+        mId = source.mId;
+        mPackageName = source.mPackageName;
+        mActivity = source.mActivity;
+        mFlags = source.mFlags;
+        mLastChangedTimestamp = source.mLastChangedTimestamp;
+
+        // Just always keep it since it's cheep.
+        mIconResId = source.mIconResId;
+
+        if ((cloneFlags & CLONE_REMOVE_NON_KEY_INFO) == 0) {
+
+            if ((cloneFlags & CLONE_REMOVE_ICON) == 0) {
+                mIcon = source.mIcon;
+                mBitmapPath = source.mBitmapPath;
+            }
+
+            mTitle = source.mTitle;
+            mTitleResId = source.mTitleResId;
+            mText = source.mText;
+            mTextResId = source.mTextResId;
+            mDisabledMessage = source.mDisabledMessage;
+            mDisabledMessageResId = source.mDisabledMessageResId;
+            mCategories = cloneCategories(source.mCategories);
+            if ((cloneFlags & CLONE_REMOVE_INTENT) == 0) {
+                mIntents = cloneIntents(source.mIntents);
+                mIntentPersistableExtrases =
+                        clonePersistableBundle(source.mIntentPersistableExtrases);
+            }
+            mRank = source.mRank;
+            mExtras = source.mExtras;
+
+            if ((cloneFlags & CLONE_REMOVE_RES_NAMES) == 0) {
+                mTitleResName = source.mTitleResName;
+                mTextResName = source.mTextResName;
+                mDisabledMessageResName = source.mDisabledMessageResName;
+                mIconResName = source.mIconResName;
+            }
+        } else {
+            // Set this bit.
+            mFlags |= FLAG_KEY_FIELDS_ONLY;
+        }
+!!!6324613.java!!!	getResourceString(inout res : Resources, in resId : int, inout defValue : CharSequence) : CharSequence
+        try {
+            return res.getString(resId);
+        } catch (NotFoundException e) {
+            Log.e(TAG, "Resource for ID=" + resId + " not found in package " + mPackageName);
+            return defValue;
+        }
+!!!6324741.java!!!	resolveResourceStrings(inout res : Resources) : void
+        mFlags |= FLAG_STRINGS_RESOLVED;
+
+        if ((mTitleResId == 0) && (mTextResId == 0) && (mDisabledMessageResId == 0)) {
+            return; // Bail early.
+        }
+
+        if (mTitleResId != 0) {
+            mTitle = getResourceString(res, mTitleResId, mTitle);
+        }
+        if (mTextResId != 0) {
+            mText = getResourceString(res, mTextResId, mText);
+        }
+        if (mDisabledMessageResId != 0) {
+            mDisabledMessage = getResourceString(res, mDisabledMessageResId, mDisabledMessage);
+        }
+!!!6324869.java!!!	lookUpResourceName(inout res : Resources, in resId : int, inout withType : boolean, in packageName : String) : String
+        if (resId == 0) {
+            return null;
+        }
+        try {
+            final String fullName = res.getResourceName(resId);
+
+            if (ANDROID_PACKAGE_NAME.equals(getResourcePackageName(fullName))) {
+                // If it's a framework resource, the value won't change, so just return the ID
+                // value as a string.
+                return String.valueOf(resId);
+            }
+            return withType ? getResourceTypeAndEntryName(fullName)
+                    : getResourceEntryName(fullName);
+        } catch (NotFoundException e) {
+            Log.e(TAG, "Resource name for ID=" + resId + " not found in package " + packageName
+                    + ". Resource IDs may change when the application is upgraded, and the system"
+                    + " may not be able to find the correct resource.");
+            return null;
+        }
+!!!6324997.java!!!	getResourcePackageName(in fullResourceName : String) : String
+        final int p1 = fullResourceName.indexOf(':');
+        if (p1 < 0) {
+            return null;
+        }
+        return fullResourceName.substring(0, p1);
+!!!6325125.java!!!	getResourceTypeName(in fullResourceName : String) : String
+        final int p1 = fullResourceName.indexOf(':');
+        if (p1 < 0) {
+            return null;
+        }
+        final int p2 = fullResourceName.indexOf('/', p1 + 1);
+        if (p2 < 0) {
+            return null;
+        }
+        return fullResourceName.substring(p1 + 1, p2);
+!!!6325253.java!!!	getResourceTypeAndEntryName(in fullResourceName : String) : String
+        final int p1 = fullResourceName.indexOf(':');
+        if (p1 < 0) {
+            return null;
+        }
+        return fullResourceName.substring(p1 + 1);
+!!!6325381.java!!!	getResourceEntryName(in fullResourceName : String) : String
+        final int p1 = fullResourceName.indexOf('/');
+        if (p1 < 0) {
+            return null;
+        }
+        return fullResourceName.substring(p1 + 1);
+!!!6325509.java!!!	lookUpResourceId(inout res : Resources, in resourceName : String, in resourceType : String, in packageName : String) : int
+        if (resourceName == null) {
+            return 0;
+        }
+        try {
+            try {
+                // It the name can be parsed as an integer, just use it.
+                return Integer.parseInt(resourceName);
+            } catch (NumberFormatException ignore) {
+            }
+
+            return res.getIdentifier(resourceName, resourceType, packageName);
+        } catch (NotFoundException e) {
+            Log.e(TAG, "Resource ID for name=" + resourceName + " not found in package "
+                    + packageName);
+            return 0;
+        }
+!!!6325637.java!!!	lookupAndFillInResourceNames(inout res : Resources) : void
+        if ((mTitleResId == 0) && (mTextResId == 0) && (mDisabledMessageResId == 0)
+                && (mIconResId == 0)) {
+            return; // Bail early.
+        }
+
+        // We don't need types for strings because their types are always "string".
+        mTitleResName = lookUpResourceName(res, mTitleResId, /*withType=*/ false, mPackageName);
+        mTextResName = lookUpResourceName(res, mTextResId, /*withType=*/ false, mPackageName);
+        mDisabledMessageResName = lookUpResourceName(res, mDisabledMessageResId,
+                /*withType=*/ false, mPackageName);
+
+        // But icons have multiple possible types, so include the type.
+        mIconResName = lookUpResourceName(res, mIconResId, /*withType=*/ true, mPackageName);
+!!!6325765.java!!!	lookupAndFillInResourceIds(inout res : Resources) : void
+        if ((mTitleResName == null) && (mTextResName == null) && (mDisabledMessageResName == null)
+                && (mIconResName == null)) {
+            return; // Bail early.
+        }
+
+        mTitleResId = lookUpResourceId(res, mTitleResName, RES_TYPE_STRING, mPackageName);
+        mTextResId = lookUpResourceId(res, mTextResName, RES_TYPE_STRING, mPackageName);
+        mDisabledMessageResId = lookUpResourceId(res, mDisabledMessageResName, RES_TYPE_STRING,
+                mPackageName);
+
+        // mIconResName already contains the type, so the third argument is not needed.
+        mIconResId = lookUpResourceId(res, mIconResName, null, mPackageName);
+!!!6325893.java!!!	clone(in cloneFlags : int) : ShortcutInfo
+        return new ShortcutInfo(this, cloneFlags);
+!!!6326021.java!!!	ensureUpdatableWith(inout source : ShortcutInfo) : void
+        Preconditions.checkState(mUserId == source.mUserId, "Owner User ID must match");
+        Preconditions.checkState(mId.equals(source.mId), "ID must match");
+        Preconditions.checkState(mPackageName.equals(source.mPackageName),
+                "Package name must match");
+        Preconditions.checkState(!isImmutable(), "Target ShortcutInfo is immutable");
+!!!6326149.java!!!	copyNonNullFieldsFrom(inout source : ShortcutInfo) : void
+        ensureUpdatableWith(source);
+
+        if (source.mActivity != null) {
+            mActivity = source.mActivity;
+        }
+
+        if (source.mIcon != null) {
+            mIcon = source.mIcon;
+
+            mIconResId = 0;
+            mIconResName = null;
+            mBitmapPath = null;
+        }
+        if (source.mTitle != null) {
+            mTitle = source.mTitle;
+            mTitleResId = 0;
+            mTitleResName = null;
+        } else if (source.mTitleResId != 0) {
+            mTitle = null;
+            mTitleResId = source.mTitleResId;
+            mTitleResName = null;
+        }
+
+        if (source.mText != null) {
+            mText = source.mText;
+            mTextResId = 0;
+            mTextResName = null;
+        } else if (source.mTextResId != 0) {
+            mText = null;
+            mTextResId = source.mTextResId;
+            mTextResName = null;
+        }
+        if (source.mDisabledMessage != null) {
+            mDisabledMessage = source.mDisabledMessage;
+            mDisabledMessageResId = 0;
+            mDisabledMessageResName = null;
+        } else if (source.mDisabledMessageResId != 0) {
+            mDisabledMessage = null;
+            mDisabledMessageResId = source.mDisabledMessageResId;
+            mDisabledMessageResName = null;
+        }
+        if (source.mCategories != null) {
+            mCategories = cloneCategories(source.mCategories);
+        }
+        if (source.mIntents != null) {
+            mIntents = cloneIntents(source.mIntents);
+            mIntentPersistableExtrases =
+                    clonePersistableBundle(source.mIntentPersistableExtrases);
+        }
+        if (source.mRank != RANK_NOT_SET) {
+            mRank = source.mRank;
+        }
+        if (source.mExtras != null) {
+            mExtras = source.mExtras;
+        }
+!!!6326277.java!!!	validateIcon(inout icon : Icon) : Icon
+        switch (icon.getType()) {
+            case Icon.TYPE_RESOURCE:
+            case Icon.TYPE_BITMAP:
+            case Icon.TYPE_ADAPTIVE_BITMAP:
+                break; // OK
+            default:
+                throw getInvalidIconException();
+        }
+        if (icon.hasTint()) {
+            throw new IllegalArgumentException("Icons with tints are not supported");
+        }
+
+        return icon;
+!!!6326405.java!!!	getInvalidIconException() : IllegalArgumentException
+        return new IllegalArgumentException("Unsupported icon type:"
+                +" only the bitmap and resource types are supported");
+!!!6329221.java!!!	getId() : String
+        return mId;
+!!!6329349.java!!!	getPackage() : String
+        return mPackageName;
+!!!6329477.java!!!	getActivity() : ComponentName
+        return mActivity;
+!!!6329605.java!!!	setActivity(inout activity : ComponentName) : void
+        mActivity = activity;
+!!!6329733.java!!!	getIcon() : Icon
+        return mIcon;
+!!!6329861.java!!!	getTitle() : CharSequence
+        return mTitle;
+!!!6329989.java!!!	getTitleResId() : int
+        return mTitleResId;
+!!!6330117.java!!!	getText() : CharSequence
+        return mText;
+!!!6330245.java!!!	getTextResId() : int
+        return mTextResId;
+!!!6330373.java!!!	getShortLabel() : CharSequence
+        return mTitle;
+!!!6330501.java!!!	getShortLabelResourceId() : int
+        return mTitleResId;
+!!!6330629.java!!!	getLongLabel() : CharSequence
+        return mText;
+!!!6330757.java!!!	getLongLabelResourceId() : int
+        return mTextResId;
+!!!6330885.java!!!	getDisabledMessage() : CharSequence
+        return mDisabledMessage;
+!!!6331013.java!!!	getDisabledMessageResourceId() : int
+        return mDisabledMessageResId;
+!!!6331141.java!!!	getCategories() : Set<String>
+        return mCategories;
+!!!6331269.java!!!	getIntent() : Intent
+        if (mIntents == null || mIntents.length == 0) {
+            return null;
+        }
+        final int last = mIntents.length - 1;
+        final Intent intent = new Intent(mIntents[last]);
+        return setIntentExtras(intent, mIntentPersistableExtrases[last]);
+!!!6331397.java!!!	getIntents() : Intent
+        final Intent[] ret = new Intent[mIntents.length];
+
+        for (int i = 0; i < ret.length; i++) {
+            ret[i] = new Intent(mIntents[i]);
+            setIntentExtras(ret[i], mIntentPersistableExtrases[i]);
+        }
+
+        return ret;
+!!!6331525.java!!!	getIntentsNoExtras() : Intent
+        return mIntents;
+!!!6331653.java!!!	getIntentPersistableExtrases() : PersistableBundle
+        return mIntentPersistableExtrases;
+!!!6331781.java!!!	getRank() : int
+        return mRank;
+!!!6331909.java!!!	hasRank() : boolean
+        return mRank != RANK_NOT_SET;
+!!!6332037.java!!!	setRank(in rank : int) : void
+        mRank = rank;
+!!!6332165.java!!!	clearImplicitRankAndRankChangedFlag() : void
+        mImplicitRank = 0;
+!!!6332293.java!!!	setImplicitRank(in rank : int) : void
+        // Make sure to keep RANK_CHANGED_BIT.
+        mImplicitRank = (mImplicitRank & RANK_CHANGED_BIT) | (rank & IMPLICIT_RANK_MASK);
+!!!6332421.java!!!	getImplicitRank() : int
+        return mImplicitRank & IMPLICIT_RANK_MASK;
+!!!6332549.java!!!	setRankChanged() : void
+        mImplicitRank |= RANK_CHANGED_BIT;
+!!!6332677.java!!!	isRankChanged() : boolean
+        return (mImplicitRank & RANK_CHANGED_BIT) != 0;
+!!!6332805.java!!!	getExtras() : PersistableBundle
+        return mExtras;
+!!!6332933.java!!!	getUserId() : int
+        return mUserId;
+!!!6333061.java!!!	getUserHandle() : UserHandle
+        return UserHandle.of(mUserId);
+!!!6333189.java!!!	getLastChangedTimestamp() : long
+        return mLastChangedTimestamp;
+!!!6333317.java!!!	getFlags() : int
+        return mFlags;
+!!!6333445.java!!!	replaceFlags(in flags : int) : void
+        mFlags = flags;
+!!!6333573.java!!!	addFlags(in flags : int) : void
+        mFlags |= flags;
+!!!6333701.java!!!	clearFlags(in flags : int) : void
+        mFlags &= ~flags;
+!!!6333829.java!!!	hasFlags(in flags : int) : boolean
+        return (mFlags & flags) == flags;
+!!!6333957.java!!!	isReturnedByServer() : boolean
+        return hasFlags(FLAG_RETURNED_BY_SERVICE);
+!!!6334085.java!!!	setReturnedByServer() : void
+        addFlags(FLAG_RETURNED_BY_SERVICE);
+!!!6334213.java!!!	isDynamic() : boolean
+        return hasFlags(FLAG_DYNAMIC);
+!!!6334341.java!!!	isPinned() : boolean
+        return hasFlags(FLAG_PINNED);
+!!!6334469.java!!!	isDeclaredInManifest() : boolean
+        return hasFlags(FLAG_MANIFEST);
+!!!6334597.java!!!	isManifestShortcut() : boolean
+        return isDeclaredInManifest();
+!!!6334725.java!!!	isFloating() : boolean
+        return isPinned() && !(isDynamic() || isManifestShortcut());
+!!!6334853.java!!!	isOriginallyFromManifest() : boolean
+        return hasFlags(FLAG_IMMUTABLE);
+!!!6334981.java!!!	isImmutable() : boolean
+        return hasFlags(FLAG_IMMUTABLE);
+!!!6335109.java!!!	isEnabled() : boolean
+        return !hasFlags(FLAG_DISABLED);
+!!!6335237.java!!!	isAlive() : boolean
+        return hasFlags(FLAG_PINNED) || hasFlags(FLAG_DYNAMIC) || hasFlags(FLAG_MANIFEST);
+!!!6335365.java!!!	usesQuota() : boolean
+        return hasFlags(FLAG_DYNAMIC) || hasFlags(FLAG_MANIFEST);
+!!!6335493.java!!!	hasIconResource() : boolean
+        return hasFlags(FLAG_HAS_ICON_RES);
+!!!6335621.java!!!	hasStringResources() : boolean
+        return (mTitleResId != 0) || (mTextResId != 0) || (mDisabledMessageResId != 0);
+!!!6335749.java!!!	hasAnyResources() : boolean
+        return hasIconResource() || hasStringResources();
+!!!6335877.java!!!	hasIconFile() : boolean
+        return hasFlags(FLAG_HAS_ICON_FILE);
+!!!6336005.java!!!	hasAdaptiveBitmap() : boolean
+        return hasFlags(FLAG_ADAPTIVE_BITMAP);
+!!!6336133.java!!!	isIconPendingSave() : boolean
+        return hasFlags(FLAG_ICON_FILE_PENDING_SAVE);
+!!!6336261.java!!!	setIconPendingSave() : void
+        addFlags(FLAG_ICON_FILE_PENDING_SAVE);
+!!!6336389.java!!!	clearIconPendingSave() : void
+        clearFlags(FLAG_ICON_FILE_PENDING_SAVE);
+!!!6336517.java!!!	hasKeyFieldsOnly() : boolean
+        return hasFlags(FLAG_KEY_FIELDS_ONLY);
+!!!6336645.java!!!	hasStringResourcesResolved() : boolean
+        return hasFlags(FLAG_STRINGS_RESOLVED);
+!!!6336773.java!!!	updateTimestamp() : void
+        mLastChangedTimestamp = System.currentTimeMillis();
+!!!6336901.java!!!	setTimestamp(in value : long) : void
+        mLastChangedTimestamp = value;
+!!!6337029.java!!!	clearIcon() : void
+        mIcon = null;
+!!!6337157.java!!!	setIconResourceId(in iconResourceId : int) : void
+        if (mIconResId != iconResourceId) {
+            mIconResName = null;
+        }
+        mIconResId = iconResourceId;
+!!!6337285.java!!!	getIconResourceId() : int
+        return mIconResId;
+!!!6337413.java!!!	getBitmapPath() : String
+        return mBitmapPath;
+!!!6337541.java!!!	setBitmapPath(in bitmapPath : String) : void
+        mBitmapPath = bitmapPath;
+!!!6337669.java!!!	setDisabledMessageResId(in disabledMessageResId : int) : void
+        if (mDisabledMessageResId != disabledMessageResId) {
+            mDisabledMessageResName = null;
+        }
+        mDisabledMessageResId = disabledMessageResId;
+        mDisabledMessage = null;
+!!!6337797.java!!!	setDisabledMessage(in disabledMessage : String) : void
+        mDisabledMessage = disabledMessage;
+        mDisabledMessageResId = 0;
+        mDisabledMessageResName = null;
+!!!6337925.java!!!	getTitleResName() : String
+        return mTitleResName;
+!!!6338053.java!!!	setTitleResName(in titleResName : String) : void
+        mTitleResName = titleResName;
+!!!6338181.java!!!	getTextResName() : String
+        return mTextResName;
+!!!6338309.java!!!	setTextResName(in textResName : String) : void
+        mTextResName = textResName;
+!!!6338437.java!!!	getDisabledMessageResName() : String
+        return mDisabledMessageResName;
+!!!6338565.java!!!	setDisabledMessageResName(in disabledMessageResName : String) : void
+        mDisabledMessageResName = disabledMessageResName;
+!!!6338693.java!!!	getIconResName() : String
+        return mIconResName;
+!!!6338821.java!!!	setIconResName(in iconResName : String) : void
+        mIconResName = iconResName;
+!!!6338949.java!!!	setIntents(inout intents : Intent [[]]) : void
+        Preconditions.checkNotNull(intents);
+        Preconditions.checkArgument(intents.length > 0);
+
+        mIntents = cloneIntents(intents);
+        fixUpIntentExtras();
+!!!6339077.java!!!	setIntentExtras(inout intent : Intent, inout extras : PersistableBundle) : Intent
+        if (extras == null) {
+            intent.replaceExtras((Bundle) null);
+        } else {
+            intent.replaceExtras(new Bundle(extras));
+        }
+        return intent;
+!!!6339205.java!!!	setCategories(inout categories : Set<String>) : void
+        mCategories = cloneCategories(categories);
+!!!6339333.java!!!	ShortcutInfo(inout source : Parcel)
+        final ClassLoader cl = getClass().getClassLoader();
+
+        mUserId = source.readInt();
+        mId = source.readString();
+        mPackageName = source.readString();
+        mActivity = source.readParcelable(cl);
+        mFlags = source.readInt();
+        mIconResId = source.readInt();
+        mLastChangedTimestamp = source.readLong();
+
+        if (source.readInt() == 0) {
+            return; // key information only.
+        }
+
+        mIcon = source.readParcelable(cl);
+        mTitle = source.readCharSequence();
+        mTitleResId = source.readInt();
+        mText = source.readCharSequence();
+        mTextResId = source.readInt();
+        mDisabledMessage = source.readCharSequence();
+        mDisabledMessageResId = source.readInt();
+        mIntents = source.readParcelableArray(cl, Intent.class);
+        mIntentPersistableExtrases = source.readParcelableArray(cl, PersistableBundle.class);
+        mRank = source.readInt();
+        mExtras = source.readParcelable(cl);
+        mBitmapPath = source.readString();
+
+        mIconResName = source.readString();
+        mTitleResName = source.readString();
+        mTextResName = source.readString();
+        mDisabledMessageResName = source.readString();
+
+        int N = source.readInt();
+        if (N == 0) {
+            mCategories = null;
+        } else {
+            mCategories = new ArraySet<>(N);
+            for (int i = 0; i < N; i++) {
+                mCategories.add(source.readString().intern());
+            }
+        }
+!!!6339461.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        dest.writeInt(mUserId);
+        dest.writeString(mId);
+        dest.writeString(mPackageName);
+        dest.writeParcelable(mActivity, flags);
+        dest.writeInt(mFlags);
+        dest.writeInt(mIconResId);
+        dest.writeLong(mLastChangedTimestamp);
+
+        if (hasKeyFieldsOnly()) {
+            dest.writeInt(0);
+            return;
+        }
+        dest.writeInt(1);
+
+        dest.writeParcelable(mIcon, flags);
+        dest.writeCharSequence(mTitle);
+        dest.writeInt(mTitleResId);
+        dest.writeCharSequence(mText);
+        dest.writeInt(mTextResId);
+        dest.writeCharSequence(mDisabledMessage);
+        dest.writeInt(mDisabledMessageResId);
+
+        dest.writeParcelableArray(mIntents, flags);
+        dest.writeParcelableArray(mIntentPersistableExtrases, flags);
+        dest.writeInt(mRank);
+        dest.writeParcelable(mExtras, flags);
+        dest.writeString(mBitmapPath);
+
+        dest.writeString(mIconResName);
+        dest.writeString(mTitleResName);
+        dest.writeString(mTextResName);
+        dest.writeString(mDisabledMessageResName);
+
+        if (mCategories != null) {
+            final int N = mCategories.size();
+            dest.writeInt(N);
+            for (int i = 0; i < N; i++) {
+                dest.writeString(mCategories.valueAt(i));
+            }
+        } else {
+            dest.writeInt(0);
+        }
+!!!6339589.java!!!	describeContents() : int
+        return 0;
+!!!6339717.java!!!	toString() : String
+        return toStringInner(/* secure =*/ true, /* includeInternalData =*/ false);
+!!!6339845.java!!!	toInsecureString() : String
+        return toStringInner(/* secure =*/ false, /* includeInternalData =*/ true);
+!!!6339973.java!!!	toStringInner(inout secure : boolean, inout includeInternalData : boolean) : String
+        final StringBuilder sb = new StringBuilder();
+        sb.append("ShortcutInfo {");
+
+        sb.append("id=");
+        sb.append(secure ? "***" : mId);
+
+        sb.append(", flags=0x");
+        sb.append(Integer.toHexString(mFlags));
+        sb.append(" [");
+        if (!isEnabled()) {
+            sb.append("X");
+        }
+        if (isImmutable()) {
+            sb.append("Im");
+        }
+        if (isManifestShortcut()) {
+            sb.append("M");
+        }
+        if (isDynamic()) {
+            sb.append("D");
+        }
+        if (isPinned()) {
+            sb.append("P");
+        }
+        if (hasIconFile()) {
+            sb.append("If");
+        }
+        if (isIconPendingSave()) {
+            sb.append("^");
+        }
+        if (hasIconResource()) {
+            sb.append("Ir");
+        }
+        if (hasKeyFieldsOnly()) {
+            sb.append("K");
+        }
+        if (hasStringResourcesResolved()) {
+            sb.append("Sr");
+        }
+        if (isReturnedByServer()) {
+            sb.append("V");
+        }
+        sb.append("]");
+
+        sb.append(", packageName=");
+        sb.append(mPackageName);
+
+        sb.append(", activity=");
+        sb.append(mActivity);
+
+        sb.append(", shortLabel=");
+        sb.append(secure ? "***" : mTitle);
+        sb.append(", resId=");
+        sb.append(mTitleResId);
+        sb.append("[");
+        sb.append(mTitleResName);
+        sb.append("]");
+
+        sb.append(", longLabel=");
+        sb.append(secure ? "***" : mText);
+        sb.append(", resId=");
+        sb.append(mTextResId);
+        sb.append("[");
+        sb.append(mTextResName);
+        sb.append("]");
+
+        sb.append(", disabledMessage=");
+        sb.append(secure ? "***" : mDisabledMessage);
+        sb.append(", resId=");
+        sb.append(mDisabledMessageResId);
+        sb.append("[");
+        sb.append(mDisabledMessageResName);
+        sb.append("]");
+
+        sb.append(", categories=");
+        sb.append(mCategories);
+
+        sb.append(", icon=");
+        sb.append(mIcon);
+
+        sb.append(", rank=");
+        sb.append(mRank);
+
+        sb.append(", timestamp=");
+        sb.append(mLastChangedTimestamp);
+
+        sb.append(", intents=");
+        if (mIntents == null) {
+            sb.append("null");
+        } else {
+            if (secure) {
+                sb.append("size:");
+                sb.append(mIntents.length);
+            } else {
+                final int size = mIntents.length;
+                sb.append("[");
+                String sep = "";
+                for (int i = 0; i < size; i++) {
+                    sb.append(sep);
+                    sep = ", ";
+                    sb.append(mIntents[i]);
+                    sb.append("/");
+                    sb.append(mIntentPersistableExtrases[i]);
+                }
+                sb.append("]");
+            }
+        }
+
+        sb.append(", extras=");
+        sb.append(mExtras);
+
+        if (includeInternalData) {
+
+            sb.append(", iconRes=");
+            sb.append(mIconResId);
+            sb.append("[");
+            sb.append(mIconResName);
+            sb.append("]");
+
+            sb.append(", bitmapPath=");
+            sb.append(mBitmapPath);
+        }
+
+        sb.append("}");
+        return sb.toString();
+!!!6340101.java!!!	ShortcutInfo(in userId : int, in id : String, in packageName : String, inout activity : ComponentName, inout icon : Icon, inout title : CharSequence, in titleResId : int, in titleResName : String, inout text : CharSequence, in textResId : int, in textResName : String, inout disabledMessage : CharSequence, in disabledMessageResId : int, in disabledMessageResName : String, inout categories : Set<String>, inout intentsWithExtras : Intent [[]], in rank : int, inout extras : PersistableBundle, in lastChangedTimestamp : long, in flags : int, in iconResId : int, in iconResName : String, in bitmapPath : String)
+        mUserId = userId;
+        mId = id;
+        mPackageName = packageName;
+        mActivity = activity;
+        mIcon = icon;
+        mTitle = title;
+        mTitleResId = titleResId;
+        mTitleResName = titleResName;
+        mText = text;
+        mTextResId = textResId;
+        mTextResName = textResName;
+        mDisabledMessage = disabledMessage;
+        mDisabledMessageResId = disabledMessageResId;
+        mDisabledMessageResName = disabledMessageResName;
+        mCategories = cloneCategories(categories);
+        mIntents = cloneIntents(intentsWithExtras);
+        fixUpIntentExtras();
+        mRank = rank;
+        mExtras = extras;
+        mLastChangedTimestamp = lastChangedTimestamp;
+        mFlags = flags;
+        mIconResId = iconResId;
+        mIconResName = iconResName;
+        mBitmapPath = bitmapPath;

@@ -1,0 +1,73 @@
+class ShortcutPicker
+!!!4235781.java!!!	onCreatePreferences(inout savedInstanceState : Bundle, in rootKey : String) : void
+        Context context = getPreferenceManager().getContext();
+        PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(context);
+        screen.setOrderingAsAdded(true);
+        PreferenceCategory otherApps = new PreferenceCategory(context);
+        otherApps.setTitle(R.string.tuner_other_apps);
+
+        mNonePreference = new SelectablePreference(context);
+        mSelectablePreferences.add(mNonePreference);
+        mNonePreference.setTitle(R.string.lockscreen_none);
+        mNonePreference.setIcon(R.drawable.ic_remove_circle);
+        screen.addPreference(mNonePreference);
+
+        LauncherApps apps = getContext().getSystemService(LauncherApps.class);
+        List<LauncherActivityInfo> activities = apps.getActivityList(null,
+                Process.myUserHandle());
+
+        screen.addPreference(otherApps);
+        activities.forEach(info -> {
+            try {
+                List<Shortcut> shortcuts = new ShortcutParser(getContext(),
+                        info.getComponentName()).getShortcuts();
+                AppPreference appPreference = new AppPreference(context, info);
+                mSelectablePreferences.add(appPreference);
+                if (shortcuts.size() != 0) {
+                    //PreferenceCategory category = new PreferenceCategory(context);
+                    //screen.addPreference(category);
+                    //category.setTitle(info.getLabel());
+                    screen.addPreference(appPreference);
+                    shortcuts.forEach(shortcut -> {
+                        ShortcutPreference shortcutPref = new ShortcutPreference(context, shortcut,
+                                info.getLabel());
+                        mSelectablePreferences.add(shortcutPref);
+                        screen.addPreference(shortcutPref);
+                    });
+                    return;
+                }
+                otherApps.addPreference(appPreference);
+            } catch (NameNotFoundException e) {
+            }
+        });
+        // Move other apps to the bottom.
+        screen.removePreference(otherApps);
+        for (int i = 0; i < otherApps.getPreferenceCount(); i++) {
+            Preference p = otherApps.getPreference(0);
+            otherApps.removePreference(p);
+            p.setOrder(Preference.DEFAULT_ORDER);
+            screen.addPreference(p);
+        }
+        //screen.addPreference(otherApps);
+
+        setPreferenceScreen(screen);
+        mKey = getArguments().getString(ARG_PREFERENCE_ROOT);
+        mTunerService = Dependency.get(TunerService.class);
+        mTunerService.addTunable(this, mKey);
+!!!4235909.java!!!	onPreferenceTreeClick(inout preference : Preference) : boolean
+        mTunerService.setValue(mKey, preference.toString());
+        getActivity().onBackPressed();
+        return true;
+!!!4236037.java!!!	onActivityCreated(inout savedInstanceState : Bundle) : void
+        super.onActivityCreated(savedInstanceState);
+        if (LOCKSCREEN_LEFT_BUTTON.equals(mKey)) {
+            getActivity().setTitle(R.string.lockscreen_shortcut_left);
+        } else {
+            getActivity().setTitle(R.string.lockscreen_shortcut_right);
+        }
+!!!4236165.java!!!	onDestroy() : void
+        super.onDestroy();
+        mTunerService.removeTunable(this);
+!!!4236293.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        String v = newValue != null ? newValue : "";
+        mSelectablePreferences.forEach(p -> p.setChecked(v.equals(p.toString())));

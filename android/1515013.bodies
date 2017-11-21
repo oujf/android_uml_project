@@ -1,0 +1,132 @@
+class Vbox
+!!!9914245.java!!!	Vbox(in lowerIndex : int, in upperIndex : int)
+            mLowerIndex = lowerIndex;
+            mUpperIndex = upperIndex;
+            fitBox();
+!!!9914373.java!!!	getVolume() : int
+            return (mMaxRed - mMinRed + 1) * (mMaxGreen - mMinGreen + 1) *
+                    (mMaxBlue - mMinBlue + 1);
+!!!9914501.java!!!	canSplit() : boolean
+            return getColorCount() > 1;
+!!!9914629.java!!!	getColorCount() : int
+            return 1 + mUpperIndex - mLowerIndex;
+!!!9914757.java!!!	fitBox() : void
+            final int[] colors = mColors;
+            final int[] hist = mHistogram;
+
+            // Reset the min and max to opposite values
+            int minRed, minGreen, minBlue;
+            minRed = minGreen = minBlue = Integer.MAX_VALUE;
+            int maxRed, maxGreen, maxBlue;
+            maxRed = maxGreen = maxBlue = Integer.MIN_VALUE;
+            int count = 0;
+
+            for (int i = mLowerIndex; i <= mUpperIndex; i++) {
+                final int color = colors[i];
+                count += hist[color];
+
+                final int r = quantizedRed(color);
+                final int g = quantizedGreen(color);
+                final int b = quantizedBlue(color);
+                if (r > maxRed) {
+                    maxRed = r;
+                }
+                if (r < minRed) {
+                    minRed = r;
+                }
+                if (g > maxGreen) {
+                    maxGreen = g;
+                }
+                if (g < minGreen) {
+                    minGreen = g;
+                }
+                if (b > maxBlue) {
+                    maxBlue = b;
+                }
+                if (b < minBlue) {
+                    minBlue = b;
+                }
+            }
+
+            mMinRed = minRed;
+            mMaxRed = maxRed;
+            mMinGreen = minGreen;
+            mMaxGreen = maxGreen;
+            mMinBlue = minBlue;
+            mMaxBlue = maxBlue;
+            mPopulation = count;
+!!!9914885.java!!!	splitBox() : ColorCutQuantizer::Vbox
+            if (!canSplit()) {
+                throw new IllegalStateException("Can not split a box with only 1 color");
+            }
+
+            // find median along the longest dimension
+            final int splitPoint = findSplitPoint();
+
+            Vbox newBox = new Vbox(splitPoint + 1, mUpperIndex);
+
+            // Now change this box's upperIndex and recompute the color boundaries
+            mUpperIndex = splitPoint;
+            fitBox();
+
+            return newBox;
+!!!9915013.java!!!	getLongestColorDimension() : int
+            final int redLength = mMaxRed - mMinRed;
+            final int greenLength = mMaxGreen - mMinGreen;
+            final int blueLength = mMaxBlue - mMinBlue;
+
+            if (redLength >= greenLength && redLength >= blueLength) {
+                return COMPONENT_RED;
+            } else if (greenLength >= redLength && greenLength >= blueLength) {
+                return COMPONENT_GREEN;
+            } else {
+                return COMPONENT_BLUE;
+            }
+!!!9915141.java!!!	findSplitPoint() : int
+            final int longestDimension = getLongestColorDimension();
+            final int[] colors = mColors;
+            final int[] hist = mHistogram;
+
+            // We need to sort the colors in this box based on the longest color dimension.
+            // As we can't use a Comparator to define the sort logic, we modify each color so that
+            // its most significant is the desired dimension
+            modifySignificantOctet(colors, longestDimension, mLowerIndex, mUpperIndex);
+
+            // Now sort... Arrays.sort uses a exclusive toIndex so we need to add 1
+            Arrays.sort(colors, mLowerIndex, mUpperIndex + 1);
+
+            // Now revert all of the colors so that they are packed as RGB again
+            modifySignificantOctet(colors, longestDimension, mLowerIndex, mUpperIndex);
+
+            final int midPoint = mPopulation / 2;
+            for (int i = mLowerIndex, count = 0; i <= mUpperIndex; i++)  {
+                count += hist[colors[i]];
+                if (count >= midPoint) {
+                    return i;
+                }
+            }
+
+            return mLowerIndex;
+!!!9915269.java!!!	getAverageColor() : Palette::Swatch
+            final int[] colors = mColors;
+            final int[] hist = mHistogram;
+            int redSum = 0;
+            int greenSum = 0;
+            int blueSum = 0;
+            int totalPopulation = 0;
+
+            for (int i = mLowerIndex; i <= mUpperIndex; i++) {
+                final int color = colors[i];
+                final int colorPopulation = hist[color];
+
+                totalPopulation += colorPopulation;
+                redSum += colorPopulation * quantizedRed(color);
+                greenSum += colorPopulation * quantizedGreen(color);
+                blueSum += colorPopulation * quantizedBlue(color);
+            }
+
+            final int redMean = Math.round(redSum / (float) totalPopulation);
+            final int greenMean = Math.round(greenSum / (float) totalPopulation);
+            final int blueMean = Math.round(blueSum / (float) totalPopulation);
+
+            return new Swatch(approximateToRgb888(redMean, greenMean, blueMean), totalPopulation);

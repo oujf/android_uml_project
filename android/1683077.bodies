@@ -1,0 +1,153 @@
+class EmergencyAffordanceService
+!!!11539461.java!!!	requestCellScan() : void
+        mHandler.obtainMessage(CELL_INFO_STATE_CHANGED).sendToTarget();
+!!!11539589.java!!!	EmergencyAffordanceService(inout context : Context)
+        super(context);
+        mContext = context;
+        int[] numbers = context.getResources().getIntArray(
+                com.android.internal.R.array.config_emergency_mcc_codes);
+        mEmergencyCallMccNumbers = new ArrayList<>(numbers.length);
+        for (int i = 0; i < numbers.length; i++) {
+            mEmergencyCallMccNumbers.add(numbers[i]);
+        }
+!!!11539717.java!!!	updateEmergencyAffordanceNeeded() : void
+        synchronized (mLock) {
+            mEmergencyAffordanceNeeded = mVoiceCapable && (mSimNeedsEmergencyAffordance ||
+                    mNetworkNeedsEmergencyAffordance);
+            Settings.Global.putInt(mContext.getContentResolver(),
+                    Settings.Global.EMERGENCY_AFFORDANCE_NEEDED,
+                    mEmergencyAffordanceNeeded ? 1 : 0);
+            if (mEmergencyAffordanceNeeded) {
+                stopScanning();
+            }
+        }
+!!!11539845.java!!!	stopScanning() : void
+        synchronized (mLock) {
+            mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_NONE);
+            mScansCompleted = 0;
+        }
+!!!11539973.java!!!	isEmergencyAffordanceNeeded() : boolean
+        synchronized (mLock) {
+            return mEmergencyAffordanceNeeded;
+        }
+!!!11540229.java!!!	onBootPhase(in phase : int) : void
+        if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
+            mTelephonyManager = mContext.getSystemService(TelephonyManager.class);
+            mVoiceCapable = mTelephonyManager.isVoiceCapable();
+            if (!mVoiceCapable) {
+                updateEmergencyAffordanceNeeded();
+                return;
+            }
+            mSubscriptionManager = SubscriptionManager.from(mContext);
+            HandlerThread thread = new HandlerThread(TAG);
+            thread.start();
+            mHandler = new MyHandler(thread.getLooper());
+            mHandler.obtainMessage(INITIALIZE_STATE).sendToTarget();
+            startScanning();
+            IntentFilter filter = new IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+            mContext.registerReceiver(mAirplaneModeReceiver, filter);
+            mSubscriptionManager.addOnSubscriptionsChangedListener(mSubscriptionChangedListener);
+        }
+!!!11540357.java!!!	startScanning() : void
+        mTelephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_CELL_INFO
+                | PhoneStateListener.LISTEN_CELL_LOCATION);
+!!!11540741.java!!!	handleInitializeState() : void
+        if (handleUpdateSimSubscriptionInfo()) {
+            return;
+        }
+        if (handleUpdateCellInfo()) {
+            return;
+        }
+        updateEmergencyAffordanceNeeded();
+!!!11540869.java!!!	handleUpdateSimSubscriptionInfo() : boolean
+        boolean neededBefore = simNeededAffordanceBefore();
+        boolean neededNow = neededBefore;
+        List<SubscriptionInfo> activeSubscriptionInfoList =
+                mSubscriptionManager.getActiveSubscriptionInfoList();
+        if (activeSubscriptionInfoList == null) {
+            setSimNeedsEmergencyAffordance(neededNow);
+            return neededNow;
+        }
+        for (SubscriptionInfo info : activeSubscriptionInfoList) {
+            int mcc = info.getMcc();
+            if (mccRequiresEmergencyAffordance(mcc)) {
+                neededNow = true;
+                break;
+            } else if (mcc != 0 && mcc != Integer.MAX_VALUE){
+                // a Sim with a different mcc code was found
+                neededNow = false;
+            }
+            String simOperator  = mTelephonyManager.getSimOperator(info.getSubscriptionId());
+            mcc = 0;
+            if (simOperator != null && simOperator.length() >= 3) {
+                mcc = Integer.parseInt(simOperator.substring(0, 3));
+            }
+            if (mcc != 0) {
+                if (mccRequiresEmergencyAffordance(mcc)) {
+                    neededNow = true;
+                    break;
+                } else {
+                    // a Sim with a different mcc code was found
+                    neededNow = false;
+                }
+            }
+        }
+        setSimNeedsEmergencyAffordance(neededNow);
+        return neededNow;
+!!!11540997.java!!!	setSimNeedsEmergencyAffordance(inout simNeedsEmergencyAffordance : boolean) : void
+        if (simNeededAffordanceBefore() != simNeedsEmergencyAffordance) {
+            Settings.Global.putInt(mContext.getContentResolver(),
+                    EMERGENCY_SIM_INSERTED_SETTING,
+                    simNeedsEmergencyAffordance ? 1 : 0);
+        }
+        if (simNeedsEmergencyAffordance != mSimNeedsEmergencyAffordance) {
+            mSimNeedsEmergencyAffordance = simNeedsEmergencyAffordance;
+            updateEmergencyAffordanceNeeded();
+        }
+!!!11541125.java!!!	simNeededAffordanceBefore() : boolean
+        return Settings.Global.getInt(mContext.getContentResolver(),
+                EMERGENCY_SIM_INSERTED_SETTING, 0) != 0;
+!!!11541253.java!!!	handleUpdateCellInfo() : boolean
+        List<CellInfo> cellInfos = mTelephonyManager.getAllCellInfo();
+        if (cellInfos == null) {
+            return false;
+        }
+        boolean stopScanningAfterScan = false;
+        for (CellInfo cellInfo : cellInfos) {
+            int mcc = 0;
+            if (cellInfo instanceof CellInfoGsm) {
+                mcc = ((CellInfoGsm) cellInfo).getCellIdentity().getMcc();
+            } else if (cellInfo instanceof CellInfoLte) {
+                mcc = ((CellInfoLte) cellInfo).getCellIdentity().getMcc();
+            } else if (cellInfo instanceof CellInfoWcdma) {
+                mcc = ((CellInfoWcdma) cellInfo).getCellIdentity().getMcc();
+            }
+            if (mccRequiresEmergencyAffordance(mcc)) {
+                setNetworkNeedsEmergencyAffordance(true);
+                return true;
+            } else if (mcc != 0 && mcc != Integer.MAX_VALUE) {
+                // we found an mcc that isn't in the list, abort
+                stopScanningAfterScan = true;
+            }
+        }
+        if (stopScanningAfterScan) {
+            stopScanning();
+        } else {
+            onCellScanFinishedUnsuccessful();
+        }
+        setNetworkNeedsEmergencyAffordance(false);
+        return false;
+!!!11541381.java!!!	setNetworkNeedsEmergencyAffordance(inout needsAffordance : boolean) : void
+        synchronized (mLock) {
+            mNetworkNeedsEmergencyAffordance = needsAffordance;
+            updateEmergencyAffordanceNeeded();
+        }
+!!!11541509.java!!!	onCellScanFinishedUnsuccessful() : void
+        synchronized (mLock) {
+            mScansCompleted++;
+            if (mScansCompleted >= NUM_SCANS_UNTIL_ABORT) {
+                stopScanning();
+            }
+        }
+!!!11541637.java!!!	mccRequiresEmergencyAffordance(in mcc : int) : boolean
+        return mEmergencyCallMccNumbers.contains(mcc);

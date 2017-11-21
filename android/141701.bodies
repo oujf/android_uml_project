@@ -1,0 +1,40 @@
+class BufLog
+!!!163205.cpp!!!	BufLog()
+    memset(mStreams, 0, sizeof(mStreams));
+!!!163333.cpp!!!	~BufLog()
+    android::Mutex::Autolock autoLock(mLock);
+
+    for (unsigned int id = 0; id < BUFLOG_MAXSTREAMS; id++) {
+        BufLogStream *pBLStream = mStreams[id];
+        if (pBLStream != NULL) {
+            delete pBLStream ;
+            mStreams[id] = NULL;
+        }
+    }
+!!!163589.cpp!!!	write(in streamid : int, in tag : char, in format : int, in channels : int, in samplingRate : int, in maxBytes : size_t, in buf : void, in size : size_t) : size_t
+    unsigned int id = streamid % BUFLOG_MAXSTREAMS;
+    android::Mutex::Autolock autoLock(mLock);
+
+    BufLogStream *pBLStream = mStreams[id];
+
+    if (pBLStream == NULL) {
+        pBLStream = mStreams[id] = new BufLogStream(id, tag, format, channels,
+                samplingRate, maxBytes);
+        ALOG_ASSERT(pBLStream != NULL, "BufLogStream Failed to be created");
+    }
+
+    return pBLStream->write(buf, size);
+!!!163717.cpp!!!	reset() : void
+    android::Mutex::Autolock autoLock(mLock);
+    ALOGV("Resetting all BufLogs");
+    int count = 0;
+
+    for (unsigned int id = 0; id < BUFLOG_MAXSTREAMS; id++) {
+        BufLogStream *pBLStream = mStreams[id];
+        if (pBLStream != NULL) {
+            delete pBLStream;
+            mStreams[id] = NULL;
+            count++;
+        }
+    }
+    ALOGV("Reset %d BufLogs", count);

@@ -1,0 +1,83 @@
+class BluetoothTile
+!!!3422469.java!!!	BluetoothTile(inout host : QSHost)
+        super(host);
+        mController = Dependency.get(BluetoothController.class);
+        mActivityStarter = Dependency.get(ActivityStarter.class);
+        mDetailAdapter = (BluetoothDetailAdapter) createDetailAdapter();
+!!!3422597.java!!!	getDetailAdapter() : DetailAdapter
+        return mDetailAdapter;
+!!!3422725.java!!!	newTileState() : BooleanState
+        return new BooleanState();
+!!!3422853.java!!!	setListening(inout listening : boolean) : void
+        if (listening) {
+            mController.addCallback(mCallback);
+        } else {
+            mController.removeCallback(mCallback);
+        }
+!!!3422981.java!!!	handleClick() : void
+        // Secondary clicks are header clicks, just toggle.
+        final boolean isEnabled = (Boolean)mState.value;
+        mController.setBluetoothEnabled(!isEnabled);
+!!!3423109.java!!!	getLongClickIntent() : Intent
+        return new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+!!!3423237.java!!!	handleSecondaryClick() : void
+        if (!mController.canConfigBluetooth()) {
+            mActivityStarter.postStartActivityDismissingKeyguard(
+                    new Intent(Settings.ACTION_BLUETOOTH_SETTINGS), 0);
+            return;
+        }
+        showDetail(true);
+!!!3423365.java!!!	getTileLabel() : CharSequence
+        return mContext.getString(R.string.quick_settings_bluetooth_label);
+!!!3423493.java!!!	handleUpdateState(inout state : BooleanState, inout arg : Object) : void
+        final boolean enabled = mController.isBluetoothEnabled();
+        final boolean connected = mController.isBluetoothConnected();
+        state.isTransient = mController.isBluetoothConnecting()
+                || mController.getBluetoothState() == BluetoothAdapter.STATE_TURNING_ON;
+        state.dualTarget = true;
+        state.value = enabled;
+        if (enabled) {
+            state.label = null;
+            if (connected) {
+                state.icon = ResourceIcon.get(R.drawable.ic_qs_bluetooth_connected);
+                state.label = mController.getLastDeviceName();
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_bluetooth_name, state.label);
+            } else if (state.isTransient) {
+                state.icon = ResourceIcon.get(R.drawable.ic_bluetooth_transient_animation);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_bluetooth_connecting);
+                state.label = mContext.getString(R.string.quick_settings_bluetooth_label);
+            } else {
+                state.icon = ResourceIcon.get(R.drawable.ic_qs_bluetooth_on);
+                state.contentDescription = mContext.getString(
+                        R.string.accessibility_quick_settings_bluetooth_on) + ","
+                        + mContext.getString(R.string.accessibility_not_connected);
+            }
+            if (TextUtils.isEmpty(state.label)) {
+                state.label = mContext.getString(R.string.quick_settings_bluetooth_label);
+            }
+            state.state = Tile.STATE_ACTIVE;
+        } else {
+            state.icon = ResourceIcon.get(R.drawable.ic_qs_bluetooth_off);
+            state.label = mContext.getString(R.string.quick_settings_bluetooth_label);
+            state.contentDescription = mContext.getString(
+                    R.string.accessibility_quick_settings_bluetooth_off);
+            state.state = Tile.STATE_INACTIVE;
+        }
+
+        state.dualLabelContentDescription = mContext.getResources().getString(
+                R.string.accessibility_quick_settings_open_settings, getTileLabel());
+        state.expandedAccessibilityClassName = Switch.class.getName();
+!!!3423621.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_BLUETOOTH;
+!!!3423749.java!!!	composeChangeAnnouncement() : String
+        if (mState.value) {
+            return mContext.getString(R.string.accessibility_quick_settings_bluetooth_changed_on);
+        } else {
+            return mContext.getString(R.string.accessibility_quick_settings_bluetooth_changed_off);
+        }
+!!!3423877.java!!!	isAvailable() : boolean
+        return mController.isBluetoothSupported();
+!!!3424005.java!!!	createDetailAdapter() : DetailAdapter
+        return new BluetoothDetailAdapter();

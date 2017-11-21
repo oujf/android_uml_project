@@ -1,0 +1,95 @@
+class StreamOutHalLocal
+!!!612869.cpp!!!	getFrameSize(inout size : size_t) : status_t
+    *size = audio_stream_out_frame_size(mStream);
+    return OK;
+!!!612997.cpp!!!	getLatency(inout latency : uint32_t) : status_t
+    *latency = mStream->get_latency(mStream);
+    return OK;
+!!!613125.cpp!!!	setVolume(in left : float, in right : float) : status_t
+    if (mStream->set_volume == NULL) return INVALID_OPERATION;
+    return mStream->set_volume(mStream, left, right);
+!!!613253.cpp!!!	write(in buffer : void, in bytes : size_t, inout written : size_t) : status_t
+    ssize_t writeResult = mStream->write(mStream, buffer, bytes);
+    if (writeResult > 0) {
+        *written = writeResult;
+        return OK;
+    } else {
+        *written = 0;
+        return writeResult;
+    }
+!!!613381.cpp!!!	getRenderPosition(inout dspFrames : uint32_t) : status_t
+    return mStream->get_render_position(mStream, dspFrames);
+!!!613509.cpp!!!	getNextWriteTimestamp(inout timestamp : int64_t) : status_t
+    if (mStream->get_next_write_timestamp == NULL) return INVALID_OPERATION;
+    return mStream->get_next_write_timestamp(mStream, timestamp);
+!!!613637.cpp!!!	setCallback(in callback : wp<StreamOutHalInterfaceCallback>) : status_t
+    if (mStream->set_callback == NULL) return INVALID_OPERATION;
+    status_t result = mStream->set_callback(mStream, StreamOutHalLocal::asyncCallback, this);
+    if (result == OK) {
+        mCallback = callback;
+    }
+    return result;
+!!!613765.cpp!!!	supportsPauseAndResume(inout supportsPause : bool, inout supportsResume : bool) : status_t
+    *supportsPause = mStream->pause != NULL;
+    *supportsResume = mStream->resume != NULL;
+    return OK;
+!!!613893.cpp!!!	pause() : status_t
+    if (mStream->pause == NULL) return INVALID_OPERATION;
+    return mStream->pause(mStream);
+!!!614021.cpp!!!	resume() : status_t
+    if (mStream->resume == NULL) return INVALID_OPERATION;
+    return mStream->resume(mStream);
+!!!614149.cpp!!!	supportsDrain(inout supportsDrain : bool) : status_t
+    *supportsDrain = mStream->drain != NULL;
+    return OK;
+!!!614277.cpp!!!	drain(in earlyNotify : bool) : status_t
+    if (mStream->drain == NULL) return INVALID_OPERATION;
+    return mStream->drain(mStream, earlyNotify ? AUDIO_DRAIN_EARLY_NOTIFY : AUDIO_DRAIN_ALL);
+!!!614405.cpp!!!	flush() : status_t
+    if (mStream->flush == NULL) return INVALID_OPERATION;
+    return mStream->flush(mStream);
+!!!614533.cpp!!!	getPresentationPosition(inout frames : uint64_t, inout timestamp : timespec) : status_t
+    if (mStream->get_presentation_position == NULL) return INVALID_OPERATION;
+    return mStream->get_presentation_position(mStream, frames, timestamp);
+!!!614661.cpp!!!	start() : status_t
+    if (mStream->start == NULL) return INVALID_OPERATION;
+    return mStream->start(mStream);
+!!!614789.cpp!!!	stop() : status_t
+    if (mStream->stop == NULL) return INVALID_OPERATION;
+    return mStream->stop(mStream);
+!!!614917.cpp!!!	createMmapBuffer(in minSizeFrames : int32_t, inout info : audio_mmap_buffer_info) : status_t
+    if (mStream->create_mmap_buffer == NULL) return INVALID_OPERATION;
+    return mStream->create_mmap_buffer(mStream, minSizeFrames, info);
+!!!615045.cpp!!!	getMmapPosition(inout position : audio_mmap_position) : status_t
+    if (mStream->get_mmap_position == NULL) return INVALID_OPERATION;
+    return mStream->get_mmap_position(mStream, position);
+!!!615301.cpp!!!	~StreamOutHalLocal()
+    mCallback.clear();
+    mDevice->closeOutputStream(mStream);
+    mStream = 0;
+!!!615429.cpp!!!	asyncCallback(in event : stream_callback_event_t, inout param : void, inout cookie : void) : int
+    // We act as if we gave a wp<StreamOutHalLocal> to HAL. This way we should handle
+    // correctly the case when the callback is invoked while StreamOutHalLocal's destructor is
+    // already running, because the destructor is invoked after the refcount has been atomically
+    // decremented.
+    wp<StreamOutHalLocal> weakSelf(static_cast<StreamOutHalLocal*>(cookie));
+    sp<StreamOutHalLocal> self = weakSelf.promote();
+    if (self == 0) return 0;
+    sp<StreamOutHalInterfaceCallback> callback = self->mCallback.promote();
+    if (callback == 0) return 0;
+    ALOGV("asyncCallback() event %d", event);
+    switch (event) {
+        case STREAM_CBK_EVENT_WRITE_READY:
+            callback->onWriteReady();
+            break;
+        case STREAM_CBK_EVENT_DRAIN_READY:
+            callback->onDrainReady();
+            break;
+        case STREAM_CBK_EVENT_ERROR:
+            callback->onError();
+            break;
+        default:
+            ALOGW("asyncCallback() unknown event %d", event);
+            break;
+    }
+    return 0;

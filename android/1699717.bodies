@@ -1,0 +1,79 @@
+class JobStore
+!!!11699461.java!!!	initAndGet(inout jobManagerService : JobSchedulerService) : JobStore
+        synchronized (sSingletonLock) {
+            if (sSingleton == null) {
+                sSingleton = new JobStore(jobManagerService.getContext(),
+                        jobManagerService.getLock(), Environment.getDataDirectory());
+            }
+            return sSingleton;
+        }
+!!!11699589.java!!!	initAndGetForTesting(inout context : Context, inout dataDir : File) : JobStore
+        JobStore jobStoreUnderTest = new JobStore(context, new Object(), dataDir);
+        jobStoreUnderTest.clear();
+        return jobStoreUnderTest;
+!!!11699717.java!!!	JobStore(inout context : Context, inout lock : Object, inout dataDir : File)
+        mLock = lock;
+        mContext = context;
+        mDirtyOperations = 0;
+
+        File systemDir = new File(dataDir, "system");
+        File jobDir = new File(systemDir, "job");
+        jobDir.mkdirs();
+        mJobsFile = new AtomicFile(new File(jobDir, "jobs.xml"));
+
+        mJobSet = new JobSet();
+
+        readJobMapFromDisk(mJobSet);
+!!!11699845.java!!!	add(inout jobStatus : JobStatus) : boolean
+        boolean replaced = mJobSet.remove(jobStatus);
+        mJobSet.add(jobStatus);
+        if (jobStatus.isPersisted()) {
+            maybeWriteStatusToDiskAsync();
+        }
+        if (DEBUG) {
+            Slog.d(TAG, "Added job status to store: " + jobStatus);
+        }
+        return replaced;
+!!!11699973.java!!!	containsJob(inout jobStatus : JobStatus) : boolean
+        return mJobSet.contains(jobStatus);
+!!!11700101.java!!!	size() : int
+        return mJobSet.size();
+!!!11700229.java!!!	countJobsForUid(in uid : int) : int
+        return mJobSet.countJobsForUid(uid);
+!!!11700357.java!!!	remove(inout jobStatus : JobStatus, inout writeBack : boolean) : boolean
+        boolean removed = mJobSet.remove(jobStatus);
+        if (!removed) {
+            if (DEBUG) {
+                Slog.d(TAG, "Couldn't remove job: didn't exist: " + jobStatus);
+            }
+            return false;
+        }
+        if (writeBack && jobStatus.isPersisted()) {
+            maybeWriteStatusToDiskAsync();
+        }
+        return removed;
+!!!11700485.java!!!	removeJobsOfNonUsers(inout whitelist : int [[]]) : void
+        mJobSet.removeJobsOfNonUsers(whitelist);
+!!!11700613.java!!!	clear() : void
+        mJobSet.clear();
+        maybeWriteStatusToDiskAsync();
+!!!11700741.java!!!	getJobsByUser(in userHandle : int) : JobStatus
+        return mJobSet.getJobsByUser(userHandle);
+!!!11700869.java!!!	getJobsByUid(in uid : int) : JobStatus
+        return mJobSet.getJobsByUid(uid);
+!!!11700997.java!!!	getJobByUidAndJobId(in uid : int, in jobId : int) : JobStatus
+        return mJobSet.get(uid, jobId);
+!!!11701125.java!!!	forEachJob(inout functor : JobStore::JobStatusFunctor) : void
+        mJobSet.forEachJob(functor);
+!!!11701253.java!!!	forEachJob(in uid : int, inout functor : JobStore::JobStatusFunctor) : void
+        mJobSet.forEachJob(uid, functor);
+!!!11701509.java!!!	maybeWriteStatusToDiskAsync() : void
+        mDirtyOperations++;
+        if (mDirtyOperations >= MAX_OPS_BEFORE_WRITE) {
+            if (DEBUG) {
+                Slog.v(TAG, "Writing jobs to disk.");
+            }
+            mIoHandler.post(new WriteJobsMapToDiskRunnable());
+        }
+!!!11701637.java!!!	readJobMapFromDisk(inout jobSet : JobStore::JobSet) : void
+        new ReadJobMapFromDiskRunnable(jobSet).run();

@@ -1,0 +1,86 @@
+class ScoredNetwork
+!!!7228677.java!!!	ScoredNetwork(inout networkKey : NetworkKey, inout rssiCurve : RssiCurve)
+        this(networkKey, rssiCurve, false /* meteredHint */);
+!!!7228805.java!!!	ScoredNetwork(inout networkKey : NetworkKey, inout rssiCurve : RssiCurve, inout meteredHint : boolean)
+        this(networkKey, rssiCurve, meteredHint, null /* attributes */);
+!!!7228933.java!!!	ScoredNetwork(inout networkKey : NetworkKey, inout rssiCurve : RssiCurve, inout meteredHint : boolean, inout attributes : Bundle)
+        this.networkKey = networkKey;
+        this.rssiCurve = rssiCurve;
+        this.meteredHint = meteredHint;
+        this.attributes = attributes;
+!!!7229061.java!!!	ScoredNetwork(inout in : Parcel)
+        networkKey = NetworkKey.CREATOR.createFromParcel(in);
+        if (in.readByte() == 1) {
+            rssiCurve = RssiCurve.CREATOR.createFromParcel(in);
+        } else {
+            rssiCurve = null;
+        }
+        meteredHint = (in.readByte() == 1);
+        attributes = in.readBundle();
+!!!7229189.java!!!	describeContents() : int
+        return 0;
+!!!7229317.java!!!	writeToParcel(inout out : Parcel, in flags : int) : void
+        networkKey.writeToParcel(out, flags);
+        if (rssiCurve != null) {
+            out.writeByte((byte) 1);
+            rssiCurve.writeToParcel(out, flags);
+        } else {
+            out.writeByte((byte) 0);
+        }
+        out.writeByte((byte) (meteredHint ? 1 : 0));
+        out.writeBundle(attributes);
+!!!7229445.java!!!	equals(inout o : Object) : boolean
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        ScoredNetwork that = (ScoredNetwork) o;
+
+        return Objects.equals(networkKey, that.networkKey)
+                && Objects.equals(rssiCurve, that.rssiCurve)
+                && Objects.equals(meteredHint, that.meteredHint)
+                && Objects.equals(attributes, that.attributes);
+!!!7229573.java!!!	hashCode() : int
+        return Objects.hash(networkKey, rssiCurve, meteredHint, attributes);
+!!!7229701.java!!!	toString() : String
+        StringBuilder out = new StringBuilder(
+                "ScoredNetwork{" +
+                "networkKey=" + networkKey +
+                ", rssiCurve=" + rssiCurve +
+                ", meteredHint=" + meteredHint);
+        // calling isEmpty will unparcel the bundle so its contents can be converted to a string
+        if (attributes != null && !attributes.isEmpty()) {
+            out.append(", attributes=" + attributes);
+        }
+        out.append('}');
+        return out.toString();
+!!!7229829.java!!!	hasRankingScore() : boolean
+        return (rssiCurve != null)
+                || (attributes != null
+                        && attributes.containsKey(ATTRIBUTES_KEY_RANKING_SCORE_OFFSET));
+!!!7229957.java!!!	calculateRankingScore(in rssi : int) : int
+        if (!hasRankingScore()) {
+            throw new UnsupportedOperationException(
+                    "Either rssiCurve or rankingScoreOffset is required to calculate the "
+                            + "ranking score");
+        }
+
+        int offset = 0;
+        if (attributes != null) {
+             offset += attributes.getInt(ATTRIBUTES_KEY_RANKING_SCORE_OFFSET, 0 /* default */);
+        }
+
+        int score = (rssiCurve == null) ? 0 : rssiCurve.lookupScore(rssi) << Byte.SIZE;
+
+        try {
+            return Math.addExact(score, offset);
+        } catch (ArithmeticException e) {
+            return (score < 0) ? Integer.MIN_VALUE : Integer.MAX_VALUE;
+        }
+!!!7230085.java!!!	calculateBadge(in rssi : int) : int
+        if (attributes != null && attributes.containsKey(ATTRIBUTES_KEY_BADGING_CURVE)) {
+            RssiCurve badgingCurve =
+                    attributes.getParcelable(ATTRIBUTES_KEY_BADGING_CURVE);
+            return badgingCurve.lookupScore(rssi);
+        }
+
+        return NetworkBadging.BADGING_NONE;

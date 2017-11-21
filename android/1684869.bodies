@@ -1,0 +1,47 @@
+class InternalEnumerateClient
+!!!11560197.java!!!	InternalEnumerateClient(inout context : Context, in halDeviceId : long, inout token : IBinder, inout receiver : IFingerprintServiceReceiver, in groupId : int, in userId : int, inout restricted : boolean, in owner : String, inout enrolledList : List<Fingerprint>)
+
+        super(context, halDeviceId, token, receiver, userId, groupId, restricted, owner);
+        mEnrolledList = enrolledList;
+!!!11560325.java!!!	handleEnumeratedFingerprint(in fingerId : int, in groupId : int, in remaining : int) : void
+
+        boolean matched = false;
+        for (int i=0; i<mEnrolledList.size(); i++) {
+            if (mEnrolledList.get(i).getFingerId() == fingerId) {
+                mEnrolledList.remove(i);
+                matched = true;
+                Slog.e(TAG, "Matched fingerprint fid=" + fingerId);
+                break;
+            }
+        }
+
+        // fingerId 0 means no fingerprints are in hardware
+        if (!matched && fingerId != 0) {
+            Fingerprint fingerprint = new Fingerprint("", groupId, fingerId, getHalDeviceId());
+            mEnumeratedList.add(fingerprint);
+        }
+!!!11560453.java!!!	doFingerprintCleanup() : void
+
+        if (mEnrolledList == null) {
+            return;
+        }
+
+        for (Fingerprint f : mEnrolledList) {
+            Slog.e(TAG, "Internal Enumerate: Removing dangling enrolled fingerprint: "
+                    + f.getName() + " " + f.getFingerId() + " " + f.getGroupId()
+                    + " " + f.getDeviceId());
+
+            FingerprintUtils.getInstance().removeFingerprintIdForUser(getContext(),
+                    f.getFingerId(), getTargetUserId());
+        }
+        mEnrolledList.clear();
+!!!11560581.java!!!	getEnumeratedList() : Fingerprint
+        return mEnumeratedList;
+!!!11560709.java!!!	onEnumerationResult(in fingerId : int, in groupId : int, in remaining : int) : boolean
+
+        handleEnumeratedFingerprint(fingerId, groupId, remaining);
+        if (remaining == 0) {
+            doFingerprintCleanup();
+        }
+
+        return fingerId == 0; // done when id hits 0

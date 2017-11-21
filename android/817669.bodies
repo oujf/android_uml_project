@@ -1,0 +1,79 @@
+class WifiDetailAdapter
+!!!3467397.java!!!	getTitle() : CharSequence
+            return mContext.getString(R.string.quick_settings_wifi_label);
+!!!3467525.java!!!	getSettingsIntent() : Intent
+            return WIFI_SETTINGS;
+!!!3467653.java!!!	getToggleState() : Boolean
+            return mState.value;
+!!!3467781.java!!!	setToggleState(inout state : boolean) : void
+            if (DEBUG) Log.d(TAG, "setToggleState " + state);
+            MetricsLogger.action(mContext, MetricsEvent.QS_WIFI_TOGGLE, state);
+            mController.setWifiEnabled(state);
+!!!3467909.java!!!	getMetricsCategory() : int
+            return MetricsEvent.QS_WIFI_DETAILS;
+!!!3468037.java!!!	createDetailView(inout context : Context, inout convertView : View, inout parent : ViewGroup) : View
+            if (DEBUG) Log.d(TAG, "createDetailView convertView=" + (convertView != null));
+            mAccessPoints = null;
+            mWifiController.scanForAccessPoints();
+            fireScanStateChanged(true);
+            mItems = QSDetailItems.convertOrInflate(context, convertView, parent);
+            mItems.setTagSuffix("Wifi");
+            mItems.setCallback(this);
+            updateItems();
+            setItemsVisible(mState.value);
+            return mItems;
+!!!3468165.java!!!	onAccessPointsChanged(in accessPoints : List<AccessPoint>) : void
+            mAccessPoints = accessPoints.toArray(new AccessPoint[accessPoints.size()]);
+            updateItems();
+            if (accessPoints != null && accessPoints.size() > 0) {
+                fireScanStateChanged(false);
+            }
+!!!3468293.java!!!	onSettingsActivityTriggered(inout settingsIntent : Intent) : void
+            mActivityStarter.postStartActivityDismissingKeyguard(settingsIntent, 0);
+!!!3468421.java!!!	onDetailItemClick(inout item : QSDetailItems::Item) : void
+            if (item == null || item.tag == null) return;
+            final AccessPoint ap = (AccessPoint) item.tag;
+            if (!ap.isActive()) {
+                if (mWifiController.connect(ap)) {
+                    mHost.collapsePanels();
+                }
+            }
+            showDetail(false);
+!!!3468549.java!!!	onDetailItemDisconnect(inout item : QSDetailItems::Item) : void
+            // noop
+!!!3468677.java!!!	setItemsVisible(inout visible : boolean) : void
+            if (mItems == null) return;
+            mItems.setItemsVisible(visible);
+!!!3468805.java!!!	updateItems() : void
+            if (mItems == null) return;
+
+            // Wi-Fi is off
+            if (!mSignalCallback.mInfo.enabled) {
+                mItems.setEmptyState(R.drawable.ic_qs_wifi_detail_empty,
+                        R.string.wifi_is_off);
+                mItems.setItems(null);
+                return;
+            }
+
+            // No available access points
+            mItems.setEmptyState(R.drawable.ic_qs_wifi_detail_empty,
+                    R.string.quick_settings_wifi_detail_empty_text);
+
+            // Build the list
+            Item[] items = null;
+            if (mAccessPoints != null) {
+                items = new Item[mAccessPoints.length];
+                for (int i = 0; i < mAccessPoints.length; i++) {
+                    final AccessPoint ap = mAccessPoints[i];
+                    final Item item = new Item();
+                    item.tag = ap;
+                    item.icon = mWifiController.getIcon(ap);
+                    item.line1 = ap.getSsid();
+                    item.line2 = ap.isActive() ? ap.getSummary() : null;
+                    item.icon2 = ap.getSecurity() != AccessPoint.SECURITY_NONE
+                            ? R.drawable.qs_ic_wifi_lock
+                            : -1;
+                    items[i] = item;
+                }
+            }
+            mItems.setItems(items);

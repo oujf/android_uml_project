@@ -1,0 +1,61 @@
+class AppOpsManager
+!!!14648453.cpp!!!	checkOp(in op : int32_t, in uid : int32_t, in callingPackage : String16) : int32_t
+    sp<IAppOpsService> service = getService();
+    return service != NULL
+            ? service->checkOperation(op, uid, callingPackage)
+            : APP_OPS_MANAGER_UNAVAILABLE_MODE;
+!!!14648581.cpp!!!	noteOp(in op : int32_t, in uid : int32_t, in callingPackage : String16) : int32_t
+    sp<IAppOpsService> service = getService();
+    return service != NULL
+            ? service->noteOperation(op, uid, callingPackage)
+            : APP_OPS_MANAGER_UNAVAILABLE_MODE;
+!!!14648709.cpp!!!	startOp(in op : int32_t, in uid : int32_t, in callingPackage : String16) : int32_t
+    sp<IAppOpsService> service = getService();
+    return service != NULL
+            ? service->startOperation(getToken(service), op, uid, callingPackage)
+            : APP_OPS_MANAGER_UNAVAILABLE_MODE;
+!!!14648837.cpp!!!	finishOp(in op : int32_t, in uid : int32_t, in callingPackage : String16) : void
+    sp<IAppOpsService> service = getService();
+    if (service != NULL) {
+        service->finishOperation(getToken(service), op, uid, callingPackage);
+    }
+!!!14648965.cpp!!!	startWatchingMode(in op : int32_t, in packageName : String16, in callback : sp<IAppOpsCallback>) : void
+    sp<IAppOpsService> service = getService();
+    if (service != NULL) {
+        service->startWatchingMode(op, packageName, callback);
+    }
+!!!14649093.cpp!!!	stopWatchingMode(in callback : sp<IAppOpsCallback>) : void
+    sp<IAppOpsService> service = getService();
+    if (service != NULL) {
+        service->stopWatchingMode(callback);
+    }
+!!!14649221.cpp!!!	permissionToOpCode(in permission : String16) : int32_t
+    sp<IAppOpsService> service = getService();
+    if (service != NULL) {
+        return service->permissionToOpCode(permission);
+    }
+    return -1;
+!!!14649349.cpp!!!	getService() : sp<IAppOpsService>
+
+    std::lock_guard<Mutex> scoped_lock(mLock);
+    int64_t startTime = 0;
+    sp<IAppOpsService> service = mService;
+    while (service == NULL || !IInterface::asBinder(service)->isBinderAlive()) {
+        sp<IBinder> binder = defaultServiceManager()->checkService(_appops);
+        if (binder == NULL) {
+            // Wait for the app ops service to come back...
+            if (startTime == 0) {
+                startTime = uptimeMillis();
+                ALOGI("Waiting for app ops service");
+            } else if ((uptimeMillis()-startTime) > 10000) {
+                ALOGW("Waiting too long for app ops service, giving up");
+                service = NULL;
+                break;
+            }
+            sleep(1);
+        } else {
+            service = interface_cast<IAppOpsService>(binder);
+            mService = service;
+        }
+    }
+    return service;

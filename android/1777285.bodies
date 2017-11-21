@@ -1,0 +1,123 @@
+class WallpaperConnection
+!!!12556037.java!!!	WallpaperConnection(inout info : WallpaperInfo, inout wallpaper : WallpaperManagerService::WallpaperData)
+            mInfo = info;
+            mWallpaper = wallpaper;
+!!!12556165.java!!!	onServiceConnected(inout name : ComponentName, inout service : IBinder) : void
+            synchronized (mLock) {
+                if (mWallpaper.connection == this) {
+                    mService = IWallpaperService.Stub.asInterface(service);
+                    attachServiceLocked(this, mWallpaper);
+                    // XXX should probably do saveSettingsLocked() later
+                    // when we have an engine, but I'm not sure about
+                    // locking there and anyway we always need to be able to
+                    // recover if there is something wrong.
+                    saveSettingsLocked(mWallpaper.userId);
+                    FgThread.getHandler().removeCallbacks(mResetRunnable);
+                }
+            }
+!!!12556293.java!!!	onServiceDisconnected(inout name : ComponentName) : void
+            synchronized (mLock) {
+                Slog.w(TAG, "Wallpaper service gone: " + name);
+                if (!Objects.equals(name, mWallpaper.wallpaperComponent)) {
+                    Slog.e(TAG, "Does not match expected wallpaper component "
+                            + mWallpaper.wallpaperComponent);
+                }
+                mService = null;
+                mEngine = null;
+                if (mWallpaper.connection == this) {
+                    // There is an inherent ordering race between this callback and the
+                    // package monitor that receives notice that a package is being updated,
+                    // so we cannot quite trust at this moment that we know for sure that
+                    // this is not an update.  If we think this is a genuine non-update
+                    // wallpaper outage, we do our "wait for reset" work as a continuation,
+                    // a short time in the future, specifically to allow any pending package
+                    // update message on this same looper thread to be processed.
+                    if (!mWallpaper.wallpaperUpdating) {
+                        mContext.getMainThreadHandler().postDelayed(() -> processDisconnect(this),
+                                1000);
+                    }
+                }
+            }
+!!!12556421.java!!!	processDisconnect(in connection : ServiceConnection) : void
+            synchronized (mLock) {
+                // The wallpaper disappeared.  If this isn't a system-default one, track
+                // crashes and fall back to default if it continues to misbehave.
+                if (connection == mWallpaper.connection) {
+                    final ComponentName wpService = mWallpaper.wallpaperComponent;
+                    if (!mWallpaper.wallpaperUpdating
+                            && mWallpaper.userId == mCurrentUserId
+                            && !Objects.equals(mDefaultWallpaperComponent, wpService)
+                            && !Objects.equals(mImageWallpaper, wpService)) {
+                        // There is a race condition which causes
+                        // {@link #mWallpaper.wallpaperUpdating} to be false even if it is
+                        // currently updating since the broadcast notifying us is async.
+                        // This race is overcome by the general rule that we only reset the
+                        // wallpaper if its service was shut down twice
+                        // during {@link #MIN_WALLPAPER_CRASH_TIME} millis.
+                        if (mWallpaper.lastDiedTime != 0
+                                && mWallpaper.lastDiedTime + MIN_WALLPAPER_CRASH_TIME
+                                > SystemClock.uptimeMillis()) {
+                            Slog.w(TAG, "Reverting to built-in wallpaper!");
+                            clearWallpaperLocked(true, FLAG_SYSTEM, mWallpaper.userId, null);
+                        } else {
+                            mWallpaper.lastDiedTime = SystemClock.uptimeMillis();
+
+                            // If we didn't reset it right away, do so after we couldn't connect to
+                            // it for an extended amount of time to avoid having a black wallpaper.
+                            final Handler fgHandler = FgThread.getHandler();
+                            fgHandler.removeCallbacks(mResetRunnable);
+                            fgHandler.postDelayed(mResetRunnable, WALLPAPER_RECONNECT_TIMEOUT_MS);
+                            if (DEBUG_LIVE) {
+                                Slog.i(TAG, "Started wallpaper reconnect timeout for " + wpService);
+                            }
+                        }
+                        final String flattened = wpService.flattenToString();
+                        EventLog.writeEvent(EventLogTags.WP_WALLPAPER_CRASHED,
+                                flattened.substring(0, Math.min(flattened.length(),
+                                        MAX_WALLPAPER_COMPONENT_LOG_LENGTH)));
+                    }
+                } else {
+                    if (DEBUG_LIVE) {
+                        Slog.i(TAG, "Wallpaper changed during disconnect tracking; ignoring");
+                    }
+                }
+            }
+!!!12556549.java!!!	attachEngine(inout engine : IWallpaperEngine) : void
+            synchronized (mLock) {
+                mEngine = engine;
+                if (mDimensionsChanged) {
+                    try {
+                        mEngine.setDesiredSize(mWallpaper.width, mWallpaper.height);
+                    } catch (RemoteException e) {
+                        Slog.w(TAG, "Failed to set wallpaper dimensions", e);
+                    }
+                    mDimensionsChanged = false;
+                }
+                if (mPaddingChanged) {
+                    try {
+                        mEngine.setDisplayPadding(mWallpaper.padding);
+                    } catch (RemoteException e) {
+                        Slog.w(TAG, "Failed to set wallpaper padding", e);
+                    }
+                    mPaddingChanged = false;
+                }
+            }
+!!!12556677.java!!!	engineShown(inout engine : IWallpaperEngine) : void
+            synchronized (mLock) {
+                if (mReply != null) {
+                    long ident = Binder.clearCallingIdentity();
+                    try {
+                        mReply.sendResult(null);
+                    } catch (RemoteException e) {
+                        Binder.restoreCallingIdentity(ident);
+                    }
+                    mReply = null;
+                }
+            }
+!!!12556805.java!!!	setWallpaper(in name : String) : ParcelFileDescriptor
+            synchronized (mLock) {
+                if (mWallpaper.connection == this) {
+                    return updateWallpaperBitmapLocked(name, mWallpaper, null);
+                }
+                return null;
+            }

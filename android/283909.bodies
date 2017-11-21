@@ -1,0 +1,39 @@
+class FixedBlockWriter
+!!!707333.cpp!!!	writeToStorage(inout buffer : uint8_t, in numBytes : int32_t) : int32_t
+    int32_t bytesToStore = numBytes;
+    int32_t roomAvailable = mSize - mPosition;
+    if (bytesToStore > roomAvailable) {
+        bytesToStore = roomAvailable;
+    }
+    memcpy(mStorage + mPosition, buffer, bytesToStore);
+    mPosition += bytesToStore;
+    return bytesToStore;
+!!!707461.cpp!!!	processVariableBlock(inout buffer : uint8_t, in numBytes : int32_t) : int32_t
+    int32_t result = 0;
+    int32_t bytesLeft = numBytes;
+
+    // If we already have data in storage then add to it.
+    if (mPosition > 0) {
+        int32_t bytesWritten = writeToStorage(buffer, bytesLeft);
+        buffer += bytesWritten;
+        bytesLeft -= bytesWritten;
+        // If storage full then flush it out
+        if (mPosition == mSize) {
+            result = mFixedBlockProcessor.onProcessFixedBlock(mStorage, mSize);
+            mPosition = 0;
+        }
+    }
+
+    // Write through if enough for a complete block.
+    while(bytesLeft > mSize && result == 0) {
+        result = mFixedBlockProcessor.onProcessFixedBlock(buffer, mSize);
+        buffer += mSize;
+        bytesLeft -= mSize;
+    }
+
+    // Save any remaining partial block for next time.
+    if (bytesLeft > 0) {
+        writeToStorage(buffer, bytesLeft);
+    }
+
+    return result;

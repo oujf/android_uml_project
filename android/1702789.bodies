@@ -1,0 +1,82 @@
+class ChargingTracker
+!!!11720965.java!!!	startTracking() : void
+            IntentFilter filter = new IntentFilter();
+
+            // Battery health.
+            filter.addAction(Intent.ACTION_BATTERY_LOW);
+            filter.addAction(Intent.ACTION_BATTERY_OKAY);
+            // Charging/not charging.
+            filter.addAction(BatteryManager.ACTION_CHARGING);
+            filter.addAction(BatteryManager.ACTION_DISCHARGING);
+            mContext.registerReceiver(this, filter);
+
+            // Initialise tracker state.
+            BatteryManagerInternal batteryManagerInternal =
+                    LocalServices.getService(BatteryManagerInternal.class);
+            mBatteryHealthy = !batteryManagerInternal.getBatteryLevelLow();
+            mCharging = batteryManagerInternal.isPowered(BatteryManager.BATTERY_PLUGGED_ANY);
+!!!11721093.java!!!	setMonitorBatteryLocked(inout enabled : boolean) : void
+            if (enabled) {
+                if (mMonitor == null) {
+                    mMonitor = new BroadcastReceiver() {
+                        @Override public void onReceive(Context context, Intent intent) {
+                            ChargingTracker.this.onReceive(context, intent);
+                        }
+                    };
+                    IntentFilter filter = new IntentFilter();
+                    filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+                    mContext.registerReceiver(mMonitor, filter);
+                }
+            } else {
+                if (mMonitor != null) {
+                    mContext.unregisterReceiver(mMonitor);
+                    mMonitor = null;
+                }
+            }
+!!!11721221.java!!!	isOnStablePower() : boolean
+            return mCharging && mBatteryHealthy;
+!!!11721349.java!!!	isBatteryNotLow() : boolean
+            return mBatteryHealthy;
+!!!11721477.java!!!	isMonitoring() : boolean
+            return mMonitor != null;
+!!!11721605.java!!!	getSeq() : int
+            return mLastBatterySeq;
+!!!11721733.java!!!	onReceive(inout context : Context, inout intent : Intent) : void
+            onReceiveInternal(intent);
+!!!11721861.java!!!	onReceiveInternal(inout intent : Intent) : void
+            synchronized (mLock) {
+                final String action = intent.getAction();
+                if (Intent.ACTION_BATTERY_LOW.equals(action)) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Battery life too low to do work. @ "
+                                + SystemClock.elapsedRealtime());
+                    }
+                    // If we get this action, the battery is discharging => it isn't plugged in so
+                    // there's no work to cancel. We track this variable for the case where it is
+                    // charging, but hasn't been for long enough to be healthy.
+                    mBatteryHealthy = false;
+                    maybeReportNewChargingStateLocked();
+                } else if (Intent.ACTION_BATTERY_OKAY.equals(action)) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Battery life healthy enough to do work. @ "
+                                + SystemClock.elapsedRealtime());
+                    }
+                    mBatteryHealthy = true;
+                    maybeReportNewChargingStateLocked();
+                } else if (BatteryManager.ACTION_CHARGING.equals(action)) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Received charging intent, fired @ "
+                                + SystemClock.elapsedRealtime());
+                    }
+                    mCharging = true;
+                    maybeReportNewChargingStateLocked();
+                } else if (BatteryManager.ACTION_DISCHARGING.equals(action)) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Disconnected from power.");
+                    }
+                    mCharging = false;
+                    maybeReportNewChargingStateLocked();
+                }
+                mLastBatterySeq = intent.getIntExtra(BatteryManager.EXTRA_SEQUENCE,
+                        mLastBatterySeq);
+            }

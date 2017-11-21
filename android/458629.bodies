@@ -1,0 +1,170 @@
+class DataSource
+!!!1249925.cpp!!!	CreateFromURI(in httpService : sp<IMediaHTTPService>, in uri : char, in headers : KeyedVector<String8, String8> = NULL, inout contentType : String8 = NULL, inout httpSource : HTTPBase = NULL) : sp<DataSource>
+    if (contentType != NULL) {
+        *contentType = "";
+    }
+
+    sp<DataSource> source;
+    if (!strncasecmp("file://", uri, 7)) {
+        source = new FileSource(uri + 7);
+    } else if (!strncasecmp("http://", uri, 7) || !strncasecmp("https://", uri, 8)) {
+        if (httpService == NULL) {
+            ALOGE("Invalid http service!");
+            return NULL;
+        }
+
+        if (httpSource == NULL) {
+            sp<IMediaHTTPConnection> conn = httpService->makeHTTPConnection();
+            if (conn == NULL) {
+                ALOGE("Failed to make http connection from http service!");
+                return NULL;
+            }
+            httpSource = new MediaHTTP(conn);
+        }
+
+        String8 cacheConfig;
+        bool disconnectAtHighwatermark = false;
+        KeyedVector<String8, String8> nonCacheSpecificHeaders;
+        if (headers != NULL) {
+            nonCacheSpecificHeaders = *headers;
+            NuCachedSource2::RemoveCacheSpecificHeaders(
+                    &nonCacheSpecificHeaders,
+                    &cacheConfig,
+                    &disconnectAtHighwatermark);
+        }
+
+        if (httpSource->connect(uri, &nonCacheSpecificHeaders) != OK) {
+            ALOGE("Failed to connect http source!");
+            return NULL;
+        }
+
+        if (contentType != NULL) {
+            *contentType = httpSource->getMIMEType();
+        }
+
+        source = NuCachedSource2::Create(
+                httpSource,
+                cacheConfig.isEmpty() ? NULL : cacheConfig.string(),
+                disconnectAtHighwatermark);
+    } else if (!strncasecmp("data:", uri, 5)) {
+        source = DataURISource::Create(uri);
+    } else {
+        // Assume it's a filename.
+        source = new FileSource(uri);
+    }
+
+    if (source == NULL || source->initCheck() != OK) {
+        return NULL;
+    }
+
+    return source;
+!!!1250053.cpp!!!	CreateMediaHTTP(in httpService : sp<IMediaHTTPService>) : sp<DataSource>
+    if (httpService == NULL) {
+        return NULL;
+    }
+
+    sp<IMediaHTTPConnection> conn = httpService->makeHTTPConnection();
+    if (conn == NULL) {
+        return NULL;
+    } else {
+        return new MediaHTTP(conn);
+    }
+!!!1250181.cpp!!!	CreateFromIDataSource(in source : sp<IDataSource>) : sp<DataSource>
+    return new TinyCacheSource(new CallbackDataSource(source));
+!!!1250309.cpp!!!	CreateFromFd(in fd : int, in offset : int64_t, in length : int64_t) : sp<DataSource>
+    sp<FileSource> source = new FileSource(fd, offset, length);
+    return source->initCheck() != OK ? nullptr : source;
+!!!1250821.cpp!!!	getUInt16(in offset : off64_t, inout x : uint16_t) : bool
+    *x = 0;
+
+    uint8_t byte[2];
+    if (readAt(offset, byte, 2) != 2) {
+        return false;
+    }
+
+    *x = (byte[0] << 8) | byte[1];
+
+    return true;
+!!!1250949.cpp!!!	getUInt24(in offset : off64_t, inout x : uint32_t) : bool
+    *x = 0;
+
+    uint8_t byte[3];
+    if (readAt(offset, byte, 3) != 3) {
+        return false;
+    }
+
+    *x = (byte[0] << 16) | (byte[1] << 8) | byte[2];
+
+    return true;
+!!!1251077.cpp!!!	getUInt32(in offset : off64_t, inout x : uint32_t) : bool
+    *x = 0;
+
+    uint32_t tmp;
+    if (readAt(offset, &tmp, 4) != 4) {
+        return false;
+    }
+
+    *x = ntohl(tmp);
+
+    return true;
+!!!1251205.cpp!!!	getUInt64(in offset : off64_t, inout x : uint64_t) : bool
+    *x = 0;
+
+    uint64_t tmp;
+    if (readAt(offset, &tmp, 8) != 8) {
+        return false;
+    }
+
+    *x = ntoh64(tmp);
+
+    return true;
+!!!1251333.cpp!!!	getVector(in offset : off64_t, inout x : Vector<T>, in count : size_t, in chunkSize : size_t = (4095 / sizeof(T)) + 1) : bool
+    x->clear();
+    if (chunkSize == 0) {
+        return false;
+    }
+    if (count == 0) {
+        return true;
+    }
+
+    T tmp[chunkSize];
+    ssize_t numBytesRead;
+    size_t numBytesPerChunk = chunkSize * sizeof(T);
+    size_t i;
+
+    for (i = 0; i + chunkSize < count; i += chunkSize) {
+        // This loops is executed when more than chunkSize records need to be
+        // read.
+        numBytesRead = this->readAt(offset, (void*)&tmp, numBytesPerChunk);
+        if (numBytesRead == -1) { // If readAt() returns -1, there is an error.
+            return false;
+        }
+        if (numBytesRead < numBytesPerChunk) {
+            // This case is triggered when the stream ends before the whole
+            // chunk is read.
+            x->appendArray(tmp, (size_t)numBytesRead / sizeof(T));
+            return false;
+        }
+        x->appendArray(tmp, chunkSize);
+        offset += numBytesPerChunk;
+    }
+
+    // There are (count - i) more records to read.
+    // Right now, (count - i) <= chunkSize.
+    // We do the same thing as above, but with chunkSize replaced by count - i.
+    numBytesRead = this->readAt(offset, (void*)&tmp, (count - i) * sizeof(T));
+    if (numBytesRead == -1) {
+        return false;
+    }
+    x->appendArray(tmp, (size_t)numBytesRead / sizeof(T));
+    return x->size() == count;
+!!!1251461.cpp!!!	getSize(inout size : off64_t) : status_t
+    *size = 0;
+
+    return ERROR_UNSUPPORTED;
+!!!1252357.cpp!!!	getMIMEType() : String8
+    return String8("application/octet-stream");
+!!!1252613.cpp!!!	asIDataSource() : sp<IDataSource>
+    return RemoteDataSource::wrap(sp<DataSource>(this));
+!!!1252741.cpp!!!	getIDataSource() : sp<IDataSource>
+    return nullptr;

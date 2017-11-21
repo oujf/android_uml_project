@@ -1,0 +1,62 @@
+class AbstractStatsBase
+!!!12025989.java!!!	AbstractStatsBase(in fileName : String, in threadName : String, inout lock : boolean)
+        mFileName = fileName;
+        mBackgroundThreadName = threadName;
+        mLock = lock;
+!!!12026117.java!!!	getFile() : AtomicFile
+        File dataDir = Environment.getDataDirectory();
+        File systemDir = new File(dataDir, "system");
+        File fname = new File(systemDir, mFileName);
+        return new AtomicFile(fname);
+!!!12026245.java!!!	writeNow(in data : T) : void
+        writeImpl(data);
+        mLastTimeWritten.set(SystemClock.elapsedRealtime());
+!!!12026373.java!!!	maybeWriteAsync(in data : T) : boolean
+        if (SystemClock.elapsedRealtime() - mLastTimeWritten.get() < WRITE_INTERVAL_MS
+            && !PackageManagerService.DEBUG_DEXOPT) {
+            return false;
+        }
+
+        if (mBackgroundWriteRunning.compareAndSet(false, true)) {
+            new Thread(mBackgroundThreadName) {
+                @Override
+                public void run() {
+                    try {
+                        writeImpl(data);
+                        mLastTimeWritten.set(SystemClock.elapsedRealtime());
+                    } finally {
+                        mBackgroundWriteRunning.set(false);
+                    }
+                }
+            }.start();
+            return true;
+        }
+
+        return false;
+!!!12026501.java!!!	writeImpl(inout data : T) : void
+        if (mLock) {
+            synchronized (data) {
+                synchronized (mFileLock) {
+                    writeInternal(data);
+                }
+            }
+        } else {
+            synchronized (mFileLock) {
+                writeInternal(data);
+            }
+        }
+!!!12026757.java!!!	read(inout data : T) : void
+        if (mLock) {
+            synchronized (data) {
+                synchronized (mFileLock) {
+                    readInternal(data);
+                }
+            }
+        } else {
+            synchronized (mFileLock) {
+                readInternal(data);
+            }
+        }
+        // We use the current time as last-written. read() is called on system server startup
+        // (current situation), and we want to postpone I/O at boot.
+        mLastTimeWritten.set(SystemClock.elapsedRealtime());

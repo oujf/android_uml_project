@@ -1,0 +1,339 @@
+class PipTouchHandler
+!!!3286917.java!!!	PipTouchHandler(inout context : Context, inout activityManager : IActivityManager, inout menuController : PipMenuActivityController, inout inputConsumerController : InputConsumerController)
+
+        // Initialize the Pip input consumer
+        mContext = context;
+        mActivityManager = activityManager;
+        mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
+        mViewConfig = ViewConfiguration.get(context);
+        mMenuController = menuController;
+        mMenuController.addListener(mMenuListener);
+        mDismissViewController = new PipDismissViewController(context);
+        mSnapAlgorithm = new PipSnapAlgorithm(mContext);
+        mTouchState = new PipTouchState(mViewConfig);
+        mFlingAnimationUtils = new FlingAnimationUtils(context, 2f);
+        mGestures = new PipTouchGesture[] {
+                mDefaultMovementGesture
+        };
+        mMotionHelper = new PipMotionHelper(mContext, mActivityManager, mMenuController,
+                mSnapAlgorithm, mFlingAnimationUtils);
+        mExpandedShortestEdgeSize = context.getResources().getDimensionPixelSize(
+                R.dimen.pip_expanded_shortest_edge_size);
+
+        // Register the listener for input consumer touch events
+        inputConsumerController.setTouchListener(this::handleTouchEvent);
+        inputConsumerController.setRegistrationListener(this::onRegistrationChanged);
+        onRegistrationChanged(inputConsumerController.isRegistered());
+!!!3287045.java!!!	setTouchEnabled(inout enabled : boolean) : void
+        mTouchState.setAllowTouches(enabled);
+!!!3287173.java!!!	showPictureInPictureMenu() : void
+        // Only show the menu if the user isn't currently interacting with the PiP
+        if (!mTouchState.isUserInteracting()) {
+            mMenuController.showMenu(MENU_STATE_FULL, mMotionHelper.getBounds(),
+                    mMovementBounds, false /* allowMenuTimeout */);
+        }
+!!!3287301.java!!!	onActivityPinned() : void
+        // Reset some states once we are pinned
+        mMenuState = MENU_STATE_NONE;
+
+        if (mIsMinimized) {
+            setMinimizedStateInternal(false);
+        }
+        cleanUpDismissTarget();
+        mShowPipMenuOnAnimationEnd = true;
+!!!3287429.java!!!	onPinnedStackAnimationEnded() : void
+        // Always synchronize the motion helper bounds once PiP animations finish
+        mMotionHelper.synchronizePinnedStackBounds();
+
+        if (mShowPipMenuOnAnimationEnd) {
+            mMenuController.showMenu(MENU_STATE_CLOSE, mMotionHelper.getBounds(),
+                    mMovementBounds, true /* allowMenuTimeout */);
+            mShowPipMenuOnAnimationEnd = false;
+        }
+!!!3287557.java!!!	onConfigurationChanged() : void
+        mMotionHelper.onConfigurationChanged();
+        mMotionHelper.synchronizePinnedStackBounds();
+!!!3287685.java!!!	onImeVisibilityChanged(inout imeVisible : boolean, in imeHeight : int) : void
+        mIsImeShowing = imeVisible;
+        mImeHeight = imeHeight;
+!!!3287813.java!!!	onMovementBoundsChanged(inout insetBounds : Rect, inout normalBounds : Rect, inout animatingBounds : Rect, inout fromImeAdjustement : boolean, in displayRotation : int) : void
+        // Re-calculate the expanded bounds
+        mNormalBounds = normalBounds;
+        Rect normalMovementBounds = new Rect();
+        mSnapAlgorithm.getMovementBounds(mNormalBounds, insetBounds, normalMovementBounds,
+                mIsImeShowing ? mImeHeight : 0);
+
+        // Calculate the expanded size
+        float aspectRatio = (float) normalBounds.width() / normalBounds.height();
+        Point displaySize = new Point();
+        mContext.getDisplay().getRealSize(displaySize);
+        Size expandedSize = mSnapAlgorithm.getSizeForAspectRatio(aspectRatio,
+                mExpandedShortestEdgeSize, displaySize.x, displaySize.y);
+        mExpandedBounds.set(0, 0, expandedSize.getWidth(), expandedSize.getHeight());
+        Rect expandedMovementBounds = new Rect();
+        mSnapAlgorithm.getMovementBounds(mExpandedBounds, insetBounds, expandedMovementBounds,
+                mIsImeShowing ? mImeHeight : 0);
+
+
+        // If this is from an IME adjustment, then we should move the PiP so that it is not occluded
+        // by the IME
+        if (fromImeAdjustement) {
+            if (mTouchState.isUserInteracting()) {
+                // Defer the update of the current movement bounds until after the user finishes
+                // touching the screen
+            } else {
+                final Rect bounds = new Rect(animatingBounds);
+                final Rect toMovementBounds = mMenuState == MENU_STATE_FULL
+                        ? expandedMovementBounds
+                        : normalMovementBounds;
+                if (mIsImeShowing) {
+                    // IME visible
+                    if (bounds.top == mMovementBounds.bottom) {
+                        // If the PIP is currently resting on top of the IME, then adjust it with
+                        // the hiding IME
+                        bounds.offsetTo(bounds.left, toMovementBounds.bottom);
+                    } else {
+                        bounds.offset(0, Math.min(0, toMovementBounds.bottom - bounds.top));
+                    }
+                } else {
+                    // IME hidden
+                    if (bounds.top == mMovementBounds.bottom) {
+                        // If the PIP is resting on top of the IME, then adjust it with the hiding IME
+                        bounds.offsetTo(bounds.left, toMovementBounds.bottom);
+                    }
+                }
+                mMotionHelper.animateToIMEOffset(bounds);
+            }
+        }
+
+        // Update the movement bounds after doing the calculations based on the old movement bounds
+        // above
+        mNormalMovementBounds = normalMovementBounds;
+        mExpandedMovementBounds = expandedMovementBounds;
+        mDisplayRotation = displayRotation;
+        updateMovementBounds(mMenuState);
+
+        // If we have a deferred resize, apply it now
+        if (mDeferResizeToNormalBoundsUntilRotation == displayRotation) {
+            mMotionHelper.animateToUnexpandedState(normalBounds, mSavedSnapFraction,
+                    mNormalMovementBounds, mMovementBounds, mIsMinimized,
+                    true /* immediate */);
+            mSavedSnapFraction = -1f;
+            mDeferResizeToNormalBoundsUntilRotation = -1;
+        }
+!!!3287941.java!!!	onRegistrationChanged(inout isRegistered : boolean) : void
+        mAccessibilityManager.setPictureInPictureActionReplacingConnection(isRegistered
+                ? new PipAccessibilityInteractionConnection(mMotionHelper,
+                        this::onAccessibilityShowMenu, mHandler) : null);
+
+        if (!isRegistered && mTouchState.isUserInteracting()) {
+            // If the input consumer is unregistered while the user is interacting, then we may not
+            // get the final TOUCH_UP event, so clean up the dismiss target as well
+            cleanUpDismissTarget();
+        }
+!!!3288069.java!!!	onAccessibilityShowMenu() : void
+        mMenuController.showMenu(MENU_STATE_FULL, mMotionHelper.getBounds(),
+                mMovementBounds, false /* allowMenuTimeout */);
+!!!3288197.java!!!	handleTouchEvent(inout ev : MotionEvent) : boolean
+        // Skip touch handling until we are bound to the controller
+        if (mPinnedStackController == null) {
+            return true;
+        }
+
+        // Update the touch state
+        mTouchState.onTouchEvent(ev);
+
+        switch (ev.getAction()) {
+            case MotionEvent.ACTION_DOWN: {
+                mMotionHelper.synchronizePinnedStackBounds();
+
+                for (PipTouchGesture gesture : mGestures) {
+                    gesture.onDown(mTouchState);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                for (PipTouchGesture gesture : mGestures) {
+                    if (gesture.onMove(mTouchState)) {
+                        break;
+                    }
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP: {
+                // Update the movement bounds again if the state has changed since the user started
+                // dragging (ie. when the IME shows)
+                updateMovementBounds(mMenuState);
+
+                for (PipTouchGesture gesture : mGestures) {
+                    if (gesture.onUp(mTouchState)) {
+                        break;
+                    }
+                }
+
+                // Fall through to clean up
+            }
+            case MotionEvent.ACTION_CANCEL: {
+                mTouchState.reset();
+                break;
+            }
+            case MotionEvent.ACTION_HOVER_ENTER:
+            case MotionEvent.ACTION_HOVER_MOVE: {
+                if (!mSendingHoverAccessibilityEvents) {
+                    AccessibilityEvent event = AccessibilityEvent.obtain(
+                            AccessibilityEvent.TYPE_VIEW_HOVER_ENTER);
+                    AccessibilityNodeInfo info =
+                            PipAccessibilityInteractionConnection.obtainRootAccessibilityNodeInfo();
+                    event.setSource(info);
+                    info.recycle();
+                    mAccessibilityManager.sendAccessibilityEvent(event);
+                    mSendingHoverAccessibilityEvents = true;
+                }
+                break;
+            }
+            case MotionEvent.ACTION_HOVER_EXIT: {
+                if (mSendingHoverAccessibilityEvents) {
+                    AccessibilityEvent event = AccessibilityEvent.obtain(
+                            AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+                    AccessibilityNodeInfo info =
+                            PipAccessibilityInteractionConnection.obtainRootAccessibilityNodeInfo();
+                    event.setSource(info);
+                    info.recycle();
+                    mAccessibilityManager.sendAccessibilityEvent(event);
+                    mSendingHoverAccessibilityEvents = false;
+                }
+                break;
+            }
+        }
+        return mMenuState == MENU_STATE_NONE;
+!!!3288325.java!!!	updateDismissFraction() : void
+        if (mMenuController != null) {
+            Rect bounds = mMotionHelper.getBounds();
+            final float target = mMovementBounds.bottom + bounds.height();
+            float fraction = 0f;
+            if (bounds.bottom > target) {
+                final float distance = bounds.bottom - target;
+                fraction = Math.min(distance / bounds.height(), 1f);
+            }
+            if (Float.compare(fraction, 0f) != 0 || mMenuState != MENU_STATE_NONE) {
+                // Update if the fraction > 0, or if fraction == 0 and the menu was already visible
+                mMenuController.setDismissFraction(fraction);
+            }
+        }
+!!!3288453.java!!!	setPinnedStackController(inout controller : IPinnedStackController) : void
+        mPinnedStackController = controller;
+!!!3288581.java!!!	setMinimizedStateInternal(inout isMinimized : boolean) : void
+        if (!ENABLE_MINIMIZE) {
+            return;
+        }
+        setMinimizedState(isMinimized, false /* fromController */);
+!!!3288709.java!!!	setMinimizedState(inout isMinimized : boolean, inout fromController : boolean) : void
+        if (!ENABLE_MINIMIZE) {
+            return;
+        }
+        if (mIsMinimized != isMinimized) {
+            MetricsLogger.action(mContext, MetricsEvent.ACTION_PICTURE_IN_PICTURE_MINIMIZED,
+                    isMinimized);
+        }
+        mIsMinimized = isMinimized;
+        mSnapAlgorithm.setMinimized(isMinimized);
+
+        if (fromController) {
+            if (isMinimized) {
+                // Move the PiP to the new bounds immediately if minimized
+                mMotionHelper.movePip(mMotionHelper.getClosestMinimizedBounds(mNormalBounds,
+                        mMovementBounds));
+            }
+        } else if (mPinnedStackController != null) {
+            try {
+                mPinnedStackController.setIsMinimized(isMinimized);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Could not set minimized state", e);
+            }
+        }
+!!!3288837.java!!!	setMenuState(in menuState : int, inout resize : boolean) : void
+        if (menuState == MENU_STATE_FULL) {
+            // Save the current snap fraction and if we do not drag or move the PiP, then
+            // we store back to this snap fraction.  Otherwise, we'll reset the snap
+            // fraction and snap to the closest edge
+            Rect expandedBounds = new Rect(mExpandedBounds);
+            if (resize) {
+                mSavedSnapFraction = mMotionHelper.animateToExpandedState(expandedBounds,
+                        mMovementBounds, mExpandedMovementBounds);
+            }
+        } else if (menuState == MENU_STATE_NONE) {
+            // Try and restore the PiP to the closest edge, using the saved snap fraction
+            // if possible
+            if (resize) {
+                if (mDeferResizeToNormalBoundsUntilRotation == -1) {
+                    // This is a very special case: when the menu is expanded and visible,
+                    // navigating to another activity can trigger auto-enter PiP, and if the
+                    // revealed activity has a forced rotation set, then the controller will get
+                    // updated with the new rotation of the display. However, at the same time,
+                    // SystemUI will try to hide the menu by creating an animation to the normal
+                    // bounds which are now stale.  In such a case we defer the animation to the
+                    // normal bounds until after the next onMovementBoundsChanged() call to get the
+                    // bounds in the new orientation
+                    try {
+                        int displayRotation = mPinnedStackController.getDisplayRotation();
+                        if (mDisplayRotation != displayRotation) {
+                            mDeferResizeToNormalBoundsUntilRotation = displayRotation;
+                        }
+                    } catch (RemoteException e) {
+                        Log.e(TAG, "Could not get display rotation from controller");
+                    }
+                }
+
+                if (mDeferResizeToNormalBoundsUntilRotation == -1) {
+                    Rect normalBounds = new Rect(mNormalBounds);
+                    mMotionHelper.animateToUnexpandedState(normalBounds, mSavedSnapFraction,
+                            mNormalMovementBounds, mMovementBounds, mIsMinimized,
+                            false /* immediate */);
+                    mSavedSnapFraction = -1f;
+                }
+            } else {
+                // If resizing is not allowed, then the PiP should be frozen until the transition
+                // ends as well
+                setTouchEnabled(false);
+                mSavedSnapFraction = -1f;
+            }
+        }
+        mMenuState = menuState;
+        updateMovementBounds(menuState);
+        if (menuState != MENU_STATE_CLOSE) {
+            MetricsLogger.visibility(mContext, MetricsEvent.ACTION_PICTURE_IN_PICTURE_MENU,
+                    menuState == MENU_STATE_FULL);
+        }
+!!!3288965.java!!!	getMotionHelper() : PipMotionHelper
+        return mMotionHelper;
+!!!3289093.java!!!	updateMovementBounds(in menuState : int) : void
+        boolean isMenuExpanded = menuState == MENU_STATE_FULL;
+        mMovementBounds = isMenuExpanded
+                ? mExpandedMovementBounds
+                : mNormalMovementBounds;
+        try {
+            mPinnedStackController.setMinEdgeSize(isMenuExpanded ? mExpandedShortestEdgeSize : 0);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Could not set minimized state", e);
+        }
+!!!3289221.java!!!	cleanUpDismissTarget() : void
+        mHandler.removeCallbacks(mShowDismissAffordance);
+        mDismissViewController.destroyDismissTarget();
+!!!3289349.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        final String innerPrefix = prefix + "  ";
+        pw.println(prefix + TAG);
+        pw.println(innerPrefix + "mMovementBounds=" + mMovementBounds);
+        pw.println(innerPrefix + "mNormalBounds=" + mNormalBounds);
+        pw.println(innerPrefix + "mNormalMovementBounds=" + mNormalMovementBounds);
+        pw.println(innerPrefix + "mExpandedBounds=" + mExpandedBounds);
+        pw.println(innerPrefix + "mExpandedMovementBounds=" + mExpandedMovementBounds);
+        pw.println(innerPrefix + "mMenuState=" + mMenuState);
+        pw.println(innerPrefix + "mIsMinimized=" + mIsMinimized);
+        pw.println(innerPrefix + "mIsImeShowing=" + mIsImeShowing);
+        pw.println(innerPrefix + "mImeHeight=" + mImeHeight);
+        pw.println(innerPrefix + "mSavedSnapFraction=" + mSavedSnapFraction);
+        pw.println(innerPrefix + "mEnableDragToEdgeDismiss=" + ENABLE_DISMISS_DRAG_TO_EDGE);
+        pw.println(innerPrefix + "mEnableMinimize=" + ENABLE_MINIMIZE);
+        mSnapAlgorithm.dump(pw, innerPrefix);
+        mTouchState.dump(pw, innerPrefix);
+        mMotionHelper.dump(pw, innerPrefix);

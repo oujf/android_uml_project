@@ -1,0 +1,81 @@
+class ClientMonitor
+!!!11541765.java!!!	ClientMonitor(inout context : Context, in halDeviceId : long, inout token : IBinder, inout receiver : IFingerprintServiceReceiver, in userId : int, in groupId : int, inout restricted : boolean, in owner : String)
+        mContext = context;
+        mHalDeviceId = halDeviceId;
+        mToken = token;
+        mReceiver = receiver;
+        mTargetUserId = userId;
+        mGroupId = groupId;
+        mIsRestricted = restricted;
+        mOwner = owner;
+        try {
+            if (token != null) {
+                token.linkToDeath(this, 0);
+            }
+        } catch (RemoteException e) {
+            Slog.w(TAG, "caught remote exception in linkToDeath: ", e);
+        }
+!!!11542917.java!!!	onAcquired(in acquiredInfo : int, in vendorCode : int) : boolean
+        if (mReceiver == null)
+            return true; // client not connected
+        try {
+            mReceiver.onAcquired(getHalDeviceId(), acquiredInfo, vendorCode);
+            return false; // acquisition continues...
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to invoke sendAcquired:", e);
+            return true; // client failed
+        } finally {
+            // Good scans will keep the device awake
+            if (acquiredInfo == FingerprintManager.FINGERPRINT_ACQUIRED_GOOD) {
+                notifyUserActivity();
+            }
+        }
+!!!11543045.java!!!	onError(in error : int, in vendorCode : int) : boolean
+        if (mReceiver != null) {
+            try {
+                mReceiver.onError(getHalDeviceId(), error, vendorCode);
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Failed to invoke sendError:", e);
+            }
+        }
+        return true; // errors always remove current client
+!!!11543173.java!!!	destroy() : void
+        if (mToken != null) {
+            try {
+                mToken.unlinkToDeath(this, 0);
+            } catch (NoSuchElementException e) {
+                // TODO: remove when duplicate call bug is found
+                Slog.e(TAG, "destroy(): " + this + ":", new Exception("here"));
+            }
+            mToken = null;
+        }
+        mReceiver = null;
+!!!11543301.java!!!	binderDied() : void
+        mToken = null;
+        mReceiver = null;
+        onError(FingerprintManager.FINGERPRINT_ERROR_HW_UNAVAILABLE, 0 /* vendorCode */);
+!!!11543429.java!!!	finalize() : void
+        try {
+            if (mToken != null) {
+                if (DEBUG) Slog.w(TAG, "removing leaked reference: " + mToken);
+                onError(FingerprintManager.FINGERPRINT_ERROR_HW_UNAVAILABLE, 0 /* vendorCode */);
+            }
+        } finally {
+            super.finalize();
+        }
+!!!11543557.java!!!	getContext() : Context
+        return mContext;
+!!!11543685.java!!!	getHalDeviceId() : long
+        return mHalDeviceId;
+!!!11543813.java!!!	getOwnerString() : String
+        return mOwner;
+!!!11543941.java!!!	getReceiver() : IFingerprintServiceReceiver
+        return mReceiver;
+!!!11544069.java!!!	getIsRestricted() : boolean
+        return mIsRestricted;
+!!!11544197.java!!!	getTargetUserId() : int
+        return mTargetUserId;
+!!!11544325.java!!!	getGroupId() : int
+        return mGroupId;
+!!!11544453.java!!!	getToken() : IBinder
+        return mToken;

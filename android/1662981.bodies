@@ -1,0 +1,114 @@
+class IpConnectivityMetrics
+!!!11359493.java!!!	IpConnectivityMetrics(inout ctx : Context, inout capacityGetter : ToIntFunction<Context>)
+        super(ctx);
+        mCapacityGetter = capacityGetter;
+        initBuffer();
+!!!11359621.java!!!	IpConnectivityMetrics(inout ctx : Context)
+        this(ctx, READ_BUFFER_SIZE);
+!!!11359749.java!!!	onStart() : void
+        if (DBG) Log.d(TAG, "onStart");
+!!!11359877.java!!!	onBootPhase(in phase : int) : void
+        if (phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
+            if (DBG) Log.d(TAG, "onBootPhase");
+            mNetdListener = new NetdEventListenerService(getContext());
+
+            publishBinderService(SERVICE_NAME, impl);
+            publishBinderService(mNetdListener.SERVICE_NAME, mNetdListener);
+        }
+!!!11360005.java!!!	bufferCapacity() : int
+        return mCapacityGetter.applyAsInt(getContext());
+!!!11360133.java!!!	initBuffer() : void
+        synchronized (mLock) {
+            mDropped = 0;
+            mCapacity = bufferCapacity();
+            mBuffer = new ArrayList<>(mCapacity);
+        }
+!!!11360261.java!!!	append(inout event : ConnectivityMetricsEvent) : int
+        if (DBG) Log.d(TAG, "logEvent: " + event);
+        synchronized (mLock) {
+            final int left = mCapacity - mBuffer.size();
+            if (event == null) {
+                return left;
+            }
+            if (isRateLimited(event)) {
+                // Do not count as a dropped event. TODO: consider adding separate counter
+                return ERROR_RATE_LIMITED;
+            }
+            if (left == 0) {
+                mDropped++;
+                return 0;
+            }
+            mBuffer.add(event);
+            return left - 1;
+        }
+!!!11360389.java!!!	isRateLimited(inout event : ConnectivityMetricsEvent) : boolean
+        TokenBucket tb = mBuckets.get(event.data.getClass());
+        return (tb != null) && !tb.get();
+!!!11360517.java!!!	flushEncodedOutput() : String
+        final ArrayList<ConnectivityMetricsEvent> events;
+        final int dropped;
+        synchronized (mLock) {
+            events = mBuffer;
+            dropped = mDropped;
+            initBuffer();
+        }
+
+        final List<IpConnectivityEvent> protoEvents = IpConnectivityEventBuilder.toProto(events);
+
+        if (mNetdListener != null) {
+            mNetdListener.flushStatistics(protoEvents);
+        }
+
+        final byte[] data;
+        try {
+            data = IpConnectivityEventBuilder.serialize(dropped, protoEvents);
+        } catch (IOException e) {
+            Log.e(TAG, "could not serialize events", e);
+            return "";
+        }
+
+        return Base64.encodeToString(data, Base64.DEFAULT);
+!!!11360645.java!!!	cmdFlush(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.print(flushEncodedOutput());
+!!!11360773.java!!!	cmdList(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        final ArrayList<ConnectivityMetricsEvent> events;
+        synchronized (mLock) {
+            events = new ArrayList(mBuffer);
+        }
+
+        if (args.length > 1 && args[1].equals("proto")) {
+            for (IpConnectivityEvent ev : IpConnectivityEventBuilder.toProto(events)) {
+                pw.print(ev.toString());
+            }
+            if (mNetdListener != null) {
+                mNetdListener.listAsProtos(pw);
+            }
+            return;
+        }
+
+        for (ConnectivityMetricsEvent ev : events) {
+            pw.println(ev.toString());
+        }
+        if (mNetdListener != null) {
+            mNetdListener.list(pw);
+        }
+!!!11360901.java!!!	cmdStats(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        synchronized (mLock) {
+            pw.println("Buffered events: " + mBuffer.size());
+            pw.println("Buffer capacity: " + mCapacity);
+            pw.println("Dropped events: " + mDropped);
+        }
+        if (mNetdListener != null) {
+            mNetdListener.dump(pw);
+        }
+!!!11361029.java!!!	cmdDefault(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        if (args.length == 0) {
+            pw.println("No command");
+            return;
+        }
+        pw.println("Unknown command " + TextUtils.join(" ", args));
+!!!11362181.java!!!	makeRateLimitingBuckets() : ArrayMap
+        ArrayMap<Class<?>, TokenBucket> map = new ArrayMap<>();
+        // one token every minute, 50 tokens max: burst of ~50 events every hour.
+        map.put(ApfProgramEvent.class, new TokenBucket((int)DateUtils.MINUTE_IN_MILLIS, 50));
+        return map;

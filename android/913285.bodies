@@ -1,0 +1,89 @@
+class UnlockPatternListener
+!!!4337029.java!!!	onPatternStart() : void
+            mLockPatternView.removeCallbacks(mCancelPatternRunnable);
+            mSecurityMessageDisplay.setMessage("");
+!!!4337285.java!!!	onPatternCellAdded(inout pattern : List<LockPatternView.Cell>) : void
+            mCallback.userActivity();
+!!!4337413.java!!!	onPatternDetected(in pattern : List<LockPatternView.Cell>) : void
+            mLockPatternView.disableInput();
+            if (mPendingLockCheck != null) {
+                mPendingLockCheck.cancel(false);
+            }
+
+            final int userId = KeyguardUpdateMonitor.getCurrentUser();
+            if (pattern.size() < LockPatternUtils.MIN_PATTERN_REGISTER_FAIL) {
+                mLockPatternView.enableInput();
+                onPatternChecked(userId, false, 0, false /* not valid - too short */);
+                return;
+            }
+
+            if (LatencyTracker.isEnabled(mContext)) {
+                LatencyTracker.getInstance(mContext).onActionStart(ACTION_CHECK_CREDENTIAL);
+                LatencyTracker.getInstance(mContext).onActionStart(ACTION_CHECK_CREDENTIAL_UNLOCKED);
+            }
+            mPendingLockCheck = LockPatternChecker.checkPattern(
+                    mLockPatternUtils,
+                    pattern,
+                    userId,
+                    new LockPatternChecker.OnCheckCallback() {
+
+                        @Override
+                        public void onEarlyMatched() {
+                            if (LatencyTracker.isEnabled(mContext)) {
+                                LatencyTracker.getInstance(mContext).onActionEnd(
+                                        ACTION_CHECK_CREDENTIAL);
+                            }
+                            onPatternChecked(userId, true /* matched */, 0 /* timeoutMs */,
+                                    true /* isValidPattern */);
+                        }
+
+                        @Override
+                        public void onChecked(boolean matched, int timeoutMs) {
+                            if (LatencyTracker.isEnabled(mContext)) {
+                                LatencyTracker.getInstance(mContext).onActionEnd(
+                                        ACTION_CHECK_CREDENTIAL_UNLOCKED);
+                            }
+                            mLockPatternView.enableInput();
+                            mPendingLockCheck = null;
+                            if (!matched) {
+                                onPatternChecked(userId, false /* matched */, timeoutMs,
+                                        true /* isValidPattern */);
+                            }
+                        }
+
+                        @Override
+                        public void onCancelled() {
+                            // We already got dismissed with the early matched callback, so we
+                            // cancelled the check. However, we still need to note down the latency.
+                            if (LatencyTracker.isEnabled(mContext)) {
+                                LatencyTracker.getInstance(mContext).onActionEnd(
+                                        ACTION_CHECK_CREDENTIAL_UNLOCKED);
+                            }
+                        }
+                    });
+            if (pattern.size() > MIN_PATTERN_BEFORE_POKE_WAKELOCK) {
+                mCallback.userActivity();
+            }
+!!!4337541.java!!!	onPatternChecked(in userId : int, inout matched : boolean, in timeoutMs : int, inout isValidPattern : boolean) : void
+            boolean dismissKeyguard = KeyguardUpdateMonitor.getCurrentUser() == userId;
+            if (matched) {
+                mCallback.reportUnlockAttempt(userId, true, 0);
+                if (dismissKeyguard) {
+                    mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Correct);
+                    mCallback.dismiss(true, userId);
+                }
+            } else {
+                mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Wrong);
+                if (isValidPattern) {
+                    mCallback.reportUnlockAttempt(userId, false, timeoutMs);
+                    if (timeoutMs > 0) {
+                        long deadline = mLockPatternUtils.setLockoutAttemptDeadline(
+                                userId, timeoutMs);
+                        handleAttemptLockout(deadline);
+                    }
+                }
+                if (timeoutMs == 0) {
+                    mSecurityMessageDisplay.setMessage(R.string.kg_wrong_pattern);
+                    mLockPatternView.postDelayed(mCancelPatternRunnable, PATTERN_CLEAR_TIMEOUT_MS);
+                }
+            }

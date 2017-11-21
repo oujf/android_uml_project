@@ -1,0 +1,45 @@
+class IconDrawableFactory
+!!!8442757.java!!!	IconDrawableFactory(inout context : Context, inout embedShadow : boolean)
+        mContext = context;
+        mPm = context.getPackageManager();
+        mUm = context.getSystemService(UserManager.class);
+        mLauncherIcons = new LauncherIcons(context);
+        mEmbedShadow = embedShadow;
+!!!8442885.java!!!	needsBadging(inout appInfo : ApplicationInfo, in userId : int) : boolean
+        return appInfo.isInstantApp() || mUm.isManagedProfile(userId);
+!!!8443013.java!!!	getBadgedIcon(inout appInfo : ApplicationInfo) : Drawable
+        return getBadgedIcon(appInfo, UserHandle.getUserId(appInfo.uid));
+!!!8443141.java!!!	getBadgedIcon(inout appInfo : ApplicationInfo, in userId : int) : Drawable
+        return getBadgedIcon(appInfo, appInfo, userId);
+!!!8443269.java!!!	getBadgedIcon(inout itemInfo : PackageItemInfo, inout appInfo : ApplicationInfo, in userId : int) : Drawable
+        Drawable icon = mPm.loadUnbadgedItemIcon(itemInfo, appInfo);
+        if (!mEmbedShadow && !needsBadging(appInfo, userId)) {
+            return icon;
+        }
+
+        // Before badging, add shadow to adaptive icon if needed.
+        icon = mLauncherIcons.wrapIconDrawableWithShadow(icon);
+        if (appInfo.isInstantApp()) {
+            int badgeColor = Resources.getSystem().getColor(
+                    com.android.internal.R.color.instant_app_badge, null);
+            icon = mLauncherIcons.getBadgedDrawable(icon,
+                    com.android.internal.R.drawable.ic_instant_icon_badge_bolt,
+                    badgeColor);
+        }
+        if (mUm.isManagedProfile(userId)) {
+            icon = mLauncherIcons.getBadgedDrawable(icon,
+                    com.android.internal.R.drawable.ic_corp_icon_badge_case,
+                    getUserBadgeColor(mUm, userId));
+        }
+        return icon;
+!!!8443397.java!!!	getUserBadgeColor(inout um : UserManager, in userId : int) : int
+        int badge = um.getManagedProfileBadge(userId);
+        if (badge < 0) {
+            badge = 0;
+        }
+        int resourceId = CORP_BADGE_COLORS[badge % CORP_BADGE_COLORS.length];
+        return Resources.getSystem().getColor(resourceId, null);
+!!!8443525.java!!!	newInstance(inout context : Context) : IconDrawableFactory
+        return new IconDrawableFactory(context, true);
+!!!8443653.java!!!	newInstance(inout context : Context, inout embedShadow : boolean) : IconDrawableFactory
+        return new IconDrawableFactory(context, embedShadow);

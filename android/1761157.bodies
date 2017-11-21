@@ -1,0 +1,121 @@
+class WakeLock
+!!!12442245.java!!!	WakeLock(inout lock : IBinder, in flags : int, in tag : String, in packageName : String, inout workSource : WorkSource, in historyTag : String, in ownerUid : int, in ownerPid : int, inout uidState : PowerManagerService::UidState)
+            mLock = lock;
+            mFlags = flags;
+            mTag = tag;
+            mPackageName = packageName;
+            mWorkSource = copyWorkSource(workSource);
+            mHistoryTag = historyTag;
+            mOwnerUid = ownerUid;
+            mOwnerPid = ownerPid;
+            mUidState = uidState;
+!!!12442373.java!!!	binderDied() : void
+            PowerManagerService.this.handleWakeLockDeath(this);
+!!!12442501.java!!!	hasSameProperties(in flags : int, in tag : String, inout workSource : WorkSource, in ownerUid : int, in ownerPid : int) : boolean
+            return mFlags == flags
+                    && mTag.equals(tag)
+                    && hasSameWorkSource(workSource)
+                    && mOwnerUid == ownerUid
+                    && mOwnerPid == ownerPid;
+!!!12442629.java!!!	updateProperties(in flags : int, in tag : String, in packageName : String, inout workSource : WorkSource, in historyTag : String, in ownerUid : int, in ownerPid : int) : void
+            if (!mPackageName.equals(packageName)) {
+                throw new IllegalStateException("Existing wake lock package name changed: "
+                        + mPackageName + " to " + packageName);
+            }
+            if (mOwnerUid != ownerUid) {
+                throw new IllegalStateException("Existing wake lock uid changed: "
+                        + mOwnerUid + " to " + ownerUid);
+            }
+            if (mOwnerPid != ownerPid) {
+                throw new IllegalStateException("Existing wake lock pid changed: "
+                        + mOwnerPid + " to " + ownerPid);
+            }
+            mFlags = flags;
+            mTag = tag;
+            updateWorkSource(workSource);
+            mHistoryTag = historyTag;
+!!!12442757.java!!!	hasSameWorkSource(inout workSource : WorkSource) : boolean
+            return Objects.equal(mWorkSource, workSource);
+!!!12442885.java!!!	updateWorkSource(inout workSource : WorkSource) : void
+            mWorkSource = copyWorkSource(workSource);
+!!!12443013.java!!!	toString() : String
+            StringBuilder sb = new StringBuilder();
+            sb.append(getLockLevelString());
+            sb.append(" '");
+            sb.append(mTag);
+            sb.append("'");
+            sb.append(getLockFlagsString());
+            if (mDisabled) {
+                sb.append(" DISABLED");
+            }
+            if (mNotifiedAcquired) {
+                sb.append(" ACQ=");
+                TimeUtils.formatDuration(mAcquireTime-SystemClock.uptimeMillis(), sb);
+            }
+            if (mNotifiedLong) {
+                sb.append(" LONG");
+            }
+            sb.append(" (uid=");
+            sb.append(mOwnerUid);
+            if (mOwnerPid != 0) {
+                sb.append(" pid=");
+                sb.append(mOwnerPid);
+            }
+            if (mWorkSource != null) {
+                sb.append(" ws=");
+                sb.append(mWorkSource);
+            }
+            sb.append(")");
+            return sb.toString();
+!!!12443141.java!!!	writeToProto(inout proto : ProtoOutputStream, in fieldId : long) : void
+            final long wakeLockToken = proto.start(fieldId);
+            proto.write(WakeLockProto.LOCK_LEVEL, (mFlags & PowerManager.WAKE_LOCK_LEVEL_MASK));
+            proto.write(WakeLockProto.TAG, mTag);
+
+            final long wakeLockFlagsToken = proto.start(WakeLockProto.FLAGS);
+            proto.write(WakeLockProto.WakeLockFlagsProto.IS_ACQUIRE_CAUSES_WAKEUP,
+                    (mFlags & PowerManager.ACQUIRE_CAUSES_WAKEUP)!=0);
+            proto.write(WakeLockProto.WakeLockFlagsProto.IS_ON_AFTER_RELEASE,
+                    (mFlags & PowerManager.ON_AFTER_RELEASE)!=0);
+            proto.end(wakeLockFlagsToken);
+
+            proto.write(WakeLockProto.IS_DISABLED, mDisabled);
+            if (mNotifiedAcquired) {
+                proto.write(WakeLockProto.ACQ_MS, mAcquireTime);
+            }
+            proto.write(WakeLockProto.IS_NOTIFIED_LONG, mNotifiedLong);
+            proto.write(WakeLockProto.UID, mOwnerUid);
+            proto.write(WakeLockProto.PID, mOwnerPid);
+
+            if (mWorkSource != null) {
+                mWorkSource.writeToProto(proto, WakeLockProto.WORK_SOURCE);
+            }
+            proto.end(wakeLockToken);
+!!!12443269.java!!!	getLockLevelString() : String
+            switch (mFlags & PowerManager.WAKE_LOCK_LEVEL_MASK) {
+                case PowerManager.FULL_WAKE_LOCK:
+                    return "FULL_WAKE_LOCK                ";
+                case PowerManager.SCREEN_BRIGHT_WAKE_LOCK:
+                    return "SCREEN_BRIGHT_WAKE_LOCK       ";
+                case PowerManager.SCREEN_DIM_WAKE_LOCK:
+                    return "SCREEN_DIM_WAKE_LOCK          ";
+                case PowerManager.PARTIAL_WAKE_LOCK:
+                    return "PARTIAL_WAKE_LOCK             ";
+                case PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK:
+                    return "PROXIMITY_SCREEN_OFF_WAKE_LOCK";
+                case PowerManager.DOZE_WAKE_LOCK:
+                    return "DOZE_WAKE_LOCK                ";
+                case PowerManager.DRAW_WAKE_LOCK:
+                    return "DRAW_WAKE_LOCK                ";
+                default:
+                    return "???                           ";
+            }
+!!!12443397.java!!!	getLockFlagsString() : String
+            String result = "";
+            if ((mFlags & PowerManager.ACQUIRE_CAUSES_WAKEUP) != 0) {
+                result += " ACQUIRE_CAUSES_WAKEUP";
+            }
+            if ((mFlags & PowerManager.ON_AFTER_RELEASE) != 0) {
+                result += " ON_AFTER_RELEASE";
+            }
+            return result;

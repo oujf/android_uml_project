@@ -1,0 +1,179 @@
+class SSLCertificateSocketFactory
+!!!7231493.java!!!	SSLCertificateSocketFactory(in handshakeTimeoutMillis : int)
+        this(handshakeTimeoutMillis, null, true);
+!!!7231621.java!!!	SSLCertificateSocketFactory(in handshakeTimeoutMillis : int, inout cache : SSLSessionCache, inout secure : boolean)
+        mHandshakeTimeoutMillis = handshakeTimeoutMillis;
+        mSessionCache = cache == null ? null : cache.mSessionCache;
+        mSecure = secure;
+!!!7231749.java!!!	getDefault(in handshakeTimeoutMillis : int) : SocketFactory
+        return new SSLCertificateSocketFactory(handshakeTimeoutMillis, null, true);
+!!!7231877.java!!!	getDefault(in handshakeTimeoutMillis : int, inout cache : SSLSessionCache) : SSLSocketFactory
+        return new SSLCertificateSocketFactory(handshakeTimeoutMillis, cache, true);
+!!!7232005.java!!!	getInsecure(in handshakeTimeoutMillis : int, inout cache : SSLSessionCache) : SSLSocketFactory
+        return new SSLCertificateSocketFactory(handshakeTimeoutMillis, cache, false);
+!!!7232133.java!!!	getHttpSocketFactory(in handshakeTimeoutMillis : int, inout cache : SSLSessionCache) : SSLSocketFactory
+        return new org.apache.http.conn.ssl.SSLSocketFactory(
+                new SSLCertificateSocketFactory(handshakeTimeoutMillis, cache, true));
+!!!7232261.java!!!	verifyHostname(inout socket : Socket, in hostname : String) : void
+        if (!(socket instanceof SSLSocket)) {
+            throw new IllegalArgumentException("Attempt to verify non-SSL socket");
+        }
+
+        if (!isSslCheckRelaxed()) {
+            // The code at the start of OpenSSLSocketImpl.startHandshake()
+            // ensures that the call is idempotent, so we can safely call it.
+            SSLSocket ssl = (SSLSocket) socket;
+            ssl.startHandshake();
+
+            SSLSession session = ssl.getSession();
+            if (session == null) {
+                throw new SSLException("Cannot verify SSL socket without session");
+            }
+            if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(hostname, session)) {
+                throw new SSLPeerUnverifiedException("Cannot verify hostname: " + hostname);
+            }
+        }
+!!!7232389.java!!!	makeSocketFactory(inout keyManagers : KeyManager [[]], inout trustManagers : TrustManager [[]]) : SSLSocketFactory
+        try {
+            OpenSSLContextImpl sslContext = OpenSSLContextImpl.getPreferred();
+            sslContext.engineInit(keyManagers, trustManagers, null);
+            sslContext.engineGetClientSessionContext().setPersistentCache(mSessionCache);
+            return sslContext.engineGetSocketFactory();
+        } catch (KeyManagementException e) {
+            Log.wtf(TAG, e);
+            return (SSLSocketFactory) SSLSocketFactory.getDefault();  // Fallback
+        }
+!!!7232517.java!!!	isSslCheckRelaxed() : boolean
+        return RoSystemProperties.DEBUGGABLE &&
+            SystemProperties.getBoolean("socket.relaxsslcheck", false);
+!!!7232645.java!!!	getDelegate() : SSLSocketFactory
+        // Relax the SSL check if instructed (for this factory, or systemwide)
+        if (!mSecure || isSslCheckRelaxed()) {
+            if (mInsecureFactory == null) {
+                if (mSecure) {
+                    Log.w(TAG, "*** BYPASSING SSL SECURITY CHECKS (socket.relaxsslcheck=yes) ***");
+                } else {
+                    Log.w(TAG, "Bypassing SSL security checks at caller's request");
+                }
+                mInsecureFactory = makeSocketFactory(mKeyManagers, INSECURE_TRUST_MANAGER);
+            }
+            return mInsecureFactory;
+        } else {
+            if (mSecureFactory == null) {
+                mSecureFactory = makeSocketFactory(mKeyManagers, mTrustManagers);
+            }
+            return mSecureFactory;
+        }
+!!!7232773.java!!!	setTrustManagers(inout trustManager : TrustManager [[]]) : void
+        mTrustManagers = trustManager;
+
+        // Clear out all cached secure factories since configurations have changed.
+        mSecureFactory = null;
+        // Note - insecure factories only ever use the INSECURE_TRUST_MANAGER so they need not
+        // be cleared out here.
+!!!7232901.java!!!	setNpnProtocols(inout npnProtocols : byte [[][]]) : void
+        this.mNpnProtocols = toLengthPrefixedList(npnProtocols);
+!!!7233029.java!!!	setAlpnProtocols(inout protocols : byte [[][]]) : void
+        this.mAlpnProtocols = toLengthPrefixedList(protocols);
+!!!7233157.java!!!	toLengthPrefixedList(inout items : byte [[]]) : byte
+        if (items.length == 0) {
+            throw new IllegalArgumentException("items.length == 0");
+        }
+        int totalLength = 0;
+        for (byte[] s : items) {
+            if (s.length == 0 || s.length > 255) {
+                throw new IllegalArgumentException("s.length == 0 || s.length > 255: " + s.length);
+            }
+            totalLength += 1 + s.length;
+        }
+        byte[] result = new byte[totalLength];
+        int pos = 0;
+        for (byte[] s : items) {
+            result[pos++] = (byte) s.length;
+            for (byte b : s) {
+                result[pos++] = b;
+            }
+        }
+        return result;
+!!!7233285.java!!!	getNpnSelectedProtocol(inout socket : Socket) : byte
+        return castToOpenSSLSocket(socket).getNpnSelectedProtocol();
+!!!7233413.java!!!	getAlpnSelectedProtocol(inout socket : Socket) : byte
+        return castToOpenSSLSocket(socket).getAlpnSelectedProtocol();
+!!!7233541.java!!!	setKeyManagers(inout keyManagers : KeyManager [[]]) : void
+        mKeyManagers = keyManagers;
+
+        // Clear out any existing cached factories since configurations have changed.
+        mSecureFactory = null;
+        mInsecureFactory = null;
+!!!7233669.java!!!	setChannelIdPrivateKey(inout privateKey : PrivateKey) : void
+        mChannelIdPrivateKey = privateKey;
+!!!7233797.java!!!	setUseSessionTickets(inout socket : Socket, inout useSessionTickets : boolean) : void
+        castToOpenSSLSocket(socket).setUseSessionTickets(useSessionTickets);
+!!!7233925.java!!!	setHostname(inout socket : Socket, in hostName : String) : void
+        castToOpenSSLSocket(socket).setHostname(hostName);
+!!!7234053.java!!!	setSoWriteTimeout(inout socket : Socket, in writeTimeoutMilliseconds : int) : void
+        castToOpenSSLSocket(socket).setSoWriteTimeout(writeTimeoutMilliseconds);
+!!!7234181.java!!!	castToOpenSSLSocket(inout socket : Socket) : OpenSSLSocketImpl
+        if (!(socket instanceof OpenSSLSocketImpl)) {
+            throw new IllegalArgumentException("Socket not created by this factory: "
+                    + socket);
+        }
+
+        return (OpenSSLSocketImpl) socket;
+!!!7234309.java!!!	createSocket(inout k : Socket, in host : String, in port : int, inout close : boolean) : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket(k, host, port, close);
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        if (mSecure) {
+            verifyHostname(s, host);
+        }
+        return s;
+!!!7234437.java!!!	createSocket() : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket();
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        return s;
+!!!7234565.java!!!	createSocket(inout addr : InetAddress, in port : int, inout localAddr : InetAddress, in localPort : int) : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket(
+                addr, port, localAddr, localPort);
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        return s;
+!!!7234693.java!!!	createSocket(inout addr : InetAddress, in port : int) : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket(addr, port);
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        return s;
+!!!7234821.java!!!	createSocket(in host : String, in port : int, inout localAddr : InetAddress, in localPort : int) : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket(
+                host, port, localAddr, localPort);
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        if (mSecure) {
+            verifyHostname(s, host);
+        }
+        return s;
+!!!7234949.java!!!	createSocket(in host : String, in port : int) : Socket
+        OpenSSLSocketImpl s = (OpenSSLSocketImpl) getDelegate().createSocket(host, port);
+        s.setNpnProtocols(mNpnProtocols);
+        s.setAlpnProtocols(mAlpnProtocols);
+        s.setHandshakeTimeout(mHandshakeTimeoutMillis);
+        s.setChannelIdPrivateKey(mChannelIdPrivateKey);
+        if (mSecure) {
+            verifyHostname(s, host);
+        }
+        return s;
+!!!7235077.java!!!	getDefaultCipherSuites() : String
+        return getDelegate().getDefaultCipherSuites();
+!!!7235205.java!!!	getSupportedCipherSuites() : String
+        return getDelegate().getSupportedCipherSuites();

@@ -1,0 +1,255 @@
+class CursorWindow
+!!!6467205.java!!!	CursorWindow(in name : String)
+        mStartPos = 0;
+        mName = name != null && name.length() != 0 ? name : "<unnamed>";
+        if (sCursorWindowSize < 0) {
+            /** The cursor window size. resource xml file specifies the value in kB.
+             * convert it to bytes here by multiplying with 1024.
+             */
+            sCursorWindowSize = Resources.getSystem().getInteger(
+                com.android.internal.R.integer.config_cursorWindowSize) * 1024;
+        }
+        mWindowPtr = nativeCreate(mName, sCursorWindowSize);
+        if (mWindowPtr == 0) {
+            throw new CursorWindowAllocationException("Cursor window allocation of " +
+                    (sCursorWindowSize / 1024) + " kb failed. " + printStats());
+        }
+        mCloseGuard.open("close");
+        recordNewWindow(Binder.getCallingPid(), mWindowPtr);
+!!!6467333.java!!!	CursorWindow(inout localWindow : boolean)
+        this((String)null);
+!!!6467461.java!!!	CursorWindow(inout source : Parcel)
+        mStartPos = source.readInt();
+        mWindowPtr = nativeCreateFromParcel(source);
+        if (mWindowPtr == 0) {
+            throw new CursorWindowAllocationException("Cursor window could not be "
+                    + "created from binder.");
+        }
+        mName = nativeGetName(mWindowPtr);
+        mCloseGuard.open("close");
+!!!6467589.java!!!	finalize() : void
+        try {
+            if (mCloseGuard != null) {
+                mCloseGuard.warnIfOpen();
+            }
+            dispose();
+        } finally {
+            super.finalize();
+        }
+!!!6467717.java!!!	dispose() : void
+        if (mCloseGuard != null) {
+            mCloseGuard.close();
+        }
+        if (mWindowPtr != 0) {
+            recordClosingOfWindow(mWindowPtr);
+            nativeDispose(mWindowPtr);
+            mWindowPtr = 0;
+        }
+!!!6467845.java!!!	getName() : String
+        return mName;
+!!!6467973.java!!!	clear() : void
+        acquireReference();
+        try {
+            mStartPos = 0;
+            nativeClear(mWindowPtr);
+        } finally {
+            releaseReference();
+        }
+!!!6468101.java!!!	getStartPosition() : int
+        return mStartPos;
+!!!6468229.java!!!	setStartPosition(in pos : int) : void
+        mStartPos = pos;
+!!!6468357.java!!!	getNumRows() : int
+        acquireReference();
+        try {
+            return nativeGetNumRows(mWindowPtr);
+        } finally {
+            releaseReference();
+        }
+!!!6468485.java!!!	setNumColumns(in columnNum : int) : boolean
+        acquireReference();
+        try {
+            return nativeSetNumColumns(mWindowPtr, columnNum);
+        } finally {
+            releaseReference();
+        }
+!!!6468613.java!!!	allocRow() : boolean
+        acquireReference();
+        try {
+            return nativeAllocRow(mWindowPtr);
+        } finally {
+            releaseReference();
+        }
+!!!6468741.java!!!	freeLastRow() : void
+        acquireReference();
+        try {
+            nativeFreeLastRow(mWindowPtr);
+        } finally {
+            releaseReference();
+        }
+!!!6468869.java!!!	isNull(in row : int, in column : int) : boolean
+        return getType(row, column) == Cursor.FIELD_TYPE_NULL;
+!!!6468997.java!!!	isBlob(in row : int, in column : int) : boolean
+        int type = getType(row, column);
+        return type == Cursor.FIELD_TYPE_BLOB || type == Cursor.FIELD_TYPE_NULL;
+!!!6469125.java!!!	isLong(in row : int, in column : int) : boolean
+        return getType(row, column) == Cursor.FIELD_TYPE_INTEGER;
+!!!6469253.java!!!	isFloat(in row : int, in column : int) : boolean
+        return getType(row, column) == Cursor.FIELD_TYPE_FLOAT;
+!!!6469381.java!!!	isString(in row : int, in column : int) : boolean
+        int type = getType(row, column);
+        return type == Cursor.FIELD_TYPE_STRING || type == Cursor.FIELD_TYPE_NULL;
+!!!6469509.java!!!	getType(in row : int, in column : int) : int
+        acquireReference();
+        try {
+            return nativeGetType(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6469637.java!!!	getBlob(in row : int, in column : int) : byte
+        acquireReference();
+        try {
+            return nativeGetBlob(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6469765.java!!!	getString(in row : int, in column : int) : String
+        acquireReference();
+        try {
+            return nativeGetString(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6469893.java!!!	copyStringToBuffer(in row : int, in column : int, inout buffer : CharArrayBuffer) : void
+        if (buffer == null) {
+            throw new IllegalArgumentException("CharArrayBuffer should not be null");
+        }
+        acquireReference();
+        try {
+            nativeCopyStringToBuffer(mWindowPtr, row - mStartPos, column, buffer);
+        } finally {
+            releaseReference();
+        }
+!!!6470021.java!!!	getLong(in row : int, in column : int) : long
+        acquireReference();
+        try {
+            return nativeGetLong(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6470149.java!!!	getDouble(in row : int, in column : int) : double
+        acquireReference();
+        try {
+            return nativeGetDouble(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6470277.java!!!	getShort(in row : int, in column : int) : short
+        return (short) getLong(row, column);
+!!!6470405.java!!!	getInt(in row : int, in column : int) : int
+        return (int) getLong(row, column);
+!!!6470533.java!!!	getFloat(in row : int, in column : int) : float
+        return (float) getDouble(row, column);
+!!!6470661.java!!!	putBlob(inout value : byte [[]], in row : int, in column : int) : boolean
+        acquireReference();
+        try {
+            return nativePutBlob(mWindowPtr, value, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6470789.java!!!	putString(in value : String, in row : int, in column : int) : boolean
+        acquireReference();
+        try {
+            return nativePutString(mWindowPtr, value, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6470917.java!!!	putLong(in value : long, in row : int, in column : int) : boolean
+        acquireReference();
+        try {
+            return nativePutLong(mWindowPtr, value, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6471045.java!!!	putDouble(in value : double, in row : int, in column : int) : boolean
+        acquireReference();
+        try {
+            return nativePutDouble(mWindowPtr, value, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6471173.java!!!	putNull(in row : int, in column : int) : boolean
+        acquireReference();
+        try {
+            return nativePutNull(mWindowPtr, row - mStartPos, column);
+        } finally {
+            releaseReference();
+        }
+!!!6471301.java!!!	newFromParcel(inout p : Parcel) : CursorWindow
+        return CREATOR.createFromParcel(p);
+!!!6471429.java!!!	describeContents() : int
+        return 0;
+!!!6471557.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        acquireReference();
+        try {
+            dest.writeInt(mStartPos);
+            nativeWriteToParcel(mWindowPtr, dest);
+        } finally {
+            releaseReference();
+        }
+
+        if ((flags & Parcelable.PARCELABLE_WRITE_RETURN_VALUE) != 0) {
+            releaseReference();
+        }
+!!!6471685.java!!!	onAllReferencesReleased() : void
+        dispose();
+!!!6471813.java!!!	recordNewWindow(in pid : int, in window : long) : void
+        synchronized (sWindowToPidMap) {
+            sWindowToPidMap.put(window, pid);
+            if (Log.isLoggable(STATS_TAG, Log.VERBOSE)) {
+                Log.i(STATS_TAG, "Created a new Cursor. " + printStats());
+            }
+        }
+!!!6471941.java!!!	recordClosingOfWindow(in window : long) : void
+        synchronized (sWindowToPidMap) {
+            if (sWindowToPidMap.size() == 0) {
+                // this means we are not in the ContentProvider.
+                return;
+            }
+            sWindowToPidMap.delete(window);
+        }
+!!!6472069.java!!!	printStats() : String
+        StringBuilder buff = new StringBuilder();
+        int myPid = Process.myPid();
+        int total = 0;
+        SparseIntArray pidCounts = new SparseIntArray();
+        synchronized (sWindowToPidMap) {
+            int size = sWindowToPidMap.size();
+            if (size == 0) {
+                // this means we are not in the ContentProvider.
+                return "";
+            }
+            for (int indx = 0; indx < size; indx++) {
+                int pid = sWindowToPidMap.valueAt(indx);
+                int value = pidCounts.get(pid);
+                pidCounts.put(pid, ++value);
+            }
+        }
+        int numPids = pidCounts.size();
+        for (int i = 0; i < numPids;i++) {
+            buff.append(" (# cursors opened by ");
+            int pid = pidCounts.keyAt(i);
+            if (pid == myPid) {
+                buff.append("this proc=");
+            } else {
+                buff.append("pid " + pid + "=");
+            }
+            int num = pidCounts.get(pid);
+            buff.append(num + ")");
+            total += num;
+        }
+        // limit the returned string size to 1000
+        String s = (buff.length() > 980) ? buff.substring(0, 980) : buff.toString();
+        return "# Open Cursors=" + total + s;
+!!!6472197.java!!!	toString() : String
+        return getName() + " {" + Long.toHexString(mWindowPtr) + "}";

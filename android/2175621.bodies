@@ -1,0 +1,283 @@
+class PersistableBundle
+!!!14712453.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    /*
+     * Keep implementation in sync with writeToParcelInner() in
+     * frameworks/base/core/java/android/os/BaseBundle.java.
+     */
+
+    // Special case for empty bundles.
+    if (empty()) {
+        RETURN_IF_FAILED(parcel->writeInt32(0));
+        return NO_ERROR;
+    }
+
+    size_t length_pos = parcel->dataPosition();
+    RETURN_IF_FAILED(parcel->writeInt32(1));  // dummy, will hold length
+    RETURN_IF_FAILED(parcel->writeInt32(BUNDLE_MAGIC));
+
+    size_t start_pos = parcel->dataPosition();
+    RETURN_IF_FAILED(writeToParcelInner(parcel));
+    size_t end_pos = parcel->dataPosition();
+
+    // Backpatch length. This length value includes the length header.
+    parcel->setDataPosition(length_pos);
+    size_t length = end_pos - start_pos;
+    if (length > std::numeric_limits<int32_t>::max()) {
+        ALOGE("Parcel length (%zu) too large to store in 32-bit signed int", length);
+        return BAD_VALUE;
+    }
+    RETURN_IF_FAILED(parcel->writeInt32(static_cast<int32_t>(length)));
+    parcel->setDataPosition(end_pos);
+    return NO_ERROR;
+!!!14712581.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    /*
+     * Keep implementation in sync with readFromParcelInner() in
+     * frameworks/base/core/java/android/os/BaseBundle.java.
+     */
+    int32_t length = parcel->readInt32();
+    if (length < 0) {
+        ALOGE("Bad length in parcel: %d", length);
+        return UNEXPECTED_NULL;
+    }
+
+    return readFromParcelInner(parcel, static_cast<size_t>(length));
+!!!14712709.cpp!!!	empty() : bool
+    return size() == 0u;
+!!!14712837.cpp!!!	size() : size_t
+    return (mBoolMap.size() +
+            mIntMap.size() +
+            mLongMap.size() +
+            mDoubleMap.size() +
+            mStringMap.size() +
+            mBoolVectorMap.size() +
+            mIntVectorMap.size() +
+            mLongVectorMap.size() +
+            mDoubleVectorMap.size() +
+            mStringVectorMap.size() +
+            mPersistableBundleMap.size());
+!!!14712965.cpp!!!	erase(in key : String16) : size_t
+    RETURN_IF_ENTRY_ERASED(mBoolMap, key);
+    RETURN_IF_ENTRY_ERASED(mIntMap, key);
+    RETURN_IF_ENTRY_ERASED(mLongMap, key);
+    RETURN_IF_ENTRY_ERASED(mDoubleMap, key);
+    RETURN_IF_ENTRY_ERASED(mStringMap, key);
+    RETURN_IF_ENTRY_ERASED(mBoolVectorMap, key);
+    RETURN_IF_ENTRY_ERASED(mIntVectorMap, key);
+    RETURN_IF_ENTRY_ERASED(mLongVectorMap, key);
+    RETURN_IF_ENTRY_ERASED(mDoubleVectorMap, key);
+    RETURN_IF_ENTRY_ERASED(mStringVectorMap, key);
+    return mPersistableBundleMap.erase(key);
+!!!14713093.cpp!!!	putBoolean(in key : String16, in value : bool) : void
+    erase(key);
+    mBoolMap[key] = value;
+!!!14713221.cpp!!!	putInt(in key : String16, in value : int32_t) : void
+    erase(key);
+    mIntMap[key] = value;
+!!!14713349.cpp!!!	putLong(in key : String16, in value : int64_t) : void
+    erase(key);
+    mLongMap[key] = value;
+!!!14713477.cpp!!!	putDouble(in key : String16, in value : double) : void
+    erase(key);
+    mDoubleMap[key] = value;
+!!!14713605.cpp!!!	putString(in key : String16, in value : String16) : void
+    erase(key);
+    mStringMap[key] = value;
+!!!14714373.cpp!!!	putPersistableBundle(in key : String16, in value : PersistableBundle) : void
+    erase(key);
+    mPersistableBundleMap[key] = value;
+!!!14714501.cpp!!!	getBoolean(in key : String16, inout out : bool) : bool
+    return getValue(key, out, mBoolMap);
+!!!14714629.cpp!!!	getInt(in key : String16, inout out : int32_t) : bool
+    return getValue(key, out, mIntMap);
+!!!14714757.cpp!!!	getLong(in key : String16, inout out : int64_t) : bool
+    return getValue(key, out, mLongMap);
+!!!14714885.cpp!!!	getDouble(in key : String16, inout out : double) : bool
+    return getValue(key, out, mDoubleMap);
+!!!14715013.cpp!!!	getString(in key : String16, inout out : String16) : bool
+    return getValue(key, out, mStringMap);
+!!!14715781.cpp!!!	getPersistableBundle(in key : String16, inout out : PersistableBundle) : bool
+    return getValue(key, out, mPersistableBundleMap);
+!!!14715909.cpp!!!	getBooleanKeys() : std::set<String16>
+    return getKeys(mBoolMap);
+!!!14716037.cpp!!!	getIntKeys() : std::set<String16>
+    return getKeys(mIntMap);
+!!!14716165.cpp!!!	getLongKeys() : std::set<String16>
+    return getKeys(mLongMap);
+!!!14716293.cpp!!!	getDoubleKeys() : std::set<String16>
+    return getKeys(mDoubleMap);
+!!!14716421.cpp!!!	getStringKeys() : std::set<String16>
+    return getKeys(mStringMap);
+!!!14716549.cpp!!!	getBooleanVectorKeys() : std::set<String16>
+    return getKeys(mBoolVectorMap);
+!!!14716677.cpp!!!	getIntVectorKeys() : std::set<String16>
+    return getKeys(mIntVectorMap);
+!!!14716805.cpp!!!	getLongVectorKeys() : std::set<String16>
+    return getKeys(mLongVectorMap);
+!!!14716933.cpp!!!	getDoubleVectorKeys() : std::set<String16>
+    return getKeys(mDoubleVectorMap);
+!!!14717061.cpp!!!	getStringVectorKeys() : std::set<String16>
+    return getKeys(mStringVectorMap);
+!!!14717189.cpp!!!	getPersistableBundleKeys() : std::set<String16>
+    return getKeys(mPersistableBundleMap);
+!!!14717573.cpp!!!	writeToParcelInner(inout parcel : Parcel) : status_t
+    /*
+     * To keep this implementation in sync with writeArrayMapInternal() in
+     * frameworks/base/core/java/android/os/Parcel.java, the number of key
+     * value pairs must be written into the parcel before writing the key-value
+     * pairs themselves.
+     */
+    size_t num_entries = size();
+    if (num_entries > std::numeric_limits<int32_t>::max()) {
+        ALOGE("The size of this PersistableBundle (%zu) too large to store in 32-bit signed int",
+              num_entries);
+        return BAD_VALUE;
+    }
+    RETURN_IF_FAILED(parcel->writeInt32(static_cast<int32_t>(num_entries)));
+
+    for (const auto& key_val_pair : mBoolMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_BOOLEAN));
+        RETURN_IF_FAILED(parcel->writeBool(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mIntMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_INTEGER));
+        RETURN_IF_FAILED(parcel->writeInt32(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mLongMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_LONG));
+        RETURN_IF_FAILED(parcel->writeInt64(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mDoubleMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_DOUBLE));
+        RETURN_IF_FAILED(parcel->writeDouble(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mStringMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_STRING));
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mBoolVectorMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_BOOLEANARRAY));
+        RETURN_IF_FAILED(parcel->writeBoolVector(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mIntVectorMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_INTARRAY));
+        RETURN_IF_FAILED(parcel->writeInt32Vector(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mLongVectorMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_LONGARRAY));
+        RETURN_IF_FAILED(parcel->writeInt64Vector(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mDoubleVectorMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_DOUBLEARRAY));
+        RETURN_IF_FAILED(parcel->writeDoubleVector(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mStringVectorMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_STRINGARRAY));
+        RETURN_IF_FAILED(parcel->writeString16Vector(key_val_pair.second));
+    }
+    for (const auto& key_val_pair : mPersistableBundleMap) {
+        RETURN_IF_FAILED(parcel->writeString16(key_val_pair.first));
+        RETURN_IF_FAILED(parcel->writeInt32(VAL_PERSISTABLEBUNDLE));
+        RETURN_IF_FAILED(key_val_pair.second.writeToParcel(parcel));
+    }
+    return NO_ERROR;
+!!!14717701.cpp!!!	readFromParcelInner(in parcel : Parcel, in length : size_t) : status_t
+    /*
+     * Note: we don't actually use length for anything other than an empty PersistableBundle
+     * check, since we do not actually need to copy in an entire Parcel, unlike in the Java
+     * implementation.
+     */
+    if (length == 0) {
+        // Empty PersistableBundle or end of data.
+        return NO_ERROR;
+    }
+
+    int32_t magic;
+    RETURN_IF_FAILED(parcel->readInt32(&magic));
+    if (magic != BUNDLE_MAGIC) {
+        ALOGE("Bad magic number for PersistableBundle: 0x%08x", magic);
+        return BAD_VALUE;
+    }
+
+    /*
+     * To keep this implementation in sync with unparcel() in
+     * frameworks/base/core/java/android/os/BaseBundle.java, the number of
+     * key-value pairs must be read from the parcel before reading the key-value
+     * pairs themselves.
+     */
+    int32_t num_entries;
+    RETURN_IF_FAILED(parcel->readInt32(&num_entries));
+
+    for (; num_entries > 0; --num_entries) {
+        String16 key;
+        int32_t value_type;
+        RETURN_IF_FAILED(parcel->readString16(&key));
+        RETURN_IF_FAILED(parcel->readInt32(&value_type));
+
+        /*
+         * We assume that both the C++ and Java APIs ensure that all keys in a PersistableBundle
+         * are unique.
+         */
+        switch (value_type) {
+            case VAL_STRING: {
+                RETURN_IF_FAILED(parcel->readString16(&mStringMap[key]));
+                break;
+            }
+            case VAL_INTEGER: {
+                RETURN_IF_FAILED(parcel->readInt32(&mIntMap[key]));
+                break;
+            }
+            case VAL_LONG: {
+                RETURN_IF_FAILED(parcel->readInt64(&mLongMap[key]));
+                break;
+            }
+            case VAL_DOUBLE: {
+                RETURN_IF_FAILED(parcel->readDouble(&mDoubleMap[key]));
+                break;
+            }
+            case VAL_BOOLEAN: {
+                RETURN_IF_FAILED(parcel->readBool(&mBoolMap[key]));
+                break;
+            }
+            case VAL_STRINGARRAY: {
+                RETURN_IF_FAILED(parcel->readString16Vector(&mStringVectorMap[key]));
+                break;
+            }
+            case VAL_INTARRAY: {
+                RETURN_IF_FAILED(parcel->readInt32Vector(&mIntVectorMap[key]));
+                break;
+            }
+            case VAL_LONGARRAY: {
+                RETURN_IF_FAILED(parcel->readInt64Vector(&mLongVectorMap[key]));
+                break;
+            }
+            case VAL_BOOLEANARRAY: {
+                RETURN_IF_FAILED(parcel->readBoolVector(&mBoolVectorMap[key]));
+                break;
+            }
+            case VAL_PERSISTABLEBUNDLE: {
+                RETURN_IF_FAILED(mPersistableBundleMap[key].readFromParcel(parcel));
+                break;
+            }
+            case VAL_DOUBLEARRAY: {
+                RETURN_IF_FAILED(parcel->readDoubleVector(&mDoubleVectorMap[key]));
+                break;
+            }
+            default: {
+                ALOGE("Unrecognized type: %d", value_type);
+                return BAD_TYPE;
+                break;
+            }
+        }
+    }
+
+    return NO_ERROR;

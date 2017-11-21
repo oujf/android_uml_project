@@ -1,0 +1,76 @@
+class HighResThumbnailLoader
+!!!3523461.java!!!	HighResThumbnailLoader(inout ssp : SystemServicesProxy, inout looper : Looper)
+        mMainThreadHandler = new Handler(looper);
+        mLoadThread = new Thread(mLoader, "Recents-HighResThumbnailLoader");
+        mLoadThread.start();
+        mSystemServicesProxy = ssp;
+!!!3523589.java!!!	setVisible(inout visible : boolean) : void
+        mVisible = visible;
+        updateLoading();
+!!!3523717.java!!!	setFlingingFast(inout flingingFast : boolean) : void
+        if (mFlingingFast == flingingFast) {
+            return;
+        }
+        mFlingingFast = flingingFast;
+        updateLoading();
+!!!3523845.java!!!	setTaskLoadQueueIdle(inout idle : boolean) : void
+        mTaskLoadQueueIdle = idle;
+        updateLoading();
+!!!3523973.java!!!	isLoading() : boolean
+        return mLoading;
+!!!3524101.java!!!	updateLoading() : void
+        setLoading(mVisible && !mFlingingFast && mTaskLoadQueueIdle);
+!!!3524229.java!!!	setLoading(inout loading : boolean) : void
+        if (loading == mLoading) {
+            return;
+        }
+        synchronized (mLoadQueue) {
+            mLoading = loading;
+            if (!loading) {
+                stopLoading();
+            } else {
+                startLoading();
+            }
+        }
+!!!3524357.java!!!	startLoading() : void
+        for (int i = mVisibleTasks.size() - 1; i >= 0; i--) {
+            Task t = mVisibleTasks.get(i);
+            if ((t.thumbnail == null || t.thumbnail.reducedResolution)
+                    && !mLoadQueue.contains(t) && !mLoadingTasks.contains(t)) {
+                mLoadQueue.add(t);
+            }
+        }
+        mLoadQueue.notifyAll();
+!!!3524485.java!!!	stopLoading() : void
+        mLoadQueue.clear();
+        mLoadQueue.notifyAll();
+!!!3524613.java!!!	onTaskVisible(inout t : Task) : void
+        t.addCallback(this);
+        mVisibleTasks.add(t);
+        if ((t.thumbnail == null || t.thumbnail.reducedResolution) && mLoading) {
+            synchronized (mLoadQueue) {
+                mLoadQueue.add(t);
+                mLoadQueue.notifyAll();
+            }
+        }
+!!!3524741.java!!!	onTaskInvisible(inout t : Task) : void
+        t.removeCallback(this);
+        mVisibleTasks.remove(t);
+        synchronized (mLoadQueue) {
+            mLoadQueue.remove(t);
+        }
+!!!3524869.java!!!	waitForLoaderIdle() : void
+        while (true) {
+            synchronized (mLoadQueue) {
+                if (mLoadQueue.isEmpty() && mLoaderIdling) {
+                    return;
+                }
+            }
+            SystemClock.sleep(100);
+        }
+!!!3524997.java!!!	onTaskDataLoaded(inout task : Task, inout thumbnailData : ThumbnailData) : void
+        if (thumbnailData != null && !thumbnailData.reducedResolution) {
+            synchronized (mLoadQueue) {
+                mLoadQueue.remove(task);
+            }
+        }

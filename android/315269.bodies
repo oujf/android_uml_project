@@ -1,0 +1,78 @@
+class BnDataSource
+!!!825477.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+        case GET_IMEMORY: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            reply->writeStrongBinder(IInterface::asBinder(getIMemory()));
+            return NO_ERROR;
+        } break;
+        case READ_AT: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            off64_t offset = (off64_t) data.readInt64();
+            size_t size = (size_t) data.readInt64();
+            reply->writeInt64(readAt(offset, size));
+            return NO_ERROR;
+        } break;
+        case GET_SIZE: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            off64_t size;
+            status_t err = getSize(&size);
+            reply->writeInt32(err);
+            reply->writeInt64(size);
+            return NO_ERROR;
+        } break;
+        case CLOSE: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            close();
+            return NO_ERROR;
+        } break;
+        case GET_FLAGS: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            reply->writeUint32(getFlags());
+            return NO_ERROR;
+        } break;
+        case TO_STRING: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            reply->writeString8(toString());
+            return NO_ERROR;
+        } break;
+        case DRM_INITIALIZATION: {
+            CHECK_INTERFACE(IDataSource, data, reply);
+            const char *mime = NULL;
+            const int32_t flag = data.readInt32();
+            if (flag != 0) {
+                mime = data.readCString();
+            }
+            sp<DecryptHandle> handle = DrmInitialization(mime);
+            if (handle != NULL) {
+                reply->writeInt32(handle->decryptId);
+                reply->writeString8(handle->mimeType);
+                reply->writeInt32(handle->decryptApiType);
+                reply->writeInt32(handle->status);
+
+                if (handle->decryptInfo != NULL) {
+                    reply->writeInt32(handle->decryptInfo->decryptBufferLength);
+                } else {
+                    reply->writeInt32(-1);
+                }
+
+                size_t size = handle->copyControlVector.size();
+                reply->writeInt32(size);
+                for (size_t i = 0; i < size; ++i) {
+                    reply->writeInt32(handle->copyControlVector.keyAt(i));
+                    reply->writeInt32(handle->copyControlVector.valueAt(i));
+                }
+
+                size = handle->extendedData.size();
+                reply->writeInt32(size);
+                for (size_t i = 0; i < size; ++i) {
+                    reply->writeString8(handle->extendedData.keyAt(i));
+                    reply->writeString8(handle->extendedData.valueAt(i));
+                }
+            }
+            return NO_ERROR;
+        } break;
+
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

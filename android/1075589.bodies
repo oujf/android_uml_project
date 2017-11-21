@@ -1,0 +1,88 @@
+class ActivityMonitor
+!!!5495173.java!!!	ActivityMonitor(inout which : IntentFilter, inout result : Instrumentation::ActivityResult, inout block : boolean)
+            mWhich = which;
+            mClass = null;
+            mResult = result;
+            mBlock = block;
+            mIgnoreMatchingSpecificIntents = false;
+!!!5495301.java!!!	ActivityMonitor(in cls : String, inout result : Instrumentation::ActivityResult, inout block : boolean)
+            mWhich = null;
+            mClass = cls;
+            mResult = result;
+            mBlock = block;
+            mIgnoreMatchingSpecificIntents = false;
+!!!5495429.java!!!	ActivityMonitor()
+            mWhich = null;
+            mClass = null;
+            mResult = null;
+            mBlock = false;
+            mIgnoreMatchingSpecificIntents = true;
+!!!5495557.java!!!	ignoreMatchingSpecificIntents() : boolean
+            return mIgnoreMatchingSpecificIntents;
+!!!5495685.java!!!	getFilter() : IntentFilter
+            return mWhich;
+!!!5495813.java!!!	getResult() : Instrumentation::ActivityResult
+            return mResult;
+!!!5495941.java!!!	isBlocking() : boolean
+            return mBlock;
+!!!5496069.java!!!	getHits() : int
+            return mHits;
+!!!5496197.java!!!	getLastActivity() : Activity
+            return mLastActivity;
+!!!5496325.java!!!	waitForActivity() : Activity
+            synchronized (this) {
+                while (mLastActivity == null) {
+                    try {
+                        wait();
+                    } catch (InterruptedException e) {
+                    }
+                }
+                Activity res = mLastActivity;
+                mLastActivity = null;
+                return res;
+            }
+!!!5496453.java!!!	waitForActivityWithTimeout(in timeOut : long) : Activity
+            synchronized (this) {
+                if (mLastActivity == null) {
+                    try {
+                        wait(timeOut);
+                    } catch (InterruptedException e) {
+                    }
+                }
+                if (mLastActivity == null) {
+                    return null;
+                } else {
+                    Activity res = mLastActivity;
+                    mLastActivity = null;
+                    return res;
+                }
+            }
+!!!5496581.java!!!	onStartActivity(inout intent : Intent) : Instrumentation::ActivityResult
+            return null;
+!!!5496709.java!!!	match(inout who : Context, inout activity : Activity, inout intent : Intent) : boolean
+            if (mIgnoreMatchingSpecificIntents) {
+                return false;
+            }
+            synchronized (this) {
+                if (mWhich != null
+                    && mWhich.match(who.getContentResolver(), intent,
+                                    true, "Instrumentation") < 0) {
+                    return false;
+                }
+                if (mClass != null) {
+                    String cls = null;
+                    if (activity != null) {
+                        cls = activity.getClass().getName();
+                    } else if (intent.getComponent() != null) {
+                        cls = intent.getComponent().getClassName();
+                    }
+                    if (cls == null || !mClass.equals(cls)) {
+                        return false;
+                    }
+                }
+                if (activity != null) {
+                    mLastActivity = activity;
+                    notifyAll();
+                }
+                return true;
+            }

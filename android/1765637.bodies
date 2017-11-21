@@ -1,0 +1,78 @@
+class DiskStatsFileLogger
+!!!12472837.java!!!	DiskStatsFileLogger(inout result : FileCollector::MeasurementResult, inout downloadsResult : FileCollector::MeasurementResult, inout stats : List<PackageStats>, in systemSize : long)
+        mResult = result;
+        mDownloadsSize = downloadsResult.totalAccountedSize();
+        mSystemSize = systemSize;
+        mPackageStats = stats;
+!!!12472965.java!!!	dumpToFile(inout file : File) : void
+        PrintWriter pw = new PrintWriter(file);
+        JSONObject representation = getJsonRepresentation();
+        if (representation != null) {
+            pw.println(representation);
+        }
+        pw.close();
+!!!12473093.java!!!	getJsonRepresentation() : JSONObject
+        JSONObject json = new JSONObject();
+        try {
+            json.put(LAST_QUERY_TIMESTAMP_KEY, System.currentTimeMillis());
+            json.put(PHOTOS_KEY, mResult.imagesSize);
+            json.put(VIDEOS_KEY, mResult.videosSize);
+            json.put(AUDIO_KEY, mResult.audioSize);
+            json.put(DOWNLOADS_KEY, mDownloadsSize);
+            json.put(SYSTEM_KEY, mSystemSize);
+            json.put(MISC_KEY, mResult.miscSize);
+            addAppsToJson(json);
+        } catch (JSONException e) {
+            Log.e(TAG, e.toString());
+            return null;
+        }
+
+        return json;
+!!!12473221.java!!!	addAppsToJson(inout json : JSONObject) : void
+        JSONArray names = new JSONArray();
+        JSONArray appSizeList = new JSONArray();
+        JSONArray cacheSizeList = new JSONArray();
+
+        long appSizeSum = 0L;
+        long cacheSizeSum = 0L;
+        boolean isExternal = Environment.isExternalStorageEmulated();
+        for (Map.Entry<String, PackageStats> entry : filterOnlyPrimaryUser().entrySet()) {
+            PackageStats stat = entry.getValue();
+            long appSize = stat.codeSize + stat.dataSize;
+            long cacheSize = stat.cacheSize;
+            if (isExternal) {
+                appSize += stat.externalCodeSize + stat.externalDataSize;
+                cacheSize += stat.externalCacheSize;
+            }
+            appSizeSum += appSize;
+            cacheSizeSum += cacheSize;
+
+            names.put(stat.packageName);
+            appSizeList.put(appSize);
+            cacheSizeList.put(cacheSize);
+        }
+        json.put(PACKAGE_NAMES_KEY, names);
+        json.put(APP_SIZES_KEY, appSizeList);
+        json.put(APP_CACHES_KEY, cacheSizeList);
+        json.put(APP_SIZE_AGG_KEY, appSizeSum);
+        json.put(APP_CACHE_AGG_KEY, cacheSizeSum);
+!!!12473349.java!!!	filterOnlyPrimaryUser() : ArrayMap
+        ArrayMap<String, PackageStats> packageMap = new ArrayMap<>();
+        for (PackageStats stat : mPackageStats) {
+            if (stat.userHandle != UserHandle.USER_SYSTEM) {
+                continue;
+            }
+
+            PackageStats existingStats = packageMap.get(stat.packageName);
+            if (existingStats != null) {
+                existingStats.cacheSize += stat.cacheSize;
+                existingStats.codeSize += stat.codeSize;
+                existingStats.dataSize += stat.dataSize;
+                existingStats.externalCacheSize += stat.externalCacheSize;
+                existingStats.externalCodeSize += stat.externalCodeSize;
+                existingStats.externalDataSize += stat.externalDataSize;
+            } else {
+                packageMap.put(stat.packageName, new PackageStats(stat));
+            }
+        }
+        return packageMap;

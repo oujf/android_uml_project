@@ -1,0 +1,130 @@
+class RemoteCallbackList
+!!!6870021.java!!!	register(inout callback : E) : boolean
+        return register(callback, null);
+!!!6870149.java!!!	register(inout callback : E, inout cookie : Object) : boolean
+        synchronized (mCallbacks) {
+            if (mKilled) {
+                return false;
+            }
+            // Flag unusual case that could be caused by a leak. b/36778087
+            logExcessiveCallbacks();
+            IBinder binder = callback.asBinder();
+            try {
+                Callback cb = new Callback(callback, cookie);
+                binder.linkToDeath(cb, 0);
+                mCallbacks.put(binder, cb);
+                return true;
+            } catch (RemoteException e) {
+                return false;
+            }
+        }
+!!!6870277.java!!!	unregister(inout callback : E) : boolean
+        synchronized (mCallbacks) {
+            Callback cb = mCallbacks.remove(callback.asBinder());
+            if (cb != null) {
+                cb.mCallback.asBinder().unlinkToDeath(cb, 0);
+                return true;
+            }
+            return false;
+        }
+!!!6870405.java!!!	kill() : void
+        synchronized (mCallbacks) {
+            for (int cbi=mCallbacks.size()-1; cbi>=0; cbi--) {
+                Callback cb = mCallbacks.valueAt(cbi);
+                cb.mCallback.asBinder().unlinkToDeath(cb, 0);
+            }
+            mCallbacks.clear();
+            mKilled = true;
+        }
+!!!6870661.java!!!	onCallbackDied(inout callback : E, inout cookie : Object) : void
+        onCallbackDied(callback);
+!!!6870789.java!!!	beginBroadcast() : int
+        synchronized (mCallbacks) {
+            if (mBroadcastCount > 0) {
+                throw new IllegalStateException(
+                        "beginBroadcast() called while already in a broadcast");
+            }
+            
+            final int N = mBroadcastCount = mCallbacks.size();
+            if (N <= 0) {
+                return 0;
+            }
+            Object[] active = mActiveBroadcast;
+            if (active == null || active.length < N) {
+                mActiveBroadcast = active = new Object[N];
+            }
+            for (int i=0; i<N; i++) {
+                active[i] = mCallbacks.valueAt(i);
+            }
+            return N;
+        }
+!!!6870917.java!!!	getBroadcastItem(in index : int) : E
+        return ((Callback)mActiveBroadcast[index]).mCallback;
+!!!6871045.java!!!	getBroadcastCookie(in index : int) : Object
+        return ((Callback)mActiveBroadcast[index]).mCookie;
+!!!6871173.java!!!	finishBroadcast() : void
+        synchronized (mCallbacks) {
+            if (mBroadcastCount < 0) {
+                throw new IllegalStateException(
+                        "finishBroadcast() called outside of a broadcast");
+            }
+
+            Object[] active = mActiveBroadcast;
+            if (active != null) {
+                final int N = mBroadcastCount;
+                for (int i=0; i<N; i++) {
+                    active[i] = null;
+                }
+            }
+
+            mBroadcastCount = -1;
+        }
+!!!6871301.java!!!	broadcast(inout action : Consumer<E>) : void
+        int itemCount = beginBroadcast();
+        try {
+            for (int i = 0; i < itemCount; i++) {
+                action.accept(getBroadcastItem(i));
+            }
+        } finally {
+            finishBroadcast();
+        }
+!!!6871429.java!!!	getRegisteredCallbackCount() : int
+        synchronized (mCallbacks) {
+            if (mKilled) {
+                return 0;
+            }
+            return mCallbacks.size();
+        }
+!!!6871557.java!!!	getRegisteredCallbackItem(in index : int) : E
+        synchronized (mCallbacks) {
+            if (mKilled) {
+                return null;
+            }
+            return mCallbacks.valueAt(index).mCallback;
+        }
+!!!6871685.java!!!	getRegisteredCallbackCookie(in index : int) : Object
+        synchronized (mCallbacks) {
+            if (mKilled) {
+                return null;
+            }
+            return mCallbacks.valueAt(index).mCookie;
+        }
+!!!6871813.java!!!	logExcessiveCallbacks() : void
+        final long size = mCallbacks.size();
+        final long TOO_MANY = 3000;
+        final long MAX_CHARS = 1000;
+        if (size >= TOO_MANY) {
+            if (size == TOO_MANY && mRecentCallers == null) {
+                mRecentCallers = new StringBuilder();
+            }
+            if (mRecentCallers != null && mRecentCallers.length() < MAX_CHARS) {
+                mRecentCallers.append(Debug.getCallers(5));
+                mRecentCallers.append('\n');
+                if (mRecentCallers.length() >= MAX_CHARS) {
+                    Slog.wtf(TAG, "More than "
+                            + TOO_MANY + " remote callbacks registered. Recent callers:\n"
+                            + mRecentCallers.toString());
+                    mRecentCallers = null;
+                }
+            }
+        }

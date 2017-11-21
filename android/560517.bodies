@@ -1,0 +1,33 @@
+class BufferRemovedListener
+!!!1675781.cpp!!!	onBufferFreed(in graphicBuffer : wp<GraphicBuffer>) : void
+    Mutex::Autolock _l(mLock);
+    sp<AImageReader> reader = mReader.promote();
+    if (reader == nullptr) {
+        ALOGW("A frame is available after AImageReader closed!");
+        return; // reader has been closed
+    }
+    if (mListener.onBufferRemoved == nullptr) {
+        return; // No callback registered
+    }
+
+    sp<GraphicBuffer> gBuffer = graphicBuffer.promote();
+    if (gBuffer == nullptr) {
+        ALOGW("A buffer being freed has gone away!");
+        return; // buffer is already destroyed
+    }
+
+    sp<AMessage> msg = new AMessage(AImageReader::kWhatBufferRemoved, reader->mHandler);
+    msg->setPointer(
+        AImageReader::kCallbackFpKey, (void*) mListener.onBufferRemoved);
+    msg->setPointer(AImageReader::kContextKey, mListener.context);
+    msg->setObject(AImageReader::kGraphicBufferKey, gBuffer);
+    msg->post();
+!!!1675909.cpp!!!	setBufferRemovedListener(inout listener : AImageReader_BufferRemovedListener) : media_status_t
+    Mutex::Autolock _l(mLock);
+    if (listener == nullptr) {
+        mListener.context = nullptr;
+        mListener.onBufferRemoved = nullptr;
+    } else {
+        mListener = *listener;
+    }
+    return AMEDIA_OK;

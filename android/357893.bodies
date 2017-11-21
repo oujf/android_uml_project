@@ -1,0 +1,660 @@
+class MediaAnalyticsItem
+!!!948613.cpp!!!	MediaAnalyticsItem()
+    mKey = MediaAnalyticsItem::kKeyNone;
+!!!948741.cpp!!!	MediaAnalyticsItem(in key : MediaAnalyticsItem::Key)
+    if (DEBUG_ALLOCATIONS) {
+        ALOGD("Allocate MediaAnalyticsItem @ %p", this);
+    }
+    mKey = key;
+!!!948869.cpp!!!	~MediaAnalyticsItem()
+    if (DEBUG_ALLOCATIONS) {
+        ALOGD("Destroy  MediaAnalyticsItem @ %p", this);
+    }
+    clear();
+!!!948997.cpp!!!	setFinalized(in value : bool) : MediaAnalyticsItem
+    mFinalized = value;
+    return *this;
+!!!949125.cpp!!!	getFinalized() : bool
+    return mFinalized;
+!!!949253.cpp!!!	setSessionID(in id : MediaAnalyticsItem::SessionID_t) : MediaAnalyticsItem
+    mSessionID = id;
+    return *this;
+!!!949381.cpp!!!	clearSessionID() : MediaAnalyticsItem
+    mSessionID = MediaAnalyticsItem::SessionIDNone;
+    return *this;
+!!!949509.cpp!!!	getSessionID() : MediaAnalyticsItem::SessionID_t
+    return mSessionID;
+!!!949637.cpp!!!	generateSessionID() : MediaAnalyticsItem::SessionID_t
+
+    if (mSessionID == SessionIDNone) {
+        // get one from the server
+        MediaAnalyticsItem::SessionID_t newid = SessionIDNone;
+        sp<IMediaAnalyticsService> svc = getInstance();
+        if (svc != NULL) {
+            newid = svc->generateUniqueSessionID();
+        }
+        mSessionID = newid;
+    }
+
+    return mSessionID;
+!!!949765.cpp!!!	clear() : void
+
+    // clean allocated storage from key
+    mKey.clear();
+
+    // clean various major parameters
+    mSessionID = MediaAnalyticsItem::SessionIDNone;
+
+    // clean attributes
+    // contents of the attributes
+    for (size_t i = 0 ; i < mPropSize; i++ ) {
+        clearProp(&mProps[i]);
+    }
+    // the attribute records themselves
+    if (mProps != NULL) {
+        free(mProps);
+        mProps = NULL;
+    }
+    mPropSize = 0;
+    mPropCount = 0;
+
+    return;
+!!!949893.cpp!!!	dup() : MediaAnalyticsItem
+    MediaAnalyticsItem *dst = new MediaAnalyticsItem(this->mKey);
+
+    if (dst != NULL) {
+        // key as part of constructor
+        dst->mPid = this->mPid;
+        dst->mUid = this->mUid;
+        dst->mSessionID = this->mSessionID;
+        dst->mTimestamp = this->mTimestamp;
+        dst->mFinalized = this->mFinalized;
+
+        // properties aka attributes
+        dst->growProps(this->mPropCount);
+        for(size_t i=0;i<mPropCount;i++) {
+            copyProp(&dst->mProps[i], &this->mProps[i]);
+        }
+        dst->mPropCount = this->mPropCount;
+    }
+
+    return dst;
+!!!950021.cpp!!!	setKey(in key : MediaAnalyticsItem::Key) : MediaAnalyticsItem
+    mKey = key;
+    return *this;
+!!!950149.cpp!!!	getKey() : MediaAnalyticsItem::Key
+    return mKey;
+!!!950277.cpp!!!	count() : int32_t
+    return mPropCount;
+!!!950405.cpp!!!	setInt32(in name : MediaAnalyticsItem::Attr, in value : int32_t) : void
+    Prop *prop = allocateProp(name);
+    prop->mType = kTypeInt32;
+    prop->u.int32Value = value;
+!!!950533.cpp!!!	setInt64(in name : MediaAnalyticsItem::Attr, in value : int64_t) : void
+    Prop *prop = allocateProp(name);
+    prop->mType = kTypeInt64;
+    prop->u.int64Value = value;
+!!!950661.cpp!!!	setDouble(in name : MediaAnalyticsItem::Attr, in value : double) : void
+    Prop *prop = allocateProp(name);
+    prop->mType = kTypeDouble;
+    prop->u.doubleValue = value;
+!!!950789.cpp!!!	setRate(in name : MediaAnalyticsItem::Attr, in count : int64_t, in duration : int64_t) : void
+    Prop *prop = allocateProp(name);
+    prop->mType = kTypeRate;
+    prop->u.rate.count = count;
+    prop->u.rate.duration = duration;
+!!!950917.cpp!!!	setCString(in name : MediaAnalyticsItem::Attr, in value : char) : void
+
+    Prop *prop = allocateProp(name);
+    // any old value will be gone
+    prop->mType = kTypeCString;
+    prop->u.CStringValue = strdup(value);
+!!!951045.cpp!!!	addInt32(in name : MediaAnalyticsItem::Attr, in value : int32_t) : void
+    Prop *prop = allocateProp(name);
+    switch (prop->mType) {
+        case kTypeInt32:
+            prop->u.int32Value += value;
+            break;
+        default:
+            clearPropValue(prop);
+            prop->mType = kTypeInt32;
+            prop->u.int32Value = value;
+            break;
+    }
+!!!951173.cpp!!!	addInt64(in name : MediaAnalyticsItem::Attr, in value : int64_t) : void
+    Prop *prop = allocateProp(name);
+    switch (prop->mType) {
+        case kTypeInt64:
+            prop->u.int64Value += value;
+            break;
+        default:
+            clearPropValue(prop);
+            prop->mType = kTypeInt64;
+            prop->u.int64Value = value;
+            break;
+    }
+!!!951301.cpp!!!	addDouble(in name : MediaAnalyticsItem::Attr, in value : double) : void
+    Prop *prop = allocateProp(name);
+    switch (prop->mType) {
+        case kTypeDouble:
+            prop->u.doubleValue += value;
+            break;
+        default:
+            clearPropValue(prop);
+            prop->mType = kTypeDouble;
+            prop->u.doubleValue = value;
+            break;
+    }
+!!!951429.cpp!!!	addRate(in name : MediaAnalyticsItem::Attr, in count : int64_t, in duration : int64_t) : void
+    Prop *prop = allocateProp(name);
+    switch (prop->mType) {
+        case kTypeRate:
+            prop->u.rate.count += count;
+            prop->u.rate.duration += duration;
+            break;
+        default:
+            clearPropValue(prop);
+            prop->mType = kTypeRate;
+            prop->u.rate.count = count;
+            prop->u.rate.duration = duration;
+            break;
+    }
+!!!951557.cpp!!!	getInt32(in name : MediaAnalyticsItem::Attr, inout value : int32_t) : bool
+    Prop *prop = findProp(name);
+    if (prop == NULL || prop->mType != kTypeInt32) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = prop->u.int32Value;
+    }
+    return true;
+!!!951685.cpp!!!	getInt64(in name : MediaAnalyticsItem::Attr, inout value : int64_t) : bool
+    Prop *prop = findProp(name);
+    if (prop == NULL || prop->mType != kTypeInt64) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = prop->u.int64Value;
+    }
+    return true;
+!!!951813.cpp!!!	getDouble(in name : MediaAnalyticsItem::Attr, inout value : double) : bool
+    Prop *prop = findProp(name);
+    if (prop == NULL || prop->mType != kTypeDouble) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = prop->u.doubleValue;
+    }
+    return true;
+!!!951941.cpp!!!	getRate(in name : MediaAnalyticsItem::Attr, inout count : int64_t, inout duration : int64_t, inout rate : double) : bool
+    Prop *prop = findProp(name);
+    if (prop == NULL || prop->mType != kTypeRate) {
+        return false;
+    }
+    if (count != NULL) {
+        *count = prop->u.rate.count;
+    }
+    if (duration != NULL) {
+        *duration = prop->u.rate.duration;
+    }
+    if (rate != NULL) {
+        double r = 0.0;
+        if (prop->u.rate.duration != 0) {
+            r = prop->u.rate.count / (double) prop->u.rate.duration;
+        }
+        *rate = r;
+    }
+    return true;
+!!!952069.cpp!!!	getCString(in name : MediaAnalyticsItem::Attr, inout value : char) : bool
+    Prop *prop = findProp(name);
+    if (prop == NULL || prop->mType != kTypeDouble) {
+        return false;
+    }
+    if (value != NULL) {
+        *value = strdup(prop->u.CStringValue);
+    }
+    return true;
+!!!952197.cpp!!!	selfrecord(in forcenew : bool) : bool
+
+    if (DEBUG_API) {
+        AString p = this->toString();
+        ALOGD("selfrecord of: %s [forcenew=%d]", p.c_str(), forcenew);
+    }
+
+    sp<IMediaAnalyticsService> svc = getInstance();
+
+    if (svc != NULL) {
+        svc->submit(this, forcenew);
+        return true;
+    } else {
+        AString p = this->toString();
+        ALOGD("Unable to record: %s [forcenew=%d]", p.c_str(), forcenew);
+        return false;
+    }
+!!!952325.cpp!!!	selfrecord() : bool
+    return selfrecord(false);
+!!!952453.cpp!!!	filter(in n : int, in attrs : MediaAnalyticsItem::Attr) : int32_t
+    int zapped = 0;
+    if (attrs == NULL || n <= 0) {
+        return -1;
+    }
+    for (ssize_t i = 0 ; i < n ;  i++) {
+        const char *name = attrs[i];
+        size_t len = strlen(name);
+        size_t j = findPropIndex(name, len);
+        if (j >= mPropCount) {
+            // not there
+            continue;
+        } else if (j+1 == mPropCount) {
+            // last one, shorten
+            zapped++;
+            clearProp(&mProps[j]);
+            mPropCount--;
+        } else {
+            // in the middle, bring last one down and shorten
+            zapped++;
+            clearProp(&mProps[j]);
+            mProps[j] = mProps[mPropCount-1];
+            mPropCount--;
+        }
+    }
+    return zapped;
+!!!952581.cpp!!!	filterNot(in n : int, in attrs : MediaAnalyticsItem::Attr) : int32_t
+    int zapped = 0;
+    if (attrs == NULL || n <= 0) {
+        return -1;
+    }
+    for (ssize_t i = mPropCount-1 ; i >=0 ;  i--) {
+        Prop *prop = &mProps[i];
+        for (ssize_t j = 0; j < n ; j++) {
+            if (strcmp(prop->mName, attrs[j]) == 0) {
+                clearProp(prop);
+                zapped++;
+                if (i != (ssize_t)(mPropCount-1)) {
+                    *prop = mProps[mPropCount-1];
+                }
+                initProp(&mProps[mPropCount-1]);
+                mPropCount--;
+                break;
+            }
+        }
+    }
+    return zapped;
+!!!952709.cpp!!!	filter(in name : MediaAnalyticsItem::Attr) : int32_t
+    return filter(1, &name);
+!!!952837.cpp!!!	setTimestamp(in ts : nsecs_t) : MediaAnalyticsItem
+    mTimestamp = ts;
+    return *this;
+!!!952965.cpp!!!	getTimestamp() : nsecs_t
+    return mTimestamp;
+!!!953093.cpp!!!	setPid(in pid : pid_t) : MediaAnalyticsItem
+    mPid = pid;
+    return *this;
+!!!953221.cpp!!!	getPid() : pid_t
+    return mPid;
+!!!953349.cpp!!!	setUid(in uid : uid_t) : MediaAnalyticsItem
+    mUid = uid;
+    return *this;
+!!!953477.cpp!!!	getUid() : uid_t
+    return mUid;
+!!!953605.cpp!!!	writeToParcel(inout data : Parcel) : int32_t
+    if (data == NULL) return -1;
+
+
+    data->writeCString(mKey.c_str());
+    data->writeInt64(mSessionID);
+    data->writeInt32(mFinalized);
+    data->writeInt64(mTimestamp);
+
+    // set of items
+    int count = mPropCount;
+    data->writeInt32(count);
+    for (int i = 0 ; i < count; i++ ) {
+            Prop *prop = &mProps[i];
+            data->writeCString(prop->mName);
+            data->writeInt32(prop->mType);
+            switch (prop->mType) {
+                case MediaAnalyticsItem::kTypeInt32:
+                        data->writeInt32(prop->u.int32Value);
+                        break;
+                case MediaAnalyticsItem::kTypeInt64:
+                        data->writeInt64(prop->u.int64Value);
+                        break;
+                case MediaAnalyticsItem::kTypeDouble:
+                        data->writeDouble(prop->u.doubleValue);
+                        break;
+                case MediaAnalyticsItem::kTypeRate:
+                        data->writeInt64(prop->u.rate.count);
+                        data->writeInt64(prop->u.rate.duration);
+                        break;
+                case MediaAnalyticsItem::kTypeCString:
+                        data->writeCString(prop->u.CStringValue);
+                        break;
+                default:
+                        ALOGE("found bad Prop type: %d, idx %d, name %s",
+                              prop->mType, i, prop->mName);
+                        break;
+            }
+    }
+
+    return 0;
+!!!953733.cpp!!!	readFromParcel(in data : Parcel) : int32_t
+    // into 'this' object
+    // .. we make a copy of the string to put away.
+    mKey = data.readCString();
+    mSessionID = data.readInt64();
+    mFinalized = data.readInt32();
+    mTimestamp = data.readInt64();
+
+    int count = data.readInt32();
+    for (int i = 0; i < count ; i++) {
+            MediaAnalyticsItem::Attr attr = data.readCString();
+            int32_t ztype = data.readInt32();
+                switch (ztype) {
+                    case MediaAnalyticsItem::kTypeInt32:
+                            setInt32(attr, data.readInt32());
+                            break;
+                    case MediaAnalyticsItem::kTypeInt64:
+                            setInt64(attr, data.readInt64());
+                            break;
+                    case MediaAnalyticsItem::kTypeDouble:
+                            setDouble(attr, data.readDouble());
+                            break;
+                    case MediaAnalyticsItem::kTypeCString:
+                            setCString(attr, data.readCString());
+                            break;
+                    case MediaAnalyticsItem::kTypeRate:
+                            {
+                                int64_t count = data.readInt64();
+                                int64_t duration = data.readInt64();
+                                setRate(attr, count, duration);
+                            }
+                            break;
+                    default:
+                            ALOGE("reading bad item type: %d, idx %d",
+                                  ztype, i);
+                            return -1;
+                }
+    }
+
+    return 0;
+!!!953861.cpp!!!	toString() : AString
+
+    AString result = "(";
+    char buffer[512];
+
+    // same order as we spill into the parcel, although not required
+    // key+session are our primary matching criteria
+    //RBE ALOGD("mKey.c_str");
+    result.append(mKey.c_str());
+    //RBE ALOGD("post-mKey.c_str");
+    result.append(":");
+    snprintf(buffer, sizeof(buffer), "%" PRId64 ":", mSessionID);
+    result.append(buffer);
+
+    // we need these internally, but don't want to upload them
+    snprintf(buffer, sizeof(buffer), "%d:%d", mUid, mPid);
+    result.append(buffer);
+
+    snprintf(buffer, sizeof(buffer), "%d:", mFinalized);
+    result.append(buffer);
+    snprintf(buffer, sizeof(buffer), "%" PRId64 ":", mTimestamp);
+    result.append(buffer);
+
+    // set of items
+    int count = mPropCount;
+    snprintf(buffer, sizeof(buffer), "%d:", count);
+    result.append(buffer);
+    for (int i = 0 ; i < count; i++ ) {
+            Prop *prop = &mProps[i];
+            switch (prop->mType) {
+                case MediaAnalyticsItem::kTypeInt32:
+                        snprintf(buffer,sizeof(buffer),
+                        "%s=%d:", prop->mName, prop->u.int32Value);
+                        break;
+                case MediaAnalyticsItem::kTypeInt64:
+                        snprintf(buffer,sizeof(buffer),
+                        "%s=%" PRId64 ":", prop->mName, prop->u.int64Value);
+                        break;
+                case MediaAnalyticsItem::kTypeDouble:
+                        snprintf(buffer,sizeof(buffer),
+                        "%s=%e:", prop->mName, prop->u.doubleValue);
+                        break;
+                case MediaAnalyticsItem::kTypeRate:
+                        snprintf(buffer,sizeof(buffer),
+                        "%s=%" PRId64 "/%" PRId64 ":", prop->mName,
+                        prop->u.rate.count, prop->u.rate.duration);
+                        break;
+                case MediaAnalyticsItem::kTypeCString:
+                        snprintf(buffer,sizeof(buffer), "%s=", prop->mName);
+                        result.append(buffer);
+                        // XXX: sanitize string for ':' '='
+                        result.append(prop->u.CStringValue);
+                        buffer[0] = ':';
+                        buffer[1] = '\0';
+                        break;
+                default:
+                        ALOGE("to_String bad item type: %d for %s",
+                              prop->mType, prop->mName);
+                        break;
+            }
+            result.append(buffer);
+    }
+
+    result.append(")");
+
+    return result;
+!!!953989.cpp!!!	isEnabled() : bool
+    int enabled = property_get_int32(MediaAnalyticsItem::EnabledProperty, -1);
+
+    if (enabled == -1) {
+        enabled = property_get_int32(MediaAnalyticsItem::EnabledPropertyPersist, -1);
+    }
+    if (enabled == -1) {
+        enabled = MediaAnalyticsItem::EnabledProperty_default;
+    }
+    if (enabled <= 0) {
+        return false;
+    }
+    return true;
+!!!954117.cpp!!!	merge(inout incoming : MediaAnalyticsItem) : bool
+
+    // if I don't have key or session id, take them from incoming
+    // 'this' should never be missing both of them...
+    if (mKey.empty()) {
+        mKey = incoming->mKey;
+    } else if (mSessionID == 0) {
+        mSessionID = incoming->mSessionID;
+    }
+
+    // we always take the more recent 'finalized' value
+    setFinalized(incoming->getFinalized());
+
+    // for each attribute from 'incoming', resolve appropriately
+    int nattr = incoming->mPropCount;
+    for (int i = 0 ; i < nattr; i++ ) {
+        Prop *iprop = &incoming->mProps[i];
+        Prop *oprop = findProp(iprop->mName);
+        const char *p = iprop->mName;
+        size_t len = strlen(p);
+        char semantic = p[len-1];
+
+        if (oprop == NULL) {
+            // no oprop, so we insert the new one
+            oprop = allocateProp(p);
+            copyProp(oprop, iprop);
+        } else {
+            // merge iprop into oprop
+            switch (semantic) {
+                case '<':       // first  aka keep old)
+                    /* nop */
+                    break;
+
+                default:        // default is 'last'
+                case '>':       // last (aka keep new)
+                    copyProp(oprop, iprop);
+                    break;
+
+                case '+':       /* sum */
+                    // XXX validate numeric types, sum in place
+                    break;
+
+            }
+        }
+    }
+
+    // not sure when we'd return false...
+    return true;
+!!!954245.cpp!!!	getInstance() : sp<IMediaAnalyticsService>
+    static const char *servicename = "media.metrics";
+    static int tries_remaining = SVC_TRIES;
+    int enabled = isEnabled();
+
+    if (enabled == false) {
+        if (DEBUG_SERVICEACCESS) {
+                ALOGD("disabled");
+        }
+        return NULL;
+    }
+
+    // completely skip logging from certain UIDs. We do this here
+    // to avoid the multi-second timeouts while we learn that
+    // sepolicy will not let us find the service.
+    // We do this only for a select set of UIDs
+    // The sepolicy protection is still in place, we just want a faster
+    // response from this specific, small set of uids.
+    {
+        uid_t uid = getuid();
+        switch (uid) {
+            case AID_RADIO:     // telephony subsystem, RIL
+                return NULL;
+                break;
+            default:
+                // let sepolicy deny access if appropriate
+                break;
+        }
+    }
+
+    {
+        Mutex::Autolock _l(sInitMutex);
+        const char *badness = "";
+
+        // think of tries_remaining as telling us whether service==NULL because
+        // (1) we haven't tried to initialize it yet
+        // (2) we've tried to initialize it, but failed.
+        if (sAnalyticsService == NULL && tries_remaining > 0) {
+            sp<IServiceManager> sm = defaultServiceManager();
+            if (sm != NULL) {
+                sp<IBinder> binder = sm->getService(String16(servicename));
+                if (binder != NULL) {
+                    sAnalyticsService = interface_cast<IMediaAnalyticsService>(binder);
+                } else {
+                    badness = "did not find service";
+                }
+            } else {
+                badness = "No Service Manager access";
+            }
+
+            if (sAnalyticsService == NULL) {
+                if (tries_remaining > 0) {
+                    tries_remaining--;
+                }
+                if (DEBUG_SERVICEACCESS) {
+                    ALOGD("Unable to bind to service %s: %s", servicename, badness);
+                }
+            }
+        }
+
+        return sAnalyticsService;
+    }
+!!!954501.cpp!!!	initProp(inout prop : MediaAnalyticsItem::Prop) : void
+    if (prop != NULL) {
+        prop->mName = NULL;
+        prop->mNameLen = 0;
+
+        prop->mType = kTypeNone;
+    }
+!!!954629.cpp!!!	clearProp(inout prop : MediaAnalyticsItem::Prop) : void
+    if (prop != NULL) {
+        if (prop->mName != NULL) {
+            free((void *)prop->mName);
+            prop->mName = NULL;
+            prop->mNameLen = 0;
+        }
+
+        clearPropValue(prop);
+    }
+!!!954757.cpp!!!	clearPropValue(inout prop : MediaAnalyticsItem::Prop) : void
+    if (prop != NULL) {
+        if (prop->mType == kTypeCString && prop->u.CStringValue != NULL) {
+            free(prop->u.CStringValue);
+            prop->u.CStringValue = NULL;
+        }
+        prop->mType = kTypeNone;
+    }
+!!!954885.cpp!!!	copyProp(inout dst : MediaAnalyticsItem::Prop, in src : MediaAnalyticsItem::Prop) : void
+    // get rid of any pointers in the dst
+    clearProp(dst);
+
+    *dst = *src;
+
+    // fix any pointers that we blindly copied, so we have our own copies
+    if (dst->mName) {
+        void *p =  malloc(dst->mNameLen + 1);
+        memcpy (p, src->mName, dst->mNameLen + 1);
+        dst->mName = (const char *) p;
+    }
+    if (dst->mType == kTypeCString) {
+        dst->u.CStringValue = strdup(src->u.CStringValue);
+    }
+!!!955013.cpp!!!	growProps(in increment : int = kGrowProps) : void
+    if (increment <= 0) {
+        increment = kGrowProps;
+    }
+    int nsize = mPropSize + increment;
+    Prop *ni = (Prop *)realloc(mProps, sizeof(Prop) * nsize);
+
+    if (ni != NULL) {
+        for (int i = mPropSize; i < nsize; i++) {
+            initProp(&ni[i]);
+        }
+        mProps = ni;
+        mPropSize = nsize;
+    }
+!!!955141.cpp!!!	findPropIndex(in name : char, in len : size_t) : size_t
+    size_t i = 0;
+    for (; i < mPropCount; i++) {
+        Prop *prop = &mProps[i];
+        if (prop->mNameLen != len) {
+            continue;
+        }
+        if (memcmp(name, prop->mName, len) == 0) {
+            break;
+        }
+    }
+    return i;
+!!!955269.cpp!!!	findProp(in name : char) : MediaAnalyticsItem::Prop
+    size_t len = strlen(name);
+    size_t i = findPropIndex(name, len);
+    if (i < mPropCount) {
+        return &mProps[i];
+    }
+    return NULL;
+!!!955397.cpp!!!	allocateProp(in name : char) : MediaAnalyticsItem::Prop
+    size_t len = strlen(name);
+    size_t i = findPropIndex(name, len);
+    Prop *prop;
+
+    if (i < mPropCount) {
+        prop = &mProps[i];
+    } else {
+        if (i == mPropSize) {
+            growProps();
+            // XXX: verify success
+        }
+        i = mPropCount++;
+        prop = &mProps[i];
+        prop->setName(name, len);
+    }
+
+    return prop;

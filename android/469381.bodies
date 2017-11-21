@@ -1,0 +1,35 @@
+class BufferQueueListener
+!!!1233797.cpp!!!	BufferQueueListener(in consumer : sp<BufferItemConsumer>, in cameraSource : sp<CameraSource>)
+    mConsumer = consumer;
+    mConsumer->setFrameAvailableListener(this);
+    mCameraSource = cameraSource;
+!!!1233925.cpp!!!	onFrameAvailable(in item : BufferItem) : void
+    ALOGV("%s: onFrameAvailable", __FUNCTION__);
+
+    Mutex::Autolock l(mLock);
+
+    if (!mFrameAvailable) {
+        mFrameAvailable = true;
+        mFrameAvailableSignal.signal();
+    }
+!!!1234053.cpp!!!	threadLoop() : bool
+    if (mConsumer == nullptr || mCameraSource == nullptr) {
+        return false;
+    }
+
+    {
+        Mutex::Autolock l(mLock);
+        while (!mFrameAvailable) {
+            if (mFrameAvailableSignal.waitRelative(mLock, kFrameAvailableTimeout) == TIMED_OUT) {
+                return true;
+            }
+        }
+        mFrameAvailable = false;
+    }
+
+    BufferItem buffer;
+    while (mConsumer->acquireBuffer(&buffer, 0) == OK) {
+        mCameraSource->processBufferQueueFrame(buffer);
+    }
+
+    return true;

@@ -1,0 +1,542 @@
+class BnAudioFlinger
+!!!748293.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    // Whitelist of relevant events to trigger log merging.
+    // Log merging should activate during audio activity of any kind. This are considered the
+    // most relevant events.
+    // TODO should select more wisely the items from the list
+    switch (code) {
+        case CREATE_TRACK:
+        case OPEN_RECORD:
+        case SET_MASTER_VOLUME:
+        case SET_MASTER_MUTE:
+        case SET_STREAM_VOLUME:
+        case SET_STREAM_MUTE:
+        case SET_MIC_MUTE:
+        case SET_PARAMETERS:
+        case OPEN_INPUT:
+        case SET_VOICE_VOLUME:
+        case CREATE_EFFECT:
+        case SYSTEM_READY: {
+            requestLogMerge();
+            break;
+        }
+        default:
+            break;
+    }
+    switch (code) {
+        case CREATE_TRACK: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int streamType = data.readInt32();
+            uint32_t sampleRate = data.readInt32();
+            audio_format_t format = (audio_format_t) data.readInt32();
+            audio_channel_mask_t channelMask = data.readInt32();
+            size_t frameCount = data.readInt64();
+            audio_output_flags_t flags = (audio_output_flags_t) data.readInt32();
+            bool haveSharedBuffer = data.readInt32() != 0;
+            sp<IMemory> buffer;
+            if (haveSharedBuffer) {
+                buffer = interface_cast<IMemory>(data.readStrongBinder());
+            }
+            audio_io_handle_t output = (audio_io_handle_t) data.readInt32();
+            pid_t pid = (pid_t) data.readInt32();
+            pid_t tid = (pid_t) data.readInt32();
+            audio_session_t sessionId = (audio_session_t) data.readInt32();
+            int clientUid = data.readInt32();
+            audio_port_handle_t portId = (audio_port_handle_t) data.readInt32();
+            status_t status = NO_ERROR;
+            sp<IAudioTrack> track;
+            if ((haveSharedBuffer && (buffer == 0)) ||
+                    ((buffer != 0) && (buffer->pointer() == NULL))) {
+                ALOGW("CREATE_TRACK: cannot retrieve shared memory");
+                status = DEAD_OBJECT;
+            } else {
+                track = createTrack(
+                        (audio_stream_type_t) streamType, sampleRate, format,
+                        channelMask, &frameCount, &flags, buffer, output, pid, tid,
+                        &sessionId, clientUid, &status, portId);
+                LOG_ALWAYS_FATAL_IF((track != 0) != (status == NO_ERROR));
+            }
+            reply->writeInt64(frameCount);
+            reply->writeInt32(flags);
+            reply->writeInt32(sessionId);
+            reply->writeInt32(status);
+            reply->writeStrongBinder(IInterface::asBinder(track));
+            return NO_ERROR;
+        } break;
+        case OPEN_RECORD: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t input = (audio_io_handle_t) data.readInt32();
+            uint32_t sampleRate = data.readInt32();
+            audio_format_t format = (audio_format_t) data.readInt32();
+            audio_channel_mask_t channelMask = data.readInt32();
+            const String16& opPackageName = data.readString16();
+            size_t frameCount = data.readInt64();
+            audio_input_flags_t flags = (audio_input_flags_t) data.readInt32();
+            pid_t pid = (pid_t) data.readInt32();
+            pid_t tid = (pid_t) data.readInt32();
+            int clientUid = data.readInt32();
+            audio_session_t sessionId = (audio_session_t) data.readInt32();
+            size_t notificationFrames = data.readInt64();
+            audio_port_handle_t portId = (audio_port_handle_t) data.readInt32();
+            sp<IMemory> cblk;
+            sp<IMemory> buffers;
+            status_t status = NO_ERROR;
+            sp<IAudioRecord> record = openRecord(input,
+                    sampleRate, format, channelMask, opPackageName, &frameCount, &flags,
+                    pid, tid, clientUid, &sessionId, &notificationFrames, cblk, buffers,
+                    &status, portId);
+            LOG_ALWAYS_FATAL_IF((record != 0) != (status == NO_ERROR));
+            reply->writeInt64(frameCount);
+            reply->writeInt32(flags);
+            reply->writeInt32(sessionId);
+            reply->writeInt64(notificationFrames);
+            reply->writeInt32(status);
+            reply->writeStrongBinder(IInterface::asBinder(record));
+            reply->writeStrongBinder(IInterface::asBinder(cblk));
+            reply->writeStrongBinder(IInterface::asBinder(buffers));
+            return NO_ERROR;
+        } break;
+        case SAMPLE_RATE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( sampleRate((audio_io_handle_t) data.readInt32()) );
+            return NO_ERROR;
+        } break;
+
+        // RESERVED for channelCount()
+
+        case FORMAT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( format((audio_io_handle_t) data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        case FRAME_COUNT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt64( frameCount((audio_io_handle_t) data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        case LATENCY: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( latency((audio_io_handle_t) data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        case SET_MASTER_VOLUME: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( setMasterVolume(data.readFloat()) );
+            return NO_ERROR;
+        } break;
+        case SET_MASTER_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( setMasterMute(data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        case MASTER_VOLUME: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeFloat( masterVolume() );
+            return NO_ERROR;
+        } break;
+        case MASTER_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( masterMute() );
+            return NO_ERROR;
+        } break;
+        case SET_STREAM_VOLUME: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int stream = data.readInt32();
+            float volume = data.readFloat();
+            audio_io_handle_t output = (audio_io_handle_t) data.readInt32();
+            reply->writeInt32( setStreamVolume((audio_stream_type_t) stream, volume, output) );
+            return NO_ERROR;
+        } break;
+        case SET_STREAM_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int stream = data.readInt32();
+            reply->writeInt32( setStreamMute((audio_stream_type_t) stream, data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        case STREAM_VOLUME: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int stream = data.readInt32();
+            int output = data.readInt32();
+            reply->writeFloat( streamVolume((audio_stream_type_t) stream, output) );
+            return NO_ERROR;
+        } break;
+        case STREAM_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int stream = data.readInt32();
+            reply->writeInt32( streamMute((audio_stream_type_t) stream) );
+            return NO_ERROR;
+        } break;
+        case SET_MODE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_mode_t mode = (audio_mode_t) data.readInt32();
+            reply->writeInt32( setMode(mode) );
+            return NO_ERROR;
+        } break;
+        case SET_MIC_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            int state = data.readInt32();
+            reply->writeInt32( setMicMute(state) );
+            return NO_ERROR;
+        } break;
+        case GET_MIC_MUTE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32( getMicMute() );
+            return NO_ERROR;
+        } break;
+        case SET_PARAMETERS: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t ioHandle = (audio_io_handle_t) data.readInt32();
+            String8 keyValuePairs(data.readString8());
+            reply->writeInt32(setParameters(ioHandle, keyValuePairs));
+            return NO_ERROR;
+        } break;
+        case GET_PARAMETERS: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t ioHandle = (audio_io_handle_t) data.readInt32();
+            String8 keys(data.readString8());
+            reply->writeString8(getParameters(ioHandle, keys));
+            return NO_ERROR;
+        } break;
+
+        case REGISTER_CLIENT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            sp<IAudioFlingerClient> client = interface_cast<IAudioFlingerClient>(
+                    data.readStrongBinder());
+            registerClient(client);
+            return NO_ERROR;
+        } break;
+        case GET_INPUTBUFFERSIZE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            uint32_t sampleRate = data.readInt32();
+            audio_format_t format = (audio_format_t) data.readInt32();
+            audio_channel_mask_t channelMask = data.readInt32();
+            reply->writeInt64( getInputBufferSize(sampleRate, format, channelMask) );
+            return NO_ERROR;
+        } break;
+        case OPEN_OUTPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_module_handle_t module = (audio_module_handle_t)data.readInt32();
+            audio_config_t config = {};
+            if (data.read(&config, sizeof(audio_config_t)) != NO_ERROR) {
+                ALOGE("b/23905951");
+            }
+            audio_devices_t devices = (audio_devices_t)data.readInt32();
+            String8 address(data.readString8());
+            audio_output_flags_t flags = (audio_output_flags_t) data.readInt32();
+            uint32_t latencyMs = 0;
+            audio_io_handle_t output = AUDIO_IO_HANDLE_NONE;
+            status_t status = openOutput(module, &output, &config,
+                                         &devices, address, &latencyMs, flags);
+            ALOGV("OPEN_OUTPUT output, %d", output);
+            reply->writeInt32((int32_t)status);
+            if (status == NO_ERROR) {
+                reply->writeInt32((int32_t)output);
+                reply->write(&config, sizeof(audio_config_t));
+                reply->writeInt32(devices);
+                reply->writeInt32(latencyMs);
+            }
+            return NO_ERROR;
+        } break;
+        case OPEN_DUPLICATE_OUTPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t output1 = (audio_io_handle_t) data.readInt32();
+            audio_io_handle_t output2 = (audio_io_handle_t) data.readInt32();
+            reply->writeInt32((int32_t) openDuplicateOutput(output1, output2));
+            return NO_ERROR;
+        } break;
+        case CLOSE_OUTPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(closeOutput((audio_io_handle_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case SUSPEND_OUTPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(suspendOutput((audio_io_handle_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case RESTORE_OUTPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(restoreOutput((audio_io_handle_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case OPEN_INPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_module_handle_t module = (audio_module_handle_t)data.readInt32();
+            audio_io_handle_t input = (audio_io_handle_t)data.readInt32();
+            audio_config_t config = {};
+            if (data.read(&config, sizeof(audio_config_t)) != NO_ERROR) {
+                ALOGE("b/23905951");
+            }
+            audio_devices_t device = (audio_devices_t)data.readInt32();
+            String8 address(data.readString8());
+            audio_source_t source = (audio_source_t)data.readInt32();
+            audio_input_flags_t flags = (audio_input_flags_t) data.readInt32();
+
+            status_t status = openInput(module, &input, &config,
+                                        &device, address, source, flags);
+            reply->writeInt32((int32_t) status);
+            if (status == NO_ERROR) {
+                reply->writeInt32((int32_t) input);
+                reply->write(&config, sizeof(audio_config_t));
+                reply->writeInt32(device);
+            }
+            return NO_ERROR;
+        } break;
+        case CLOSE_INPUT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(closeInput((audio_io_handle_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case INVALIDATE_STREAM: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_stream_type_t stream = (audio_stream_type_t) data.readInt32();
+            reply->writeInt32(invalidateStream(stream));
+            return NO_ERROR;
+        } break;
+        case SET_VOICE_VOLUME: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            float volume = data.readFloat();
+            reply->writeInt32( setVoiceVolume(volume) );
+            return NO_ERROR;
+        } break;
+        case GET_RENDER_POSITION: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t output = (audio_io_handle_t) data.readInt32();
+            uint32_t halFrames = 0;
+            uint32_t dspFrames = 0;
+            status_t status = getRenderPosition(&halFrames, &dspFrames, output);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->writeInt32(halFrames);
+                reply->writeInt32(dspFrames);
+            }
+            return NO_ERROR;
+        }
+        case GET_INPUT_FRAMES_LOST: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_io_handle_t ioHandle = (audio_io_handle_t) data.readInt32();
+            reply->writeInt32((int32_t) getInputFramesLost(ioHandle));
+            return NO_ERROR;
+        } break;
+        case NEW_AUDIO_SESSION_ID: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(newAudioUniqueId((audio_unique_id_use_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case ACQUIRE_AUDIO_SESSION_ID: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_session_t audioSession = (audio_session_t) data.readInt32();
+            int pid = data.readInt32();
+            acquireAudioSessionId(audioSession, pid);
+            return NO_ERROR;
+        } break;
+        case RELEASE_AUDIO_SESSION_ID: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_session_t audioSession = (audio_session_t) data.readInt32();
+            int pid = data.readInt32();
+            releaseAudioSessionId(audioSession, pid);
+            return NO_ERROR;
+        } break;
+        case QUERY_NUM_EFFECTS: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            uint32_t numEffects = 0;
+            status_t status = queryNumberEffects(&numEffects);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->writeInt32((int32_t)numEffects);
+            }
+            return NO_ERROR;
+        }
+        case QUERY_EFFECT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            effect_descriptor_t desc = {};
+            status_t status = queryEffect(data.readInt32(), &desc);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->write(&desc, sizeof(effect_descriptor_t));
+            }
+            return NO_ERROR;
+        }
+        case GET_EFFECT_DESCRIPTOR: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            effect_uuid_t uuid;
+            data.read(&uuid, sizeof(effect_uuid_t));
+            effect_descriptor_t desc = {};
+            status_t status = getEffectDescriptor(&uuid, &desc);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->write(&desc, sizeof(effect_descriptor_t));
+            }
+            return NO_ERROR;
+        }
+        case CREATE_EFFECT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            effect_descriptor_t desc = {};
+            if (data.read(&desc, sizeof(effect_descriptor_t)) != NO_ERROR) {
+                ALOGE("b/23905951");
+            }
+            sp<IEffectClient> client = interface_cast<IEffectClient>(data.readStrongBinder());
+            int32_t priority = data.readInt32();
+            audio_io_handle_t output = (audio_io_handle_t) data.readInt32();
+            audio_session_t sessionId = (audio_session_t) data.readInt32();
+            const String16 opPackageName = data.readString16();
+            pid_t pid = (pid_t)data.readInt32();
+
+            status_t status = NO_ERROR;
+            int id = 0;
+            int enabled = 0;
+
+            sp<IEffect> effect = createEffect(&desc, client, priority, output, sessionId,
+                    opPackageName, pid, &status, &id, &enabled);
+            reply->writeInt32(status);
+            reply->writeInt32(id);
+            reply->writeInt32(enabled);
+            reply->writeStrongBinder(IInterface::asBinder(effect));
+            reply->write(&desc, sizeof(effect_descriptor_t));
+            return NO_ERROR;
+        } break;
+        case MOVE_EFFECTS: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_session_t session = (audio_session_t) data.readInt32();
+            audio_io_handle_t srcOutput = (audio_io_handle_t) data.readInt32();
+            audio_io_handle_t dstOutput = (audio_io_handle_t) data.readInt32();
+            reply->writeInt32(moveEffects(session, srcOutput, dstOutput));
+            return NO_ERROR;
+        } break;
+        case LOAD_HW_MODULE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(loadHwModule(data.readCString()));
+            return NO_ERROR;
+        } break;
+        case GET_PRIMARY_OUTPUT_SAMPLING_RATE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(getPrimaryOutputSamplingRate());
+            return NO_ERROR;
+        } break;
+        case GET_PRIMARY_OUTPUT_FRAME_COUNT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt64(getPrimaryOutputFrameCount());
+            return NO_ERROR;
+        } break;
+        case SET_LOW_RAM_DEVICE: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            bool isLowRamDevice = data.readInt32() != 0;
+            reply->writeInt32(setLowRamDevice(isLowRamDevice));
+            return NO_ERROR;
+        } break;
+        case LIST_AUDIO_PORTS: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            unsigned int numPortsReq = data.readInt32();
+            if (numPortsReq > MAX_ITEMS_PER_LIST) {
+                numPortsReq = MAX_ITEMS_PER_LIST;
+            }
+            unsigned int numPorts = numPortsReq;
+            struct audio_port *ports =
+                    (struct audio_port *)calloc(numPortsReq,
+                                                           sizeof(struct audio_port));
+            if (ports == NULL) {
+                reply->writeInt32(NO_MEMORY);
+                reply->writeInt32(0);
+                return NO_ERROR;
+            }
+            status_t status = listAudioPorts(&numPorts, ports);
+            reply->writeInt32(status);
+            reply->writeInt32(numPorts);
+            if (status == NO_ERROR) {
+                if (numPortsReq > numPorts) {
+                    numPortsReq = numPorts;
+                }
+                reply->write(ports, numPortsReq * sizeof(struct audio_port));
+            }
+            free(ports);
+            return NO_ERROR;
+        } break;
+        case GET_AUDIO_PORT: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            struct audio_port port = {};
+            if (data.read(&port, sizeof(struct audio_port)) != NO_ERROR) {
+                ALOGE("b/23905951");
+            }
+            status_t status = getAudioPort(&port);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->write(&port, sizeof(struct audio_port));
+            }
+            return NO_ERROR;
+        } break;
+        case CREATE_AUDIO_PATCH: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            struct audio_patch patch;
+            data.read(&patch, sizeof(struct audio_patch));
+            audio_patch_handle_t handle = AUDIO_PATCH_HANDLE_NONE;
+            if (data.read(&handle, sizeof(audio_patch_handle_t)) != NO_ERROR) {
+                ALOGE("b/23905951");
+            }
+            status_t status = createAudioPatch(&patch, &handle);
+            reply->writeInt32(status);
+            if (status == NO_ERROR) {
+                reply->write(&handle, sizeof(audio_patch_handle_t));
+            }
+            return NO_ERROR;
+        } break;
+        case RELEASE_AUDIO_PATCH: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            audio_patch_handle_t handle;
+            data.read(&handle, sizeof(audio_patch_handle_t));
+            status_t status = releaseAudioPatch(handle);
+            reply->writeInt32(status);
+            return NO_ERROR;
+        } break;
+        case LIST_AUDIO_PATCHES: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            unsigned int numPatchesReq = data.readInt32();
+            if (numPatchesReq > MAX_ITEMS_PER_LIST) {
+                numPatchesReq = MAX_ITEMS_PER_LIST;
+            }
+            unsigned int numPatches = numPatchesReq;
+            struct audio_patch *patches =
+                    (struct audio_patch *)calloc(numPatchesReq,
+                                                 sizeof(struct audio_patch));
+            if (patches == NULL) {
+                reply->writeInt32(NO_MEMORY);
+                reply->writeInt32(0);
+                return NO_ERROR;
+            }
+            status_t status = listAudioPatches(&numPatches, patches);
+            reply->writeInt32(status);
+            reply->writeInt32(numPatches);
+            if (status == NO_ERROR) {
+                if (numPatchesReq > numPatches) {
+                    numPatchesReq = numPatches;
+                }
+                reply->write(patches, numPatchesReq * sizeof(struct audio_patch));
+            }
+            free(patches);
+            return NO_ERROR;
+        } break;
+        case SET_AUDIO_PORT_CONFIG: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            struct audio_port_config config;
+            data.read(&config, sizeof(struct audio_port_config));
+            status_t status = setAudioPortConfig(&config);
+            reply->writeInt32(status);
+            return NO_ERROR;
+        } break;
+        case GET_AUDIO_HW_SYNC: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt32(getAudioHwSyncForSession((audio_session_t) data.readInt32()));
+            return NO_ERROR;
+        } break;
+        case SYSTEM_READY: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            systemReady();
+            return NO_ERROR;
+        } break;
+        case FRAME_COUNT_HAL: {
+            CHECK_INTERFACE(IAudioFlinger, data, reply);
+            reply->writeInt64( frameCountHAL((audio_io_handle_t) data.readInt32()) );
+            return NO_ERROR;
+        } break;
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

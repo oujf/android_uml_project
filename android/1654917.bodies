@@ -1,0 +1,131 @@
+class TaskWindowContainerController
+!!!12774661.java!!!	TaskWindowContainerController(in taskId : int, inout listener : TaskWindowContainerListener, inout stackController : StackWindowController, in userId : int, inout bounds : Rect, inout overrideConfig : Configuration, in resizeMode : int, inout supportsPictureInPicture : boolean, inout homeTask : boolean, inout toTop : boolean, inout showForAllUsers : boolean, inout taskDescription : ActivityManager::TaskDescription)
+        this(taskId, listener, stackController, userId, bounds, overrideConfig, resizeMode,
+                supportsPictureInPicture, homeTask, toTop, showForAllUsers, taskDescription,
+                WindowManagerService.getInstance());
+!!!12774789.java!!!	TaskWindowContainerController(in taskId : int, inout listener : TaskWindowContainerListener, inout stackController : StackWindowController, in userId : int, inout bounds : Rect, inout overrideConfig : Configuration, in resizeMode : int, inout supportsPictureInPicture : boolean, inout homeTask : boolean, inout toTop : boolean, inout showForAllUsers : boolean, inout taskDescription : ActivityManager::TaskDescription, inout service : WindowManagerService)
+        super(listener, service);
+        mTaskId = taskId;
+        mHandler = new H(new WeakReference<>(this), service.mH.getLooper());
+
+        synchronized(mWindowMap) {
+            if (DEBUG_STACK) Slog.i(TAG_WM, "TaskWindowContainerController: taskId=" + taskId
+                    + " stack=" + stackController + " bounds=" + bounds);
+
+            final TaskStack stack = stackController.mContainer;
+            if (stack == null) {
+                throw new IllegalArgumentException("TaskWindowContainerController: invalid stack="
+                        + stackController);
+            }
+            EventLog.writeEvent(WM_TASK_CREATED, taskId, stack.mStackId);
+            final Task task = createTask(taskId, stack, userId, bounds, overrideConfig, resizeMode,
+                    supportsPictureInPicture, homeTask, taskDescription);
+            final int position = toTop ? POSITION_TOP : POSITION_BOTTOM;
+            stack.addTask(task, position, showForAllUsers, true /* moveParents */);
+        }
+!!!12774917.java!!!	createTask(in taskId : int, inout stack : TaskStack, in userId : int, inout bounds : Rect, inout overrideConfig : Configuration, in resizeMode : int, inout supportsPictureInPicture : boolean, inout homeTask : boolean, inout taskDescription : ActivityManager::TaskDescription) : Task
+        return new Task(taskId, stack, userId, mService, bounds, overrideConfig, resizeMode,
+                supportsPictureInPicture, homeTask, taskDescription, this);
+!!!12775045.java!!!	removeContainer() : void
+        synchronized(mWindowMap) {
+            if (mContainer == null) {
+                if (DEBUG_STACK) Slog.i(TAG_WM, "removeTask: could not find taskId=" + mTaskId);
+                return;
+            }
+            mContainer.removeIfPossible();
+            super.removeContainer();
+        }
+!!!12775173.java!!!	positionChildAt(inout childController : AppWindowContainerController, in position : int) : void
+        synchronized(mService.mWindowMap) {
+            final AppWindowToken aToken = childController.mContainer;
+            if (aToken == null) {
+                Slog.w(TAG_WM,
+                        "Attempted to position of non-existing app : " + childController);
+                return;
+            }
+
+            final Task task = mContainer;
+            if (task == null) {
+                throw new IllegalArgumentException("positionChildAt: invalid task=" + this);
+            }
+            task.positionChildAt(position, aToken, false /* includeParents */);
+        }
+!!!12775301.java!!!	reparent(inout stackController : StackWindowController, in position : int, inout moveParents : boolean) : void
+        synchronized (mWindowMap) {
+            if (DEBUG_STACK) Slog.i(TAG_WM, "reparent: moving taskId=" + mTaskId
+                    + " to stack=" + stackController + " at " + position);
+            if (mContainer == null) {
+                if (DEBUG_STACK) Slog.i(TAG_WM,
+                        "reparent: could not find taskId=" + mTaskId);
+                return;
+            }
+            final TaskStack stack = stackController.mContainer;
+            if (stack == null) {
+                throw new IllegalArgumentException("reparent: could not find stack="
+                        + stackController);
+            }
+            mContainer.reparent(stack, position, moveParents);
+            mContainer.getDisplayContent().layoutAndAssignWindowLayersIfNeeded();
+        }
+!!!12775429.java!!!	setResizeable(in resizeMode : int) : void
+        synchronized (mWindowMap) {
+            if (mContainer != null) {
+                mContainer.setResizeable(resizeMode);
+            }
+        }
+!!!12775557.java!!!	resize(inout bounds : Rect, inout overrideConfig : Configuration, inout relayout : boolean, inout forced : boolean) : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                throw new IllegalArgumentException("resizeTask: taskId " + mTaskId + " not found.");
+            }
+
+            if (mContainer.resizeLocked(bounds, overrideConfig, forced) && relayout) {
+                mContainer.getDisplayContent().layoutAndAssignWindowLayersIfNeeded();
+            }
+        }
+!!!12775685.java!!!	getBounds(inout bounds : Rect) : void
+        synchronized (mWindowMap) {
+            if (mContainer != null) {
+                mContainer.getBounds(bounds);
+                return;
+            }
+            bounds.setEmpty();
+        }
+!!!12775813.java!!!	setTaskDockedResizing(inout resizing : boolean) : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                Slog.w(TAG_WM, "setTaskDockedResizing: taskId " + mTaskId + " not found.");
+                return;
+            }
+            mContainer.setDragResizing(resizing, DRAG_RESIZE_MODE_DOCKED_DIVIDER);
+        }
+!!!12775941.java!!!	cancelWindowTransition() : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                Slog.w(TAG_WM, "cancelWindowTransition: taskId " + mTaskId + " not found.");
+                return;
+            }
+            mContainer.cancelTaskWindowTransition();
+        }
+!!!12776069.java!!!	cancelThumbnailTransition() : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                Slog.w(TAG_WM, "cancelThumbnailTransition: taskId " + mTaskId + " not found.");
+                return;
+            }
+            mContainer.cancelTaskThumbnailTransition();
+        }
+!!!12776197.java!!!	setTaskDescription(inout taskDescription : ActivityManager::TaskDescription) : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                Slog.w(TAG_WM, "setTaskDescription: taskId " + mTaskId + " not found.");
+                return;
+            }
+            mContainer.setTaskDescription(taskDescription);
+        }
+!!!12776325.java!!!	reportSnapshotChanged(inout snapshot : ActivityManager::TaskSnapshot) : void
+        mHandler.obtainMessage(H.REPORT_SNAPSHOT_CHANGED, snapshot).sendToTarget();
+!!!12776453.java!!!	requestResize(inout bounds : Rect, in resizeMode : int) : void
+        mHandler.obtainMessage(H.REQUEST_RESIZE, resizeMode, 0, bounds).sendToTarget();
+!!!12776581.java!!!	toString() : String
+        return "{TaskWindowContainerController taskId=" + mTaskId + "}";

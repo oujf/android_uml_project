@@ -1,0 +1,58 @@
+class CookiePersistence
+!!!12051589.java!!!	CookiePersistence(inout looper : Looper)
+            super(looper);
+!!!12051717.java!!!	schedulePersistLPw(in userId : int, inout pkg : PackageParser::Package, inout cookie : byte [[]]) : void
+            File cookieFile = computeInstantCookieFile(pkg, userId);
+            cancelPendingPersistLPw(pkg, userId);
+            addPendingPersistCookieLPw(userId, pkg, cookie, cookieFile);
+            sendMessageDelayed(obtainMessage(userId, pkg),
+                    PERSIST_COOKIE_DELAY_MILLIS);
+!!!12051845.java!!!	getPendingPersistCookieLPr(inout pkg : PackageParser::Package, in userId : int) : byte
+            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+                    mPendingPersistCookies.get(userId);
+            if (pendingWorkForUser != null) {
+                SomeArgs state = pendingWorkForUser.get(pkg);
+                if (state != null) {
+                    return (byte[]) state.arg1;
+                }
+            }
+            return null;
+!!!12051973.java!!!	cancelPendingPersistLPw(inout pkg : PackageParser::Package, in userId : int) : void
+            removeMessages(userId, pkg);
+            SomeArgs state = removePendingPersistCookieLPr(pkg, userId);
+            if (state != null) {
+                state.recycle();
+            }
+!!!12052101.java!!!	addPendingPersistCookieLPw(in userId : int, inout pkg : PackageParser::Package, inout cookie : byte [[]], inout cookieFile : File) : void
+            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+                    mPendingPersistCookies.get(userId);
+            if (pendingWorkForUser == null) {
+                pendingWorkForUser = new ArrayMap<>();
+                mPendingPersistCookies.put(userId, pendingWorkForUser);
+            }
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = cookie;
+            args.arg2 = cookieFile;
+            pendingWorkForUser.put(pkg, args);
+!!!12052229.java!!!	removePendingPersistCookieLPr(inout pkg : PackageParser::Package, in userId : int) : SomeArgs
+            ArrayMap<PackageParser.Package, SomeArgs> pendingWorkForUser =
+                    mPendingPersistCookies.get(userId);
+            SomeArgs state = null;
+            if (pendingWorkForUser != null) {
+                state = pendingWorkForUser.remove(pkg);
+                if (pendingWorkForUser.isEmpty()) {
+                    mPendingPersistCookies.remove(userId);
+                }
+            }
+            return state;
+!!!12052357.java!!!	handleMessage(inout message : Message) : void
+            int userId = message.what;
+            PackageParser.Package pkg = (PackageParser.Package) message.obj;
+            SomeArgs state = removePendingPersistCookieLPr(pkg, userId);
+            if (state == null) {
+                return;
+            }
+            byte[] cookie = (byte[]) state.arg1;
+            File cookieFile = (File) state.arg2;
+            state.recycle();
+            persistInstantApplicationCookie(cookie, pkg.packageName, cookieFile, userId);

@@ -1,0 +1,121 @@
+class TaskGridLayoutAlgorithm
+!!!3612421.java!!!	TaskGridLayoutAlgorithm(inout context : Context)
+        reloadOnConfigurationChange(context);
+!!!3612549.java!!!	reloadOnConfigurationChange(inout context : Context) : void
+        Resources res = context.getResources();
+        mPaddingTaskView = res.getDimensionPixelSize(R.dimen.recents_grid_padding_task_view);
+        mFocusedFrameThickness = res.getDimensionPixelSize(
+            R.dimen.recents_grid_task_view_focused_frame_thickness);
+
+        mTaskGridRect = new Rect();
+        mTitleBarHeight = res.getDimensionPixelSize(R.dimen.recents_grid_task_view_header_height);
+
+        WindowManager windowManager = (WindowManager) context
+                .getSystemService(Context.WINDOW_SERVICE);
+        windowManager.getDefaultDisplay().getRealSize(mScreenSize);
+
+        updateAppAspectRatio();
+!!!3612677.java!!!	getTransform(in taskIndex : int, in taskCount : int, inout transformOut : TaskViewTransform, inout stackLayout : TaskStackLayoutAlgorithm) : TaskViewTransform
+        if (taskCount == 0) {
+            transformOut.reset();
+            return transformOut;
+        }
+
+        TaskGridRectInfo gridInfo = mTaskGridRectInfoList[taskCount - 1];
+        mTaskGridRect.set(gridInfo.size);
+
+        int x = gridInfo.xOffsets[taskIndex];
+        int y = gridInfo.yOffsets[taskIndex];
+        float z = stackLayout.mMaxTranslationZ;
+
+        // We always set the dim alpha to 0, since we don't want grid task views to dim.
+        float dimAlpha = 0f;
+        // We always set the alpha of the view outline to 1, to make sure the shadow is visible.
+        float viewOutlineAlpha = 1f;
+
+        // We also need to invert the index in order to display the most recent tasks first.
+        int taskLayoutIndex = taskCount - taskIndex - 1;
+        boolean isTaskViewVisible = taskLayoutIndex < MAX_LAYOUT_TASK_COUNT;
+
+        // Fill out the transform
+        transformOut.scale = 1f;
+        transformOut.alpha = isTaskViewVisible ? 1f : 0f;
+        transformOut.translationZ = z;
+        transformOut.dimAlpha = dimAlpha;
+        transformOut.viewOutlineAlpha = viewOutlineAlpha;
+        transformOut.rect.set(mTaskGridRect);
+        transformOut.rect.offset(x, y);
+        Utilities.scaleRectAboutCenter(transformOut.rect, transformOut.scale);
+        // We only show the 8 most recent tasks.
+        transformOut.visible = isTaskViewVisible;
+        return transformOut;
+!!!3612805.java!!!	navigateFocus(in taskCount : int, in currentFocusedIndex : int, inout direction : NavigateTaskViewEvent::Direction) : int
+        if (taskCount < 1 || taskCount > MAX_LAYOUT_TASK_COUNT) {
+            return -1;
+        }
+        if (currentFocusedIndex == -1) {
+            return 0;
+        }
+        int newIndex = currentFocusedIndex;
+        final TaskGridRectInfo gridInfo = mTaskGridRectInfoList[taskCount - 1];
+        final int currentLine = (taskCount - 1 - currentFocusedIndex) / gridInfo.tasksPerLine;
+        switch (direction) {
+            case UP:
+                newIndex += gridInfo.tasksPerLine;
+                newIndex = newIndex >= taskCount ? currentFocusedIndex : newIndex;
+                break;
+            case DOWN:
+                newIndex -= gridInfo.tasksPerLine;
+                newIndex = newIndex < 0 ? currentFocusedIndex : newIndex;
+                break;
+            case LEFT:
+                newIndex++;
+                final int leftMostIndex = (taskCount - 1) - currentLine * gridInfo.tasksPerLine;
+                newIndex = newIndex > leftMostIndex ? currentFocusedIndex : newIndex;
+                break;
+            case RIGHT:
+                newIndex--;
+                int rightMostIndex =
+                    (taskCount - 1) - (currentLine + 1) * gridInfo.tasksPerLine + 1;
+                rightMostIndex = rightMostIndex < 0 ? 0 : rightMostIndex;
+                newIndex = newIndex < rightMostIndex ? currentFocusedIndex : newIndex;
+                break;
+        }
+        return newIndex;
+!!!3612933.java!!!	initialize(inout windowRect : Rect) : void
+        mWindowRect = windowRect;
+        // Define paddings in terms of percentage of the total area.
+        mPaddingLeftRight = (int) (0.025f * Math.min(mWindowRect.width(), mWindowRect.height()));
+        mPaddingTopBottom = (int) (0.1 * mWindowRect.height());
+
+        // Pre-calculate the positions and offsets of task views so that we can reuse them directly
+        // in the future.
+        mTaskGridRectInfoList = new TaskGridRectInfo[MAX_LAYOUT_TASK_COUNT];
+        for (int i = 0; i < MAX_LAYOUT_TASK_COUNT; i++) {
+            mTaskGridRectInfoList[i] = new TaskGridRectInfo(i + 1);
+        }
+!!!3613061.java!!!	setSystemInsets(inout systemInsets : Rect) : void
+        mSystemInsets = systemInsets;
+        updateAppAspectRatio();
+!!!3613189.java!!!	updateAppAspectRatio() : void
+        int usableWidth = mScreenSize.x - mSystemInsets.left - mSystemInsets.right;
+        int usableHeight = mScreenSize.y - mSystemInsets.top - mSystemInsets.bottom;
+        mAppAspectRatio = (float) usableWidth / (float) usableHeight;
+!!!3613317.java!!!	getStackActionButtonRect() : Rect
+        Rect buttonRect = new Rect(mWindowRect);
+        buttonRect.right -= mPaddingLeftRight;
+        buttonRect.left += mPaddingLeftRight;
+        buttonRect.bottom = buttonRect.top + mPaddingTopBottom;
+        return buttonRect;
+!!!3613445.java!!!	updateTaskGridRect(in taskCount : int) : void
+        if (taskCount > 0) {
+            TaskGridRectInfo gridInfo = mTaskGridRectInfoList[taskCount - 1];
+            mTaskGridRect.set(gridInfo.size);
+        }
+!!!3613573.java!!!	getTaskGridRect() : Rect
+        return mTaskGridRect;
+!!!3613701.java!!!	getFocusFrameThickness() : int
+        return mFocusedFrameThickness;
+!!!3613829.java!!!	computeStackVisibilityReport(inout tasks : ArrayList<Task>) : VisibilityReport
+        int visibleCount = Math.min(TaskGridLayoutAlgorithm.MAX_LAYOUT_TASK_COUNT, tasks.size());
+        return new VisibilityReport(visibleCount, visibleCount);

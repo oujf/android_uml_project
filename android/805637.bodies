@@ -1,0 +1,118 @@
+class QSTileBaseView
+!!!3383685.java!!!	QSTileBaseView(inout context : Context, inout icon : QSIconView)
+        this(context, icon, false);
+!!!3383813.java!!!	QSTileBaseView(inout context : Context, inout icon : QSIconView, inout collapsedView : boolean)
+        super(context);
+        // Default to Quick Tile padding, and QSTileView will specify its own padding.
+        int padding = context.getResources().getDimensionPixelSize(R.dimen.qs_quick_tile_padding);
+
+        mIconFrame = new FrameLayout(context);
+        mIconFrame.setForegroundGravity(Gravity.CENTER);
+        int size = context.getResources().getDimensionPixelSize(R.dimen.qs_quick_tile_size);
+        addView(mIconFrame, new LayoutParams(size, size));
+        mIcon = icon;
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, padding, 0, padding);
+        mIconFrame.addView(mIcon, params);
+
+        mTileBackground = newTileBackground();
+        if (mTileBackground instanceof RippleDrawable) {
+            setRipple((RippleDrawable) mTileBackground);
+        }
+        setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        setBackground(mTileBackground);
+
+        setPadding(0, 0, 0, 0);
+        setClipChildren(false);
+        setClipToPadding(false);
+        mCollapsedView = collapsedView;
+        setFocusable(true);
+!!!3383941.java!!!	newTileBackground() : Drawable
+        final int[] attrs = new int[]{android.R.attr.selectableItemBackgroundBorderless};
+        final TypedArray ta = getContext().obtainStyledAttributes(attrs);
+        final Drawable d = ta.getDrawable(0);
+        ta.recycle();
+        return d;
+!!!3384069.java!!!	setRipple(inout tileBackground : RippleDrawable) : void
+        mRipple = tileBackground;
+        if (getWidth() != 0) {
+            updateRippleSize(getWidth(), getHeight());
+        }
+!!!3384197.java!!!	updateRippleSize(in width : int, in height : int) : void
+        // center the touch feedback on the center of the icon, and dial it down a bit
+        final int cx = width / 2;
+        final int cy = mIconFrame.getMeasuredHeight() / 2;
+        final int rad = (int) (mIcon.getHeight() * .85f);
+        mRipple.setHotspotBounds(cx - rad, cy - rad, cx + rad, cy + rad);
+!!!3384325.java!!!	init(inout tile : QSTile) : void
+        init(v -> tile.click(), v -> tile.secondaryClick(), view -> {
+            tile.longClick();
+            return true;
+        });
+!!!3384453.java!!!	init(inout click : OnClickListener, inout secondaryClick : OnClickListener, inout longClick : OnLongClickListener) : void
+        setOnClickListener(click);
+        setOnLongClickListener(longClick);
+!!!3384581.java!!!	onLayout(inout changed : boolean, in l : int, in t : int, in r : int, in b : int) : void
+        super.onLayout(changed, l, t, r, b);
+        final int w = getMeasuredWidth();
+        final int h = getMeasuredHeight();
+
+        if (mRipple != null) {
+            updateRippleSize(w, h);
+        }
+!!!3384709.java!!!	hasOverlappingRendering() : boolean
+        // Avoid layers for this layout - we don't need them.
+        return false;
+!!!3384837.java!!!	updateAccessibilityOrder(inout previousView : View) : View
+        setAccessibilityTraversalAfter(previousView.getId());
+        return this;
+!!!3384965.java!!!	onStateChanged(inout state : QSTile.State) : void
+        mHandler.obtainMessage(H.STATE_CHANGED, state).sendToTarget();
+!!!3385093.java!!!	handleStateChanged(inout state : QSTile.State) : void
+        setClickable(state.state != Tile.STATE_UNAVAILABLE);
+        mIcon.setIcon(state);
+        setContentDescription(state.contentDescription);
+        mAccessibilityClass = state.expandedAccessibilityClassName;
+        if (state instanceof QSTile.BooleanState) {
+            boolean newState = ((BooleanState) state).value;
+            if (mTileState != newState) {
+                mClicked = false;
+                mTileState = newState;
+            }
+        }
+!!!3385221.java!!!	setClickable(inout clickable : boolean) : void
+        super.setClickable(clickable);
+        setBackground(clickable ? mRipple : null);
+!!!3385349.java!!!	getDetailY() : int
+        return getTop() + getHeight() / 2;
+!!!3385477.java!!!	getIcon() : QSIconView
+        return mIcon;
+!!!3385605.java!!!	performClick() : boolean
+        mClicked = true;
+        return super.performClick();
+!!!3385733.java!!!	onInitializeAccessibilityEvent(inout event : AccessibilityEvent) : void
+        super.onInitializeAccessibilityEvent(event);
+        if (!TextUtils.isEmpty(mAccessibilityClass)) {
+            event.setClassName(mAccessibilityClass);
+            if (Switch.class.getName().equals(mAccessibilityClass)) {
+                boolean b = mClicked ? !mTileState : mTileState;
+                String label = getResources()
+                        .getString(b ? R.string.switch_bar_on : R.string.switch_bar_off);
+                event.setContentDescription(label);
+                event.setChecked(b);
+            }
+        }
+!!!3385861.java!!!	onInitializeAccessibilityNodeInfo(inout info : AccessibilityNodeInfo) : void
+        super.onInitializeAccessibilityNodeInfo(info);
+        if (!TextUtils.isEmpty(mAccessibilityClass)) {
+            info.setClassName(mAccessibilityClass);
+            if (Switch.class.getName().equals(mAccessibilityClass)) {
+                boolean b = mClicked ? !mTileState : mTileState;
+                String label = getResources()
+                        .getString(b ? R.string.switch_bar_on : R.string.switch_bar_off);
+                info.setText(label);
+                info.setChecked(b);
+                info.setCheckable(true);
+            }
+        }

@@ -1,0 +1,146 @@
+class FloatingActionMode
+!!!10166533.java!!!	FloatingActionMode(inout context : Context, inout callback : ActionMode::Callback2, inout originatingView : View, inout floatingToolbar : FloatingToolbar)
+        mContext = Preconditions.checkNotNull(context);
+        mCallback = Preconditions.checkNotNull(callback);
+        mMenu = new MenuBuilder(context).setDefaultShowAsAction(
+                MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        setType(ActionMode.TYPE_FLOATING);
+        mMenu.setCallback(new MenuBuilder.Callback() {
+            @Override
+            public void onMenuModeChange(MenuBuilder menu) {}
+
+            @Override
+            public boolean onMenuItemSelected(MenuBuilder menu, MenuItem item) {
+                return mCallback.onActionItemClicked(FloatingActionMode.this, item);
+            }
+        });
+        mContentRect = new Rect();
+        mContentRectOnScreen = new Rect();
+        mPreviousContentRectOnScreen = new Rect();
+        mViewPositionOnScreen = new int[2];
+        mPreviousViewPositionOnScreen = new int[2];
+        mRootViewPositionOnScreen = new int[2];
+        mViewRectOnScreen = new Rect();
+        mPreviousViewRectOnScreen = new Rect();
+        mScreenRect = new Rect();
+        mOriginatingView = Preconditions.checkNotNull(originatingView);
+        mOriginatingView.getLocationOnScreen(mViewPositionOnScreen);
+        // Allow the content rect to overshoot a little bit beyond the
+        // bottom view bound if necessary.
+        mBottomAllowance = context.getResources()
+                .getDimensionPixelSize(R.dimen.content_rect_bottom_clip_allowance);
+        mDisplaySize = new Point();
+        setFloatingToolbar(Preconditions.checkNotNull(floatingToolbar));
+!!!10166661.java!!!	setFloatingToolbar(inout floatingToolbar : FloatingToolbar) : void
+        mFloatingToolbar = floatingToolbar
+                .setMenu(mMenu)
+                .setOnMenuItemClickListener(item -> mMenu.performItemAction(item, 0));
+        mFloatingToolbarVisibilityHelper = new FloatingToolbarVisibilityHelper(mFloatingToolbar);
+        mFloatingToolbarVisibilityHelper.activate();
+!!!10167429.java!!!	invalidate() : void
+        mCallback.onPrepareActionMode(this, mMenu);
+        invalidateContentRect();  // Will re-layout and show the toolbar if necessary.
+!!!10167557.java!!!	invalidateContentRect() : void
+        mCallback.onGetContentRect(this, mOriginatingView, mContentRect);
+        repositionToolbar();
+!!!10167685.java!!!	updateViewLocationInWindow() : void
+        mOriginatingView.getLocationOnScreen(mViewPositionOnScreen);
+        mOriginatingView.getRootView().getLocationOnScreen(mRootViewPositionOnScreen);
+        mOriginatingView.getGlobalVisibleRect(mViewRectOnScreen);
+        mViewRectOnScreen.offset(mRootViewPositionOnScreen[0], mRootViewPositionOnScreen[1]);
+
+        if (!Arrays.equals(mViewPositionOnScreen, mPreviousViewPositionOnScreen)
+                || !mViewRectOnScreen.equals(mPreviousViewRectOnScreen)) {
+            repositionToolbar();
+            mPreviousViewPositionOnScreen[0] = mViewPositionOnScreen[0];
+            mPreviousViewPositionOnScreen[1] = mViewPositionOnScreen[1];
+            mPreviousViewRectOnScreen.set(mViewRectOnScreen);
+        }
+!!!10167813.java!!!	repositionToolbar() : void
+        mContentRectOnScreen.set(mContentRect);
+
+        // Offset the content rect into screen coordinates, taking into account any transformations
+        // that may be applied to the originating view or its ancestors.
+        final ViewParent parent = mOriginatingView.getParent();
+        if (parent instanceof ViewGroup) {
+            ((ViewGroup) parent).getChildVisibleRect(
+                    mOriginatingView, mContentRectOnScreen,
+                    null /* offset */, true /* forceParentCheck */);
+            mContentRectOnScreen.offset(mRootViewPositionOnScreen[0], mRootViewPositionOnScreen[1]);
+        } else {
+            mContentRectOnScreen.offset(mViewPositionOnScreen[0], mViewPositionOnScreen[1]);
+        }
+
+        if (isContentRectWithinBounds()) {
+            mFloatingToolbarVisibilityHelper.setOutOfBounds(false);
+            // Make sure that content rect is not out of the view's visible bounds.
+            mContentRectOnScreen.set(
+                    Math.max(mContentRectOnScreen.left, mViewRectOnScreen.left),
+                    Math.max(mContentRectOnScreen.top, mViewRectOnScreen.top),
+                    Math.min(mContentRectOnScreen.right, mViewRectOnScreen.right),
+                    Math.min(mContentRectOnScreen.bottom,
+                            mViewRectOnScreen.bottom + mBottomAllowance));
+
+            if (!mContentRectOnScreen.equals(mPreviousContentRectOnScreen)) {
+                // Content rect is moving.
+                mOriginatingView.removeCallbacks(mMovingOff);
+                mFloatingToolbarVisibilityHelper.setMoving(true);
+                mOriginatingView.postDelayed(mMovingOff, MOVING_HIDE_DELAY);
+
+                mFloatingToolbar.setContentRect(mContentRectOnScreen);
+                mFloatingToolbar.updateLayout();
+            }
+        } else {
+            mFloatingToolbarVisibilityHelper.setOutOfBounds(true);
+            mContentRectOnScreen.setEmpty();
+        }
+        mFloatingToolbarVisibilityHelper.updateToolbarVisibility();
+
+        mPreviousContentRectOnScreen.set(mContentRectOnScreen);
+!!!10167941.java!!!	isContentRectWithinBounds() : boolean
+        mContext.getSystemService(WindowManager.class)
+            .getDefaultDisplay().getRealSize(mDisplaySize);
+        mScreenRect.set(0, 0, mDisplaySize.x, mDisplaySize.y);
+
+        return intersectsClosed(mContentRectOnScreen, mScreenRect)
+            && intersectsClosed(mContentRectOnScreen, mViewRectOnScreen);
+!!!10168069.java!!!	intersectsClosed(inout a : Rect, inout b : Rect) : boolean
+         return a.left <= b.right && b.left <= a.right
+                 && a.top <= b.bottom && b.top <= a.bottom;
+!!!10168197.java!!!	hide(in duration : long) : void
+        if (duration == ActionMode.DEFAULT_HIDE_DURATION) {
+            duration = ViewConfiguration.getDefaultActionModeHideDuration();
+        }
+        duration = Math.min(MAX_HIDE_DURATION, duration);
+        mOriginatingView.removeCallbacks(mHideOff);
+        if (duration <= 0) {
+            mHideOff.run();
+        } else {
+            mFloatingToolbarVisibilityHelper.setHideRequested(true);
+            mFloatingToolbarVisibilityHelper.updateToolbarVisibility();
+            mOriginatingView.postDelayed(mHideOff, duration);
+        }
+!!!10168325.java!!!	onWindowFocusChanged(inout hasWindowFocus : boolean) : void
+        mFloatingToolbarVisibilityHelper.setWindowFocused(hasWindowFocus);
+        mFloatingToolbarVisibilityHelper.updateToolbarVisibility();
+!!!10168453.java!!!	finish() : void
+        reset();
+        mCallback.onDestroyActionMode(this);
+!!!10168581.java!!!	getMenu() : Menu
+        return mMenu;
+!!!10168709.java!!!	getTitle() : CharSequence
+        return null;
+!!!10168837.java!!!	getSubtitle() : CharSequence
+        return null;
+!!!10168965.java!!!	getCustomView() : View
+        return null;
+!!!10169093.java!!!	getMenuInflater() : MenuInflater
+        return new MenuInflater(mContext);
+!!!10169221.java!!!	reset() : void
+        mFloatingToolbar.dismiss();
+        mFloatingToolbarVisibilityHelper.deactivate();
+        mOriginatingView.removeCallbacks(mMovingOff);
+        mOriginatingView.removeCallbacks(mHideOff);
+!!!10169349.java!!!	isViewStillActive() : boolean
+        return mOriginatingView.getWindowVisibility() == View.VISIBLE
+                && mOriginatingView.isShown();

@@ -1,0 +1,2557 @@
+class NetworkPolicyManagerService
+!!!11856901.java!!!	NetworkPolicyManagerService(inout context : Context, inout activityManager : IActivityManager, inout networkStats : INetworkStatsService, inout networkManagement : INetworkManagementService)
+        this(context, activityManager, networkStats, networkManagement,
+                AppGlobals.getPackageManager(), NtpTrustedTime.getInstance(context), getSystemDir(),
+                false);
+!!!11857029.java!!!	getSystemDir() : File
+        return new File(Environment.getDataDirectory(), "system");
+!!!11857157.java!!!	NetworkPolicyManagerService(inout context : Context, inout activityManager : IActivityManager, inout networkStats : INetworkStatsService, inout networkManagement : INetworkManagementService, inout pm : IPackageManager, inout time : TrustedTime, inout systemDir : File, inout suppressDefaultPolicy : boolean)
+        mContext = checkNotNull(context, "missing context");
+        mActivityManager = checkNotNull(activityManager, "missing activityManager");
+        mNetworkStats = checkNotNull(networkStats, "missing networkStats");
+        mNetworkManager = checkNotNull(networkManagement, "missing networkManagement");
+        mDeviceIdleController = IDeviceIdleController.Stub.asInterface(ServiceManager.getService(
+                Context.DEVICE_IDLE_CONTROLLER));
+        mTime = checkNotNull(time, "missing TrustedTime");
+        mUserManager = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
+        mCarrierConfigManager = mContext.getSystemService(CarrierConfigManager.class);
+        mIPm = pm;
+
+        HandlerThread thread = new HandlerThread(TAG);
+        thread.start();
+        mHandler = new Handler(thread.getLooper(), mHandlerCallback);
+
+        // We create another thread for the UID events, which are more time-critical.
+        mUidEventThread = new ServiceThread(TAG + ".uid", Process.THREAD_PRIORITY_FOREGROUND,
+                /*allowIo=*/ false);
+        mUidEventThread.start();
+        mUidEventHandler = new Handler(mUidEventThread.getLooper(), mUidEventHandlerCallback);
+
+        mSuppressDefaultPolicy = suppressDefaultPolicy;
+
+        mPolicyFile = new AtomicFile(new File(systemDir, "netpolicy.xml"));
+
+        mAppOps = context.getSystemService(AppOpsManager.class);
+
+        // Expose private service for system components to use.
+        LocalServices.addService(NetworkPolicyManagerInternal.class,
+                new NetworkPolicyManagerInternalImpl());
+!!!11857285.java!!!	bindConnectivityManager(inout connManager : IConnectivityManager) : void
+        mConnManager = checkNotNull(connManager, "missing IConnectivityManager");
+!!!11857413.java!!!	bindNotificationManager(inout notifManager : INotificationManager) : void
+        mNotifManager = checkNotNull(notifManager, "missing INotificationManager");
+!!!11857541.java!!!	updatePowerSaveWhitelistUL() : void
+        try {
+            int[] whitelist = mDeviceIdleController.getAppIdWhitelistExceptIdle();
+            mPowerSaveWhitelistExceptIdleAppIds.clear();
+            if (whitelist != null) {
+                for (int uid : whitelist) {
+                    mPowerSaveWhitelistExceptIdleAppIds.put(uid, true);
+                }
+            }
+            whitelist = mDeviceIdleController.getAppIdWhitelist();
+            mPowerSaveWhitelistAppIds.clear();
+            if (whitelist != null) {
+                for (int uid : whitelist) {
+                    mPowerSaveWhitelistAppIds.put(uid, true);
+                }
+            }
+        } catch (RemoteException e) {
+        }
+!!!11857669.java!!!	addDefaultRestrictBackgroundWhitelistUidsUL() : boolean
+        final List<UserInfo> users = mUserManager.getUsers();
+        final int numberUsers = users.size();
+
+        boolean changed = false;
+        for (int i = 0; i < numberUsers; i++) {
+            final UserInfo user = users.get(i);
+            changed = addDefaultRestrictBackgroundWhitelistUidsUL(user.id) || changed;
+        }
+        return changed;
+!!!11857797.java!!!	addDefaultRestrictBackgroundWhitelistUidsUL(in userId : int) : boolean
+        final SystemConfig sysConfig = SystemConfig.getInstance();
+        final PackageManager pm = mContext.getPackageManager();
+        final ArraySet<String> allowDataUsage = sysConfig.getAllowInDataUsageSave();
+        boolean changed = false;
+        for (int i = 0; i < allowDataUsage.size(); i++) {
+            final String pkg = allowDataUsage.valueAt(i);
+            if (LOGD)
+                Slog.d(TAG, "checking restricted background whitelisting for package " + pkg
+                        + " and user " + userId);
+            final ApplicationInfo app;
+            try {
+                app = pm.getApplicationInfoAsUser(pkg, PackageManager.MATCH_SYSTEM_ONLY, userId);
+            } catch (PackageManager.NameNotFoundException e) {
+                if (LOGD) Slog.d(TAG, "No ApplicationInfo for package " + pkg);
+                // Ignore it - some apps on allow-in-data-usage-save are optional.
+                continue;
+            }
+            if (!app.isPrivilegedApp()) {
+                Slog.e(TAG, "addDefaultRestrictBackgroundWhitelistUidsUL(): "
+                        + "skipping non-privileged app  " + pkg);
+                continue;
+            }
+            final int uid = UserHandle.getUid(userId, app.uid);
+            mDefaultRestrictBackgroundWhitelistUids.append(uid, true);
+            if (LOGD)
+                Slog.d(TAG, "Adding uid " + uid + " (user " + userId + ") to default restricted "
+                        + "background whitelist. Revoked status: "
+                        + mRestrictBackgroundWhitelistRevokedUids.get(uid));
+            if (!mRestrictBackgroundWhitelistRevokedUids.get(uid)) {
+                if (LOGD)
+                    Slog.d(TAG, "adding default package " + pkg + " (uid " + uid + " for user "
+                            + userId + ") to restrict background whitelist");
+                setUidPolicyUncheckedUL(uid, POLICY_ALLOW_METERED_BACKGROUND, false);
+                changed = true;
+            }
+        }
+        return changed;
+!!!11857925.java!!!	updatePowerSaveTempWhitelistUL() : void
+        try {
+            // Clear the states of the current whitelist
+            final int N = mPowerSaveTempWhitelistAppIds.size();
+            for (int i = 0; i < N; i++) {
+                mPowerSaveTempWhitelistAppIds.setValueAt(i, false);
+            }
+            // Update the states with the new whitelist
+            final int[] whitelist = mDeviceIdleController.getAppIdTempWhitelist();
+            if (whitelist != null) {
+                for (int uid : whitelist) {
+                    mPowerSaveTempWhitelistAppIds.put(uid, true);
+                }
+            }
+        } catch (RemoteException e) {
+        }
+!!!11858053.java!!!	purgePowerSaveTempWhitelistUL() : void
+        final int N = mPowerSaveTempWhitelistAppIds.size();
+        for (int i = N - 1; i >= 0; i--) {
+            if (mPowerSaveTempWhitelistAppIds.valueAt(i) == false) {
+                mPowerSaveTempWhitelistAppIds.removeAt(i);
+            }
+        }
+!!!11858181.java!!!	initService(inout initCompleteSignal : CountDownLatch) : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "systemReady");
+        final int oldPriority = Process.getThreadPriority(Process.myTid());
+        try {
+            // Boost thread's priority during system server init
+            Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
+            if (!isBandwidthControlEnabled()) {
+                Slog.w(TAG, "bandwidth controls disabled, unable to enforce policy");
+                return;
+            }
+
+            mUsageStats = LocalServices.getService(UsageStatsManagerInternal.class);
+
+            synchronized (mUidRulesFirstLock) {
+                synchronized (mNetworkPoliciesSecondLock) {
+                    updatePowerSaveWhitelistUL();
+                    mPowerManagerInternal = LocalServices.getService(PowerManagerInternal.class);
+                    mPowerManagerInternal.registerLowPowerModeObserver(
+                            new PowerManagerInternal.LowPowerModeListener() {
+                                @Override
+                                public int getServiceType() {
+                                    return ServiceType.NETWORK_FIREWALL;
+                                }
+
+                                @Override
+                                public void onLowPowerModeChanged(PowerSaveState result) {
+                                    final boolean enabled = result.batterySaverEnabled;
+                                    if (LOGD) {
+                                        Slog.d(TAG, "onLowPowerModeChanged(" + enabled + ")");
+                                    }
+                                    synchronized (mUidRulesFirstLock) {
+                                        if (mRestrictPower != enabled) {
+                                            mRestrictPower = enabled;
+                                            updateRulesForRestrictPowerUL();
+                                        }
+                                    }
+                                }
+                            });
+                    mRestrictPower = mPowerManagerInternal.getLowPowerState(
+                            ServiceType.NETWORK_FIREWALL).batterySaverEnabled;
+
+                    mSystemReady = true;
+
+                    // read policy from disk
+                    readPolicyAL();
+
+                    // Update the restrictBackground if battery saver is turned on
+                    mRestrictBackgroundBeforeBsm = mRestrictBackground;
+                    mRestrictBackgroundPowerState = mPowerManagerInternal
+                            .getLowPowerState(ServiceType.DATA_SAVER);
+                    final boolean localRestrictBackground =
+                            mRestrictBackgroundPowerState.batterySaverEnabled;
+                    if (localRestrictBackground && localRestrictBackground != mRestrictBackground) {
+                        mRestrictBackground = localRestrictBackground;
+                        mHandler.obtainMessage(MSG_RESTRICT_BACKGROUND_CHANGED,
+                                mRestrictBackground ? 1 : 0, 0).sendToTarget();
+                    }
+                    mPowerManagerInternal.registerLowPowerModeObserver(
+                            new PowerManagerInternal.LowPowerModeListener() {
+                                @Override
+                                public int getServiceType() {
+                                    return ServiceType.DATA_SAVER;
+                                }
+
+                                @Override
+                                public void onLowPowerModeChanged(PowerSaveState result) {
+                                    synchronized (mUidRulesFirstLock) {
+                                        updateRestrictBackgroundByLowPowerModeUL(result);
+                                    }
+                                }
+                            });
+
+                    if (addDefaultRestrictBackgroundWhitelistUidsUL()) {
+                        writePolicyAL();
+                    }
+
+                    setRestrictBackgroundUL(mRestrictBackground);
+                    updateRulesForGlobalChangeAL(false);
+                    updateNotificationsNL();
+                }
+            }
+
+            mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
+            try {
+                mActivityManager.registerUidObserver(mUidObserver,
+                        ActivityManager.UID_OBSERVER_PROCSTATE|ActivityManager.UID_OBSERVER_GONE,
+                        ActivityManager.PROCESS_STATE_UNKNOWN, null);
+                mNetworkManager.registerObserver(mAlertObserver);
+            } catch (RemoteException e) {
+                // ignored; both services live in system_server
+            }
+
+            // listen for changes to power save whitelist
+            final IntentFilter whitelistFilter = new IntentFilter(
+                    PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED);
+            mContext.registerReceiver(mPowerSaveWhitelistReceiver, whitelistFilter, null, mHandler);
+
+            DeviceIdleController.LocalService deviceIdleService
+                    = LocalServices.getService(DeviceIdleController.LocalService.class);
+            deviceIdleService.setNetworkPolicyTempWhitelistCallback(mTempPowerSaveChangedCallback);
+
+            // watch for network interfaces to be claimed
+            final IntentFilter connFilter = new IntentFilter(CONNECTIVITY_ACTION);
+            mContext.registerReceiver(mConnReceiver, connFilter, CONNECTIVITY_INTERNAL, mHandler);
+
+            // listen for package changes to update policy
+            final IntentFilter packageFilter = new IntentFilter();
+            packageFilter.addAction(ACTION_PACKAGE_ADDED);
+            packageFilter.addDataScheme("package");
+            mContext.registerReceiver(mPackageReceiver, packageFilter, null, mHandler);
+
+            // listen for UID changes to update policy
+            mContext.registerReceiver(
+                    mUidRemovedReceiver, new IntentFilter(ACTION_UID_REMOVED), null, mHandler);
+
+            // listen for user changes to update policy
+            final IntentFilter userFilter = new IntentFilter();
+            userFilter.addAction(ACTION_USER_ADDED);
+            userFilter.addAction(ACTION_USER_REMOVED);
+            mContext.registerReceiver(mUserReceiver, userFilter, null, mHandler);
+
+            // listen for stats update events
+            final IntentFilter statsFilter = new IntentFilter(ACTION_NETWORK_STATS_UPDATED);
+            mContext.registerReceiver(
+                    mStatsReceiver, statsFilter, READ_NETWORK_USAGE_HISTORY, mHandler);
+
+            // listen for restrict background changes from notifications
+            final IntentFilter allowFilter = new IntentFilter(ACTION_ALLOW_BACKGROUND);
+            mContext.registerReceiver(mAllowReceiver, allowFilter, MANAGE_NETWORK_POLICY, mHandler);
+
+            // listen for snooze warning from notifications
+            final IntentFilter snoozeWarningFilter = new IntentFilter(ACTION_SNOOZE_WARNING);
+            mContext.registerReceiver(mSnoozeWarningReceiver, snoozeWarningFilter,
+                    MANAGE_NETWORK_POLICY, mHandler);
+
+            // listen for configured wifi networks to be removed
+            final IntentFilter wifiConfigFilter =
+                    new IntentFilter(CONFIGURED_NETWORKS_CHANGED_ACTION);
+            mContext.registerReceiver(mWifiConfigReceiver, wifiConfigFilter, null, mHandler);
+
+            // listen for wifi state changes to catch metered hint
+            final IntentFilter wifiStateFilter = new IntentFilter(
+                    WifiManager.NETWORK_STATE_CHANGED_ACTION);
+            mContext.registerReceiver(mWifiStateReceiver, wifiStateFilter, null, mHandler);
+
+            // listen for carrier config changes to update data cycle information
+            final IntentFilter carrierConfigFilter = new IntentFilter(
+                    ACTION_CARRIER_CONFIG_CHANGED);
+            mContext.registerReceiver(mCarrierConfigReceiver, carrierConfigFilter, null, mHandler);
+
+            mUsageStats.addAppIdleStateChangeListener(new AppIdleStateChangeListener());
+            // tell systemReady() that the service has been initialized
+            initCompleteSignal.countDown();
+        } finally {
+            // Restore the default priority after init is done
+            Process.setThreadPriority(oldPriority);
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11858309.java!!!	networkScoreAndNetworkManagementServiceReady() : CountDownLatch
+        final CountDownLatch initCompleteSignal = new CountDownLatch(1);
+        mHandler.post(() -> initService(initCompleteSignal));
+        return initCompleteSignal;
+!!!11858437.java!!!	systemReady(inout initCompleteSignal : CountDownLatch) : void
+        // wait for initService to complete
+        try {
+            if (!initCompleteSignal.await(30, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Service " + TAG +" init timeout");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Service " + TAG + " init interrupted", e);
+        }
+!!!11858565.java!!!	newWifiPolicy(inout template : NetworkTemplate, inout metered : boolean) : NetworkPolicy
+        return new NetworkPolicy(template, CYCLE_NONE, Time.TIMEZONE_UTC,
+                WARNING_DISABLED, LIMIT_DISABLED, SNOOZE_NEVER, SNOOZE_NEVER,
+                metered, true);
+!!!11858693.java!!!	updateNotificationsNL() : void
+        if (LOGV) Slog.v(TAG, "updateNotificationsNL()");
+
+        // keep track of previously active notifications
+        final ArraySet<NotificationId> beforeNotifs = new ArraySet<NotificationId>(mActiveNotifs);
+        mActiveNotifs.clear();
+
+        // TODO: when switching to kernel notifications, compute next future
+        // cycle boundary to recompute notifications.
+
+        // examine stats for each active policy
+        final long currentTime = currentTimeMillis();
+        for (int i = mNetworkPolicy.size()-1; i >= 0; i--) {
+            final NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+            // ignore policies that aren't relevant to user
+            if (!isTemplateRelevant(policy.template)) continue;
+            if (!policy.hasCycle()) continue;
+
+            final long start = computeLastCycleBoundary(currentTime, policy);
+            final long end = currentTime;
+            final long totalBytes = getTotalBytes(policy.template, start, end);
+
+            if (policy.isOverLimit(totalBytes)) {
+                if (policy.lastLimitSnooze >= start) {
+                    enqueueNotification(policy, TYPE_LIMIT_SNOOZED, totalBytes);
+                } else {
+                    enqueueNotification(policy, TYPE_LIMIT, totalBytes);
+                    notifyOverLimitNL(policy.template);
+                }
+
+            } else {
+                notifyUnderLimitNL(policy.template);
+
+                if (policy.isOverWarning(totalBytes) && policy.lastWarningSnooze < start) {
+                    enqueueNotification(policy, TYPE_WARNING, totalBytes);
+                }
+            }
+        }
+
+        // cancel stale notifications that we didn't renew above
+        for (int i = beforeNotifs.size()-1; i >= 0; i--) {
+            final NotificationId notificationId = beforeNotifs.valueAt(i);
+            if (!mActiveNotifs.contains(notificationId)) {
+                cancelNotification(notificationId);
+            }
+        }
+!!!11858821.java!!!	isTemplateRelevant(inout template : NetworkTemplate) : boolean
+        if (template.isMatchRuleMobile()) {
+            final TelephonyManager tele = TelephonyManager.from(mContext);
+            final SubscriptionManager sub = SubscriptionManager.from(mContext);
+
+            // Mobile template is relevant when any active subscriber matches
+            final int[] subIds = sub.getActiveSubscriptionIdList();
+            for (int subId : subIds) {
+                final String subscriberId = tele.getSubscriberId(subId);
+                final NetworkIdentity probeIdent = new NetworkIdentity(TYPE_MOBILE,
+                        TelephonyManager.NETWORK_TYPE_UNKNOWN, subscriberId, null, false, true);
+                if (template.matches(probeIdent)) {
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            return true;
+        }
+!!!11858949.java!!!	notifyOverLimitNL(inout template : NetworkTemplate) : void
+        if (!mOverLimitNotified.contains(template)) {
+            mContext.startActivity(buildNetworkOverLimitIntent(mContext.getResources(), template));
+            mOverLimitNotified.add(template);
+        }
+!!!11859077.java!!!	notifyUnderLimitNL(inout template : NetworkTemplate) : void
+        mOverLimitNotified.remove(template);
+!!!11859205.java!!!	enqueueNotification(inout policy : NetworkPolicy, in type : int, in totalBytes : long) : void
+        final NotificationId notificationId = new NotificationId(policy, type);
+        final Notification.Builder builder =
+                new Notification.Builder(mContext, SystemNotificationChannels.NETWORK_STATUS);
+        builder.setOnlyAlertOnce(true);
+        builder.setWhen(0L);
+        builder.setColor(mContext.getColor(
+                com.android.internal.R.color.system_notification_accent_color));
+
+        final Resources res = mContext.getResources();
+        CharSequence body = null;
+        switch (type) {
+            case TYPE_WARNING: {
+                final CharSequence title = res.getText(R.string.data_usage_warning_title);
+                body = res.getString(R.string.data_usage_warning_body);
+
+                builder.setSmallIcon(R.drawable.stat_notify_error);
+                builder.setTicker(title);
+                builder.setContentTitle(title);
+                builder.setContentText(body);
+                builder.setDefaults(Notification.DEFAULT_ALL);
+                builder.setChannelId(SystemNotificationChannels.NETWORK_ALERTS);
+
+                final Intent snoozeIntent = buildSnoozeWarningIntent(policy.template);
+                builder.setDeleteIntent(PendingIntent.getBroadcast(
+                        mContext, 0, snoozeIntent, PendingIntent.FLAG_UPDATE_CURRENT));
+
+                final Intent viewIntent = buildViewDataUsageIntent(res, policy.template);
+                builder.setContentIntent(PendingIntent.getActivity(
+                        mContext, 0, viewIntent, PendingIntent.FLAG_UPDATE_CURRENT));
+
+                break;
+            }
+            case TYPE_LIMIT: {
+                body = res.getText(R.string.data_usage_limit_body);
+
+                final CharSequence title;
+                int icon = R.drawable.stat_notify_disabled_data;
+                switch (policy.template.getMatchRule()) {
+                    case MATCH_MOBILE_3G_LOWER:
+                        title = res.getText(R.string.data_usage_3g_limit_title);
+                        break;
+                    case MATCH_MOBILE_4G:
+                        title = res.getText(R.string.data_usage_4g_limit_title);
+                        break;
+                    case MATCH_MOBILE_ALL:
+                        title = res.getText(R.string.data_usage_mobile_limit_title);
+                        break;
+                    case MATCH_WIFI:
+                        title = res.getText(R.string.data_usage_wifi_limit_title);
+                        icon = R.drawable.stat_notify_error;
+                        break;
+                    default:
+                        title = null;
+                        break;
+                }
+
+                builder.setOngoing(true);
+                builder.setSmallIcon(icon);
+                builder.setTicker(title);
+                builder.setContentTitle(title);
+                builder.setContentText(body);
+
+                final Intent intent = buildNetworkOverLimitIntent(res, policy.template);
+                builder.setContentIntent(PendingIntent.getActivity(
+                        mContext, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT));
+                break;
+            }
+            case TYPE_LIMIT_SNOOZED: {
+                final long overBytes = totalBytes - policy.limitBytes;
+                body = res.getString(R.string.data_usage_limit_snoozed_body,
+                        Formatter.formatFileSize(mContext, overBytes));
+
+                final CharSequence title;
+                switch (policy.template.getMatchRule()) {
+                    case MATCH_MOBILE_3G_LOWER:
+                        title = res.getText(R.string.data_usage_3g_limit_snoozed_title);
+                        break;
+                    case MATCH_MOBILE_4G:
+                        title = res.getText(R.string.data_usage_4g_limit_snoozed_title);
+                        break;
+                    case MATCH_MOBILE_ALL:
+                        title = res.getText(R.string.data_usage_mobile_limit_snoozed_title);
+                        break;
+                    case MATCH_WIFI:
+                        title = res.getText(R.string.data_usage_wifi_limit_snoozed_title);
+                        break;
+                    default:
+                        title = null;
+                        break;
+                }
+
+                builder.setOngoing(true);
+                builder.setSmallIcon(R.drawable.stat_notify_error);
+                builder.setTicker(title);
+                builder.setContentTitle(title);
+                builder.setContentText(body);
+
+                final Intent intent = buildViewDataUsageIntent(res, policy.template);
+                builder.setContentIntent(PendingIntent.getActivity(
+                        mContext, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT));
+                break;
+            }
+        }
+
+        // TODO: move to NotificationManager once we can mock it
+        try {
+            final String packageName = mContext.getPackageName();
+            if (!TextUtils.isEmpty(body)) {
+                builder.setStyle(new Notification.BigTextStyle()
+                        .bigText(body));
+            }
+            mNotifManager.enqueueNotificationWithTag(
+                    packageName, packageName, notificationId.getTag(), notificationId.getId(),
+                    builder.build(), UserHandle.USER_ALL);
+            mActiveNotifs.add(notificationId);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11859333.java!!!	cancelNotification(inout notificationId : NetworkPolicyManagerService::NotificationId) : void
+        // TODO: move to NotificationManager once we can mock it
+        try {
+            final String packageName = mContext.getPackageName();
+            mNotifManager.cancelNotificationWithTag(
+                    packageName, notificationId.getTag(), notificationId.getId(),
+                    UserHandle.USER_ALL);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11859461.java!!!	maybeUpdateMobilePolicyCycleNL(in subId : int) : boolean
+        if (LOGV) Slog.v(TAG, "maybeUpdateMobilePolicyCycleNL()");
+        final PersistableBundle config = mCarrierConfigManager.getConfigForSubId(subId);
+
+        if (config == null) {
+            return false;
+        }
+
+        boolean policyUpdated = false;
+        final String subscriberId = TelephonyManager.from(mContext).getSubscriberId(subId);
+
+        // find and update the mobile NetworkPolicy for this subscriber id
+        final NetworkIdentity probeIdent = new NetworkIdentity(TYPE_MOBILE,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN, subscriberId, null, false, true);
+        for (int i = mNetworkPolicy.size() - 1; i >= 0; i--) {
+            final NetworkTemplate template = mNetworkPolicy.keyAt(i);
+            if (template.matches(probeIdent)) {
+                NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+
+                // only update the policy if the user didn't change any of the defaults.
+                if (!policy.inferred) {
+                    // TODO: inferred could be split, so that if a user changes their data limit or
+                    // warning, it doesn't prevent their cycle date from being updated.
+                    if (LOGD) Slog.v(TAG, "Didn't update NetworkPolicy because policy.inferred");
+                    continue;
+                }
+
+                final int cycleDay = getCycleDayFromCarrierConfig(config, policy.cycleDay);
+                final long warningBytes = getWarningBytesFromCarrierConfig(config,
+                        policy.warningBytes);
+                final long limitBytes = getLimitBytesFromCarrierConfig(config,
+                        policy.limitBytes);
+
+                if (policy.cycleDay == cycleDay &&
+                        policy.warningBytes == warningBytes &&
+                        policy.limitBytes == limitBytes) {
+                    continue;
+                }
+
+                policyUpdated = true;
+                policy.cycleDay = cycleDay;
+                policy.warningBytes = warningBytes;
+                policy.limitBytes = limitBytes;
+
+                if (LOGD) {
+                    Slog.d(TAG, "Updated NetworkPolicy " + policy + " which matches subscriber "
+                            + NetworkIdentity.scrubSubscriberId(subscriberId)
+                            + " from CarrierConfigManager");
+                }
+            }
+        }
+
+        return policyUpdated;
+!!!11859589.java!!!	getCycleDayFromCarrierConfig(inout config : PersistableBundle, in fallbackCycleDay : int) : int
+        if (config == null) {
+            return fallbackCycleDay;
+        }
+        int cycleDay =
+                config.getInt(CarrierConfigManager.KEY_MONTHLY_DATA_CYCLE_DAY_INT);
+        if (cycleDay == DATA_CYCLE_USE_PLATFORM_DEFAULT) {
+            return fallbackCycleDay;
+        }
+        // validate cycleDay value
+        final Calendar cal = Calendar.getInstance();
+        if (cycleDay < cal.getMinimum(Calendar.DAY_OF_MONTH) ||
+                cycleDay > cal.getMaximum(Calendar.DAY_OF_MONTH)) {
+            Slog.e(TAG, "Invalid date in "
+                    + "CarrierConfigManager.KEY_MONTHLY_DATA_CYCLE_DAY_INT: " + cycleDay);
+            return fallbackCycleDay;
+        }
+        return cycleDay;
+!!!11859717.java!!!	getWarningBytesFromCarrierConfig(inout config : PersistableBundle, in fallbackWarningBytes : long) : long
+        if (config == null) {
+            return fallbackWarningBytes;
+        }
+        long warningBytes =
+                config.getLong(CarrierConfigManager.KEY_DATA_WARNING_THRESHOLD_BYTES_LONG);
+
+        if (warningBytes == DATA_CYCLE_THRESHOLD_DISABLED) {
+            return WARNING_DISABLED;
+        } else if (warningBytes == DATA_CYCLE_USE_PLATFORM_DEFAULT) {
+            return getPlatformDefaultWarningBytes();
+        } else if (warningBytes < 0) {
+            Slog.e(TAG, "Invalid value in "
+                    + "CarrierConfigManager.KEY_DATA_WARNING_THRESHOLD_BYTES_LONG; expected a "
+                    + "non-negative value but got: " + warningBytes);
+            return fallbackWarningBytes;
+        }
+
+        return warningBytes;
+!!!11859845.java!!!	getLimitBytesFromCarrierConfig(inout config : PersistableBundle, in fallbackLimitBytes : long) : long
+        if (config == null) {
+            return fallbackLimitBytes;
+        }
+        long limitBytes =
+                config.getLong(CarrierConfigManager.KEY_DATA_LIMIT_THRESHOLD_BYTES_LONG);
+
+        if (limitBytes == DATA_CYCLE_THRESHOLD_DISABLED) {
+            return LIMIT_DISABLED;
+        } else if (limitBytes == DATA_CYCLE_USE_PLATFORM_DEFAULT) {
+            return getPlatformDefaultLimitBytes();
+        } else if (limitBytes < 0) {
+            Slog.e(TAG, "Invalid value in "
+                    + "CarrierConfigManager.KEY_DATA_LIMIT_THRESHOLD_BYTES_LONG; expected a "
+                    + "non-negative value but got: " + limitBytes);
+            return fallbackLimitBytes;
+        }
+        return limitBytes;
+!!!11859973.java!!!	handleNetworkPoliciesUpdateAL(inout shouldNormalizePolicies : boolean) : void
+        if (shouldNormalizePolicies) {
+            normalizePoliciesNL();
+        }
+        updateNetworkEnabledNL();
+        updateNetworkRulesNL();
+        updateNotificationsNL();
+        writePolicyAL();
+!!!11860101.java!!!	updateNetworkEnabledNL() : void
+        if (LOGV) Slog.v(TAG, "updateNetworkEnabledNL()");
+
+        // TODO: reset any policy-disabled networks when any policy is removed
+        // completely, which is currently rare case.
+
+        final long currentTime = currentTimeMillis();
+        for (int i = mNetworkPolicy.size()-1; i >= 0; i--) {
+            final NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+            // shortcut when policy has no limit
+            if (policy.limitBytes == LIMIT_DISABLED || !policy.hasCycle()) {
+                setNetworkTemplateEnabled(policy.template, true);
+                continue;
+            }
+
+            final long start = computeLastCycleBoundary(currentTime, policy);
+            final long end = currentTime;
+            final long totalBytes = getTotalBytes(policy.template, start, end);
+
+            // disable data connection when over limit and not snoozed
+            final boolean overLimitWithoutSnooze = policy.isOverLimit(totalBytes)
+                    && policy.lastLimitSnooze < start;
+            final boolean networkEnabled = !overLimitWithoutSnooze;
+
+            setNetworkTemplateEnabled(policy.template, networkEnabled);
+        }
+!!!11860229.java!!!	setNetworkTemplateEnabled(inout template : NetworkTemplate, inout enabled : boolean) : void
+        // TODO: reach into ConnectivityManager to proactively disable bringing
+        // up this network, since we know that traffic will be blocked.
+
+        if (template.getMatchRule() == MATCH_MOBILE_ALL) {
+            // If mobile data usage hits the limit or if the user resumes the data, we need to
+            // notify telephony.
+            final SubscriptionManager sm = SubscriptionManager.from(mContext);
+            final TelephonyManager tm = TelephonyManager.from(mContext);
+
+            final int[] subIds = sm.getActiveSubscriptionIdList();
+            for (int subId : subIds) {
+                final String subscriberId = tm.getSubscriberId(subId);
+                final NetworkIdentity probeIdent = new NetworkIdentity(TYPE_MOBILE,
+                        TelephonyManager.NETWORK_TYPE_UNKNOWN, subscriberId, null, false, true);
+                // Template is matched when subscriber id matches.
+                if (template.matches(probeIdent)) {
+                    tm.setPolicyDataEnabled(enabled, subId);
+                }
+            }
+        }
+!!!11860357.java!!!	updateNetworkRulesNL() : void
+        if (LOGV) Slog.v(TAG, "updateNetworkRulesNL()");
+
+        final NetworkState[] states;
+        try {
+            states = mConnManager.getAllNetworkState();
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+            return;
+        }
+
+        // First, generate identities of all connected networks so we can
+        // quickly compare them against all defined policies below.
+        final ArrayList<Pair<String, NetworkIdentity>> connIdents = new ArrayList<>(states.length);
+        final ArraySet<String> connIfaces = new ArraySet<String>(states.length);
+        for (NetworkState state : states) {
+            if (state.networkInfo != null && state.networkInfo.isConnected()) {
+                final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, state);
+
+                final String baseIface = state.linkProperties.getInterfaceName();
+                if (baseIface != null) {
+                    connIdents.add(Pair.create(baseIface, ident));
+                }
+
+                // Stacked interfaces are considered to have same identity as
+                // their parent network.
+                final List<LinkProperties> stackedLinks = state.linkProperties.getStackedLinks();
+                for (LinkProperties stackedLink : stackedLinks) {
+                    final String stackedIface = stackedLink.getInterfaceName();
+                    if (stackedIface != null) {
+                        connIdents.add(Pair.create(stackedIface, ident));
+                    }
+                }
+            }
+        }
+
+        // Apply policies against all connected interfaces found above
+        mNetworkRules.clear();
+        final ArrayList<String> ifaceList = Lists.newArrayList();
+        for (int i = mNetworkPolicy.size() - 1; i >= 0; i--) {
+            final NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+
+            ifaceList.clear();
+            for (int j = connIdents.size() - 1; j >= 0; j--) {
+                final Pair<String, NetworkIdentity> ident = connIdents.get(j);
+                if (policy.template.matches(ident.second)) {
+                    ifaceList.add(ident.first);
+                }
+            }
+
+            if (ifaceList.size() > 0) {
+                final String[] ifaces = ifaceList.toArray(new String[ifaceList.size()]);
+                mNetworkRules.put(policy, ifaces);
+            }
+        }
+
+        long lowestRule = Long.MAX_VALUE;
+        final ArraySet<String> newMeteredIfaces = new ArraySet<String>(states.length);
+
+        // apply each policy that we found ifaces for; compute remaining data
+        // based on current cycle and historical stats, and push to kernel.
+        final long currentTime = currentTimeMillis();
+        for (int i = mNetworkRules.size()-1; i >= 0; i--) {
+            final NetworkPolicy policy = mNetworkRules.keyAt(i);
+            final String[] ifaces = mNetworkRules.valueAt(i);
+
+            final long start;
+            final long totalBytes;
+            if (policy.hasCycle()) {
+                start = computeLastCycleBoundary(currentTime, policy);
+                totalBytes = getTotalBytes(policy.template, start, currentTime);
+            } else {
+                start = Long.MAX_VALUE;
+                totalBytes = 0;
+            }
+
+            if (LOGD) {
+                Slog.d(TAG, "applying policy " + policy + " to ifaces " + Arrays.toString(ifaces));
+            }
+
+            final boolean hasWarning = policy.warningBytes != LIMIT_DISABLED;
+            final boolean hasLimit = policy.limitBytes != LIMIT_DISABLED;
+            if (hasLimit || policy.metered) {
+                final long quotaBytes;
+                if (!hasLimit) {
+                    // metered network, but no policy limit; we still need to
+                    // restrict apps, so push really high quota.
+                    quotaBytes = Long.MAX_VALUE;
+                } else if (policy.lastLimitSnooze >= start) {
+                    // snoozing past quota, but we still need to restrict apps,
+                    // so push really high quota.
+                    quotaBytes = Long.MAX_VALUE;
+                } else {
+                    // remaining "quota" bytes are based on total usage in
+                    // current cycle. kernel doesn't like 0-byte rules, so we
+                    // set 1-byte quota and disable the radio later.
+                    quotaBytes = Math.max(1, policy.limitBytes - totalBytes);
+                }
+
+                if (ifaces.length > 1) {
+                    // TODO: switch to shared quota once NMS supports
+                    Slog.w(TAG, "shared quota unsupported; generating rule for each iface");
+                }
+
+                for (String iface : ifaces) {
+                    // long quotaBytes split up into two ints to fit in message
+                    mHandler.obtainMessage(MSG_UPDATE_INTERFACE_QUOTA,
+                            (int) (quotaBytes >> 32), (int) (quotaBytes & 0xFFFFFFFF), iface)
+                            .sendToTarget();
+                    newMeteredIfaces.add(iface);
+                }
+            }
+
+            // keep track of lowest warning or limit of active policies
+            if (hasWarning && policy.warningBytes < lowestRule) {
+                lowestRule = policy.warningBytes;
+            }
+            if (hasLimit && policy.limitBytes < lowestRule) {
+                lowestRule = policy.limitBytes;
+            }
+        }
+
+        for (int i = connIfaces.size()-1; i >= 0; i--) {
+            String iface = connIfaces.valueAt(i);
+            // long quotaBytes split up into two ints to fit in message
+            mHandler.obtainMessage(MSG_UPDATE_INTERFACE_QUOTA,
+                    (int) (Long.MAX_VALUE >> 32), (int) (Long.MAX_VALUE & 0xFFFFFFFF), iface)
+                    .sendToTarget();
+            newMeteredIfaces.add(iface);
+        }
+
+        mHandler.obtainMessage(MSG_ADVISE_PERSIST_THRESHOLD, lowestRule).sendToTarget();
+
+        // remove quota on any trailing interfaces
+        for (int i = mMeteredIfaces.size() - 1; i >= 0; i--) {
+            final String iface = mMeteredIfaces.valueAt(i);
+            if (!newMeteredIfaces.contains(iface)) {
+                mHandler.obtainMessage(MSG_REMOVE_INTERFACE_QUOTA, iface)
+                        .sendToTarget();
+            }
+        }
+        mMeteredIfaces = newMeteredIfaces;
+
+        final String[] meteredIfaces = mMeteredIfaces.toArray(new String[mMeteredIfaces.size()]);
+        mHandler.obtainMessage(MSG_METERED_IFACES_CHANGED, meteredIfaces).sendToTarget();
+!!!11860485.java!!!	ensureActiveMobilePolicyAL() : void
+        if (LOGV) Slog.v(TAG, "ensureActiveMobilePolicyAL()");
+        if (mSuppressDefaultPolicy) return;
+
+        final TelephonyManager tele = TelephonyManager.from(mContext);
+        final SubscriptionManager sub = SubscriptionManager.from(mContext);
+
+        final int[] subIds = sub.getActiveSubscriptionIdList();
+        for (int subId : subIds) {
+            final String subscriberId = tele.getSubscriberId(subId);
+            ensureActiveMobilePolicyAL(subId, subscriberId);
+        }
+!!!11860613.java!!!	ensureActiveMobilePolicyAL(in subId : int, in subscriberId : String) : boolean
+        // Poke around to see if we already have a policy
+        final NetworkIdentity probeIdent = new NetworkIdentity(TYPE_MOBILE,
+                TelephonyManager.NETWORK_TYPE_UNKNOWN, subscriberId, null, false, true);
+        for (int i = mNetworkPolicy.size() - 1; i >= 0; i--) {
+            final NetworkTemplate template = mNetworkPolicy.keyAt(i);
+            if (template.matches(probeIdent)) {
+                if (LOGD) {
+                    Slog.d(TAG, "Found template " + template + " which matches subscriber "
+                            + NetworkIdentity.scrubSubscriberId(subscriberId));
+                }
+                return false;
+            }
+        }
+
+        Slog.i(TAG, "No policy for subscriber " + NetworkIdentity.scrubSubscriberId(subscriberId)
+                + "; generating default policy");
+        final NetworkPolicy policy = buildDefaultMobilePolicy(subId, subscriberId);
+        addNetworkPolicyAL(policy);
+        return true;
+!!!11860741.java!!!	getPlatformDefaultWarningBytes() : long
+        final int dataWarningConfig = mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_networkPolicyDefaultWarning);
+        if (dataWarningConfig == WARNING_DISABLED) {
+            return WARNING_DISABLED;
+        } else {
+            return dataWarningConfig * MB_IN_BYTES;
+        }
+!!!11860869.java!!!	getPlatformDefaultLimitBytes() : long
+        return LIMIT_DISABLED;
+!!!11860997.java!!!	buildDefaultMobilePolicy(in subId : int, in subscriberId : String) : NetworkPolicy
+        PersistableBundle config = mCarrierConfigManager.getConfigForSubId(subId);
+
+        // assume usage cycle starts today
+        final Time time = new Time();
+        time.setToNow();
+
+        final String cycleTimezone = time.timezone;
+
+        final int cycleDay = getCycleDayFromCarrierConfig(config, time.monthDay);
+        final long warningBytes = getWarningBytesFromCarrierConfig(config,
+                getPlatformDefaultWarningBytes());
+        final long limitBytes = getLimitBytesFromCarrierConfig(config,
+                getPlatformDefaultLimitBytes());
+
+        final NetworkTemplate template = buildTemplateMobileAll(subscriberId);
+        final NetworkPolicy policy = new NetworkPolicy(template, cycleDay, cycleTimezone,
+                warningBytes, limitBytes, SNOOZE_NEVER, SNOOZE_NEVER, true, true);
+        return policy;
+!!!11861125.java!!!	readPolicyAL() : void
+        if (LOGV) Slog.v(TAG, "readPolicyAL()");
+
+        // clear any existing policy and read from disk
+        mNetworkPolicy.clear();
+        mUidPolicy.clear();
+
+        FileInputStream fis = null;
+        try {
+            fis = mPolicyFile.openRead();
+            final XmlPullParser in = Xml.newPullParser();
+            in.setInput(fis, StandardCharsets.UTF_8.name());
+
+             // Must save the <restrict-background> tags and convert them to <uid-policy> later,
+             // to skip UIDs that were explicitly blacklisted.
+            final SparseBooleanArray whitelistedRestrictBackground = new SparseBooleanArray();
+
+            int type;
+            int version = VERSION_INIT;
+            boolean insideWhitelist = false;
+            while ((type = in.next()) != END_DOCUMENT) {
+                final String tag = in.getName();
+                if (type == START_TAG) {
+                    if (TAG_POLICY_LIST.equals(tag)) {
+                        final boolean oldValue = mRestrictBackground;
+                        version = readIntAttribute(in, ATTR_VERSION);
+                        if (version >= VERSION_ADDED_RESTRICT_BACKGROUND) {
+                            mRestrictBackground = readBooleanAttribute(
+                                    in, ATTR_RESTRICT_BACKGROUND);
+                        } else {
+                            mRestrictBackground = false;
+                        }
+                        if (mRestrictBackground != oldValue) {
+                            // Some early services may have read the default value,
+                            // so notify them that it's changed
+                            mHandler.obtainMessage(MSG_RESTRICT_BACKGROUND_CHANGED,
+                                    mRestrictBackground ? 1 : 0, 0).sendToTarget();
+                        }
+
+                    } else if (TAG_NETWORK_POLICY.equals(tag)) {
+                        final int networkTemplate = readIntAttribute(in, ATTR_NETWORK_TEMPLATE);
+                        final String subscriberId = in.getAttributeValue(null, ATTR_SUBSCRIBER_ID);
+                        final String networkId;
+                        if (version >= VERSION_ADDED_NETWORK_ID) {
+                            networkId = in.getAttributeValue(null, ATTR_NETWORK_ID);
+                        } else {
+                            networkId = null;
+                        }
+                        final int cycleDay = readIntAttribute(in, ATTR_CYCLE_DAY);
+                        final String cycleTimezone;
+                        if (version >= VERSION_ADDED_TIMEZONE) {
+                            cycleTimezone = in.getAttributeValue(null, ATTR_CYCLE_TIMEZONE);
+                        } else {
+                            cycleTimezone = Time.TIMEZONE_UTC;
+                        }
+                        final long warningBytes = readLongAttribute(in, ATTR_WARNING_BYTES);
+                        final long limitBytes = readLongAttribute(in, ATTR_LIMIT_BYTES);
+                        final long lastLimitSnooze;
+                        if (version >= VERSION_SPLIT_SNOOZE) {
+                            lastLimitSnooze = readLongAttribute(in, ATTR_LAST_LIMIT_SNOOZE);
+                        } else if (version >= VERSION_ADDED_SNOOZE) {
+                            lastLimitSnooze = readLongAttribute(in, ATTR_LAST_SNOOZE);
+                        } else {
+                            lastLimitSnooze = SNOOZE_NEVER;
+                        }
+                        final boolean metered;
+                        if (version >= VERSION_ADDED_METERED) {
+                            metered = readBooleanAttribute(in, ATTR_METERED);
+                        } else {
+                            switch (networkTemplate) {
+                                case MATCH_MOBILE_3G_LOWER:
+                                case MATCH_MOBILE_4G:
+                                case MATCH_MOBILE_ALL:
+                                    metered = true;
+                                    break;
+                                default:
+                                    metered = false;
+                            }
+                        }
+                        final long lastWarningSnooze;
+                        if (version >= VERSION_SPLIT_SNOOZE) {
+                            lastWarningSnooze = readLongAttribute(in, ATTR_LAST_WARNING_SNOOZE);
+                        } else {
+                            lastWarningSnooze = SNOOZE_NEVER;
+                        }
+                        final boolean inferred;
+                        if (version >= VERSION_ADDED_INFERRED) {
+                            inferred = readBooleanAttribute(in, ATTR_INFERRED);
+                        } else {
+                            inferred = false;
+                        }
+
+                        final NetworkTemplate template = new NetworkTemplate(networkTemplate,
+                                subscriberId, networkId);
+                        if (template.isPersistable()) {
+                            mNetworkPolicy.put(template, new NetworkPolicy(template, cycleDay,
+                                    cycleTimezone, warningBytes, limitBytes, lastWarningSnooze,
+                                    lastLimitSnooze, metered, inferred));
+                        }
+
+                    } else if (TAG_UID_POLICY.equals(tag)) {
+                        final int uid = readIntAttribute(in, ATTR_UID);
+                        final int policy = readIntAttribute(in, ATTR_POLICY);
+
+                        if (UserHandle.isApp(uid)) {
+                            setUidPolicyUncheckedUL(uid, policy, false);
+                        } else {
+                            Slog.w(TAG, "unable to apply policy to UID " + uid + "; ignoring");
+                        }
+                    } else if (TAG_APP_POLICY.equals(tag)) {
+                        final int appId = readIntAttribute(in, ATTR_APP_ID);
+                        final int policy = readIntAttribute(in, ATTR_POLICY);
+
+                        // TODO: set for other users during upgrade
+                        // app policy is deprecated so this is only used in pre system user split.
+                        final int uid = UserHandle.getUid(UserHandle.USER_SYSTEM, appId);
+                        if (UserHandle.isApp(uid)) {
+                            setUidPolicyUncheckedUL(uid, policy, false);
+                        } else {
+                            Slog.w(TAG, "unable to apply policy to UID " + uid + "; ignoring");
+                        }
+                    } else if (TAG_WHITELIST.equals(tag)) {
+                        insideWhitelist = true;
+                    } else if (TAG_RESTRICT_BACKGROUND.equals(tag) && insideWhitelist) {
+                        final int uid = readIntAttribute(in, ATTR_UID);
+                        whitelistedRestrictBackground.append(uid, true);
+                    } else if (TAG_REVOKED_RESTRICT_BACKGROUND.equals(tag) && insideWhitelist) {
+                        final int uid = readIntAttribute(in, ATTR_UID);
+                        mRestrictBackgroundWhitelistRevokedUids.put(uid, true);
+                    }
+                } else if (type == END_TAG) {
+                    if (TAG_WHITELIST.equals(tag)) {
+                        insideWhitelist = false;
+                    }
+
+                }
+            }
+
+            final int size = whitelistedRestrictBackground.size();
+            for (int i = 0; i < size; i++) {
+                final int uid = whitelistedRestrictBackground.keyAt(i);
+                final int policy = mUidPolicy.get(uid, POLICY_NONE);
+                if ((policy & POLICY_REJECT_METERED_BACKGROUND) != 0) {
+                    Slog.w(TAG, "ignoring restrict-background-whitelist for " + uid
+                            + " because its policy is " + uidPoliciesToString(policy));
+                    continue;
+                }
+                if (UserHandle.isApp(uid)) {
+                    final int newPolicy = policy | POLICY_ALLOW_METERED_BACKGROUND;
+                    if (LOGV)
+                        Log.v(TAG, "new policy for " + uid + ": " + uidPoliciesToString(newPolicy));
+                    setUidPolicyUncheckedUL(uid, newPolicy, false);
+                } else {
+                    Slog.w(TAG, "unable to update policy on UID " + uid);
+                }
+            }
+
+        } catch (FileNotFoundException e) {
+            // missing policy is okay, probably first boot
+            upgradeLegacyBackgroundDataUL();
+        } catch (IOException e) {
+            Log.wtf(TAG, "problem reading network policy", e);
+        } catch (XmlPullParserException e) {
+            Log.wtf(TAG, "problem reading network policy", e);
+        } finally {
+            IoUtils.closeQuietly(fis);
+        }
+!!!11861253.java!!!	upgradeLegacyBackgroundDataUL() : void
+        mRestrictBackground = Settings.Secure.getInt(
+                mContext.getContentResolver(), Settings.Secure.BACKGROUND_DATA, 1) != 1;
+
+        // kick off one last broadcast if restricted
+        if (mRestrictBackground) {
+            final Intent broadcast = new Intent(
+                    ConnectivityManager.ACTION_BACKGROUND_DATA_SETTING_CHANGED);
+            mContext.sendBroadcastAsUser(broadcast, UserHandle.ALL);
+        }
+!!!11861381.java!!!	writePolicyAL() : void
+        if (LOGV) Slog.v(TAG, "writePolicyAL()");
+
+        FileOutputStream fos = null;
+        try {
+            fos = mPolicyFile.startWrite();
+
+            XmlSerializer out = new FastXmlSerializer();
+            out.setOutput(fos, StandardCharsets.UTF_8.name());
+            out.startDocument(null, true);
+
+            out.startTag(null, TAG_POLICY_LIST);
+            writeIntAttribute(out, ATTR_VERSION, VERSION_LATEST);
+            writeBooleanAttribute(out, ATTR_RESTRICT_BACKGROUND, mRestrictBackground);
+
+            // write all known network policies
+            for (int i = 0; i < mNetworkPolicy.size(); i++) {
+                final NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+                final NetworkTemplate template = policy.template;
+                if (!template.isPersistable()) continue;
+
+                out.startTag(null, TAG_NETWORK_POLICY);
+                writeIntAttribute(out, ATTR_NETWORK_TEMPLATE, template.getMatchRule());
+                final String subscriberId = template.getSubscriberId();
+                if (subscriberId != null) {
+                    out.attribute(null, ATTR_SUBSCRIBER_ID, subscriberId);
+                }
+                final String networkId = template.getNetworkId();
+                if (networkId != null) {
+                    out.attribute(null, ATTR_NETWORK_ID, networkId);
+                }
+                writeIntAttribute(out, ATTR_CYCLE_DAY, policy.cycleDay);
+                out.attribute(null, ATTR_CYCLE_TIMEZONE, policy.cycleTimezone);
+                writeLongAttribute(out, ATTR_WARNING_BYTES, policy.warningBytes);
+                writeLongAttribute(out, ATTR_LIMIT_BYTES, policy.limitBytes);
+                writeLongAttribute(out, ATTR_LAST_WARNING_SNOOZE, policy.lastWarningSnooze);
+                writeLongAttribute(out, ATTR_LAST_LIMIT_SNOOZE, policy.lastLimitSnooze);
+                writeBooleanAttribute(out, ATTR_METERED, policy.metered);
+                writeBooleanAttribute(out, ATTR_INFERRED, policy.inferred);
+                out.endTag(null, TAG_NETWORK_POLICY);
+            }
+
+            // write all known uid policies
+            for (int i = 0; i < mUidPolicy.size(); i++) {
+                final int uid = mUidPolicy.keyAt(i);
+                final int policy = mUidPolicy.valueAt(i);
+
+                // skip writing empty policies
+                if (policy == POLICY_NONE) continue;
+
+                out.startTag(null, TAG_UID_POLICY);
+                writeIntAttribute(out, ATTR_UID, uid);
+                writeIntAttribute(out, ATTR_POLICY, policy);
+                out.endTag(null, TAG_UID_POLICY);
+            }
+
+            out.endTag(null, TAG_POLICY_LIST);
+
+            // write all whitelists
+            out.startTag(null, TAG_WHITELIST);
+
+            // revoked restrict background whitelist
+            int size = mRestrictBackgroundWhitelistRevokedUids.size();
+            for (int i = 0; i < size; i++) {
+                final int uid = mRestrictBackgroundWhitelistRevokedUids.keyAt(i);
+                out.startTag(null, TAG_REVOKED_RESTRICT_BACKGROUND);
+                writeIntAttribute(out, ATTR_UID, uid);
+                out.endTag(null, TAG_REVOKED_RESTRICT_BACKGROUND);
+            }
+
+            out.endTag(null, TAG_WHITELIST);
+
+            out.endDocument();
+
+            mPolicyFile.finishWrite(fos);
+        } catch (IOException e) {
+            if (fos != null) {
+                mPolicyFile.failWrite(fos);
+            }
+        }
+!!!11861509.java!!!	setUidPolicy(in uid : int, in policy : int) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        if (!UserHandle.isApp(uid)) {
+            throw new IllegalArgumentException("cannot apply policy to UID " + uid);
+        }
+        synchronized (mUidRulesFirstLock) {
+            final long token = Binder.clearCallingIdentity();
+            try {
+                final int oldPolicy = mUidPolicy.get(uid, POLICY_NONE);
+                if (oldPolicy != policy) {
+                    setUidPolicyUncheckedUL(uid, oldPolicy, policy, true);
+                }
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+!!!11861637.java!!!	addUidPolicy(in uid : int, in policy : int) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        if (!UserHandle.isApp(uid)) {
+            throw new IllegalArgumentException("cannot apply policy to UID " + uid);
+        }
+
+        synchronized (mUidRulesFirstLock) {
+            final int oldPolicy = mUidPolicy.get(uid, POLICY_NONE);
+            policy |= oldPolicy;
+            if (oldPolicy != policy) {
+                setUidPolicyUncheckedUL(uid, oldPolicy, policy, true);
+            }
+        }
+!!!11861765.java!!!	removeUidPolicy(in uid : int, in policy : int) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        if (!UserHandle.isApp(uid)) {
+            throw new IllegalArgumentException("cannot apply policy to UID " + uid);
+        }
+
+        synchronized (mUidRulesFirstLock) {
+            final int oldPolicy = mUidPolicy.get(uid, POLICY_NONE);
+            policy = oldPolicy & ~policy;
+            if (oldPolicy != policy) {
+                setUidPolicyUncheckedUL(uid, oldPolicy, policy, true);
+            }
+        }
+!!!11861893.java!!!	setUidPolicyUncheckedUL(in uid : int, in oldPolicy : int, in policy : int, inout persist : boolean) : void
+        setUidPolicyUncheckedUL(uid, policy, persist);
+
+        final boolean notifyApp;
+        if (!isUidValidForWhitelistRules(uid)) {
+            notifyApp = false;
+        } else {
+            final boolean wasBlacklisted = oldPolicy == POLICY_REJECT_METERED_BACKGROUND;
+            final boolean isBlacklisted = policy == POLICY_REJECT_METERED_BACKGROUND;
+            final boolean wasWhitelisted = oldPolicy == POLICY_ALLOW_METERED_BACKGROUND;
+            final boolean isWhitelisted = policy == POLICY_ALLOW_METERED_BACKGROUND;
+            final boolean wasBlocked = wasBlacklisted || (mRestrictBackground && !wasWhitelisted);
+            final boolean isBlocked = isBlacklisted || (mRestrictBackground && !isWhitelisted);
+            if ((wasWhitelisted && (!isWhitelisted || isBlacklisted))
+                    && mDefaultRestrictBackgroundWhitelistUids.get(uid)
+                    && !mRestrictBackgroundWhitelistRevokedUids.get(uid)) {
+                if (LOGD)
+                    Slog.d(TAG, "Adding uid " + uid + " to revoked restrict background whitelist");
+                mRestrictBackgroundWhitelistRevokedUids.append(uid, true);
+            }
+            notifyApp = wasBlocked != isBlocked;
+        }
+        mHandler.obtainMessage(MSG_POLICIES_CHANGED, uid, policy, Boolean.valueOf(notifyApp))
+                .sendToTarget();
+!!!11862021.java!!!	setUidPolicyUncheckedUL(in uid : int, in policy : int, inout persist : boolean) : void
+        if (policy == POLICY_NONE) {
+            mUidPolicy.delete(uid);
+        } else {
+            mUidPolicy.put(uid, policy);
+        }
+
+        // uid policy changed, recompute rules and persist policy.
+        updateRulesForDataUsageRestrictionsUL(uid);
+        if (persist) {
+            synchronized (mNetworkPoliciesSecondLock) {
+                writePolicyAL();
+            }
+        }
+!!!11862149.java!!!	getUidPolicy(in uid : int) : int
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        synchronized (mUidRulesFirstLock) {
+            return mUidPolicy.get(uid, POLICY_NONE);
+        }
+!!!11862277.java!!!	getUidsWithPolicy(in policy : int) : int
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        int[] uids = new int[0];
+        synchronized (mUidRulesFirstLock) {
+            for (int i = 0; i < mUidPolicy.size(); i++) {
+                final int uid = mUidPolicy.keyAt(i);
+                final int uidPolicy = mUidPolicy.valueAt(i);
+                if ((policy == POLICY_NONE && uidPolicy == POLICY_NONE) ||
+                        (uidPolicy & policy) != 0) {
+                    uids = appendInt(uids, uid);
+                }
+            }
+        }
+        return uids;
+!!!11862405.java!!!	removeUserStateUL(in userId : int, inout writePolicy : boolean) : boolean
+
+        if (LOGV) Slog.v(TAG, "removeUserStateUL()");
+        boolean changed = false;
+
+        // Remove entries from revoked default restricted background UID whitelist
+        for (int i = mRestrictBackgroundWhitelistRevokedUids.size() - 1; i >= 0; i--) {
+            final int uid = mRestrictBackgroundWhitelistRevokedUids.keyAt(i);
+            if (UserHandle.getUserId(uid) == userId) {
+                mRestrictBackgroundWhitelistRevokedUids.removeAt(i);
+                changed = true;
+            }
+        }
+
+        // Remove associated UID policies
+        int[] uids = new int[0];
+        for (int i = 0; i < mUidPolicy.size(); i++) {
+            final int uid = mUidPolicy.keyAt(i);
+            if (UserHandle.getUserId(uid) == userId) {
+                uids = appendInt(uids, uid);
+            }
+        }
+
+        if (uids.length > 0) {
+            for (int uid : uids) {
+                mUidPolicy.delete(uid);
+            }
+            changed = true;
+        }
+        synchronized (mNetworkPoliciesSecondLock) {
+            updateRulesForGlobalChangeAL(true);
+            if (writePolicy && changed) {
+                writePolicyAL();
+            }
+        }
+        return changed;
+!!!11862533.java!!!	registerListener(inout listener : INetworkPolicyListener) : void
+        // TODO: create permission for observing network policy
+        mContext.enforceCallingOrSelfPermission(CONNECTIVITY_INTERNAL, TAG);
+        mListeners.register(listener);
+!!!11862661.java!!!	unregisterListener(inout listener : INetworkPolicyListener) : void
+        // TODO: create permission for observing network policy
+        mContext.enforceCallingOrSelfPermission(CONNECTIVITY_INTERNAL, TAG);
+        mListeners.unregister(listener);
+!!!11862789.java!!!	setNetworkPolicies(inout policies : NetworkPolicy [[]]) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        final long token = Binder.clearCallingIdentity();
+        try {
+            maybeRefreshTrustedTime();
+            synchronized (mUidRulesFirstLock) {
+                synchronized (mNetworkPoliciesSecondLock) {
+                    normalizePoliciesNL(policies);
+                    handleNetworkPoliciesUpdateAL(false);
+                }
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!11862917.java!!!	addNetworkPolicyAL(inout policy : NetworkPolicy) : void
+        NetworkPolicy[] policies = getNetworkPolicies(mContext.getOpPackageName());
+        policies = ArrayUtils.appendElement(NetworkPolicy.class, policies, policy);
+        setNetworkPolicies(policies);
+!!!11863045.java!!!	getNetworkPolicies(in callingPackage : String) : NetworkPolicy
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+        try {
+            mContext.enforceCallingOrSelfPermission(READ_PRIVILEGED_PHONE_STATE, TAG);
+            // SKIP checking run-time OP_READ_PHONE_STATE since caller or self has PRIVILEGED
+            // permission
+        } catch (SecurityException e) {
+            mContext.enforceCallingOrSelfPermission(READ_PHONE_STATE, TAG);
+
+            if (mAppOps.noteOp(AppOpsManager.OP_READ_PHONE_STATE, Binder.getCallingUid(),
+                    callingPackage) != AppOpsManager.MODE_ALLOWED) {
+                return new NetworkPolicy[0];
+            }
+        }
+
+        synchronized (mNetworkPoliciesSecondLock) {
+            final int size = mNetworkPolicy.size();
+            final NetworkPolicy[] policies = new NetworkPolicy[size];
+            for (int i = 0; i < size; i++) {
+                policies[i] = mNetworkPolicy.valueAt(i);
+            }
+            return policies;
+        }
+!!!11863173.java!!!	normalizePoliciesNL() : void
+        normalizePoliciesNL(getNetworkPolicies(mContext.getOpPackageName()));
+!!!11863301.java!!!	normalizePoliciesNL(inout policies : NetworkPolicy [[]]) : void
+        final TelephonyManager tele = TelephonyManager.from(mContext);
+        final String[] merged = tele.getMergedSubscriberIds();
+
+        mNetworkPolicy.clear();
+        for (NetworkPolicy policy : policies) {
+            // When two normalized templates conflict, prefer the most
+            // restrictive policy
+            policy.template = NetworkTemplate.normalize(policy.template, merged);
+            final NetworkPolicy existing = mNetworkPolicy.get(policy.template);
+            if (existing == null || existing.compareTo(policy) > 0) {
+                if (existing != null) {
+                    Slog.d(TAG, "Normalization replaced " + existing + " with " + policy);
+                }
+                mNetworkPolicy.put(policy.template, policy);
+            }
+        }
+!!!11863429.java!!!	snoozeLimit(inout template : NetworkTemplate) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        final long token = Binder.clearCallingIdentity();
+        try {
+            performSnooze(template, TYPE_LIMIT);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!11863557.java!!!	performSnooze(inout template : NetworkTemplate, in type : int) : void
+        maybeRefreshTrustedTime();
+        final long currentTime = currentTimeMillis();
+        synchronized (mUidRulesFirstLock) {
+            synchronized (mNetworkPoliciesSecondLock) {
+                // find and snooze local policy that matches
+                final NetworkPolicy policy = mNetworkPolicy.get(template);
+                if (policy == null) {
+                    throw new IllegalArgumentException("unable to find policy for " + template);
+                }
+
+                switch (type) {
+                    case TYPE_WARNING:
+                        policy.lastWarningSnooze = currentTime;
+                        break;
+                    case TYPE_LIMIT:
+                        policy.lastLimitSnooze = currentTime;
+                        break;
+                    default:
+                        throw new IllegalArgumentException("unexpected type");
+                }
+
+                handleNetworkPoliciesUpdateAL(true);
+            }
+        }
+!!!11863685.java!!!	onTetheringChanged(in iface : String, inout tethering : boolean) : void
+        // No need to enforce permission because setRestrictBackground() will do it.
+        if (LOGD) Log.d(TAG, "onTetherStateChanged(" + iface + ", " + tethering + ")");
+        synchronized (mUidRulesFirstLock) {
+            if (mRestrictBackground && tethering) {
+                Log.d(TAG, "Tethering on (" + iface +"); disable Data Saver");
+                setRestrictBackground(false);
+            }
+        }
+!!!11863813.java!!!	setRestrictBackground(inout restrictBackground : boolean) : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "setRestrictBackground");
+        try {
+            mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+            final long token = Binder.clearCallingIdentity();
+            try {
+                maybeRefreshTrustedTime();
+                synchronized (mUidRulesFirstLock) {
+                    if (restrictBackground == mRestrictBackground) {
+                        // Ideally, UI should never allow this scenario...
+                        Slog.w(TAG, "setRestrictBackground: already " + restrictBackground);
+                        return;
+                    }
+                    setRestrictBackgroundUL(restrictBackground);
+                }
+
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+
+            mHandler.obtainMessage(MSG_RESTRICT_BACKGROUND_CHANGED, restrictBackground ? 1 : 0, 0)
+                    .sendToTarget();
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11863941.java!!!	setRestrictBackgroundUL(inout restrictBackground : boolean) : void
+        Slog.d(TAG, "setRestrictBackgroundUL(): " + restrictBackground);
+        final boolean oldRestrictBackground = mRestrictBackground;
+        mRestrictBackground = restrictBackground;
+        // Must whitelist foreground apps before turning data saver mode on.
+        // TODO: there is no need to iterate through all apps here, just those in the foreground,
+        // so it could call AM to get the UIDs of such apps, and iterate through them instead.
+        updateRulesForRestrictBackgroundUL();
+        try {
+            if (!mNetworkManager.setDataSaverModeEnabled(mRestrictBackground)) {
+                Slog.e(TAG, "Could not change Data Saver Mode on NMS to " + mRestrictBackground);
+                mRestrictBackground = oldRestrictBackground;
+                // TODO: if it knew the foreground apps (see TODO above), it could call
+                // updateRulesForRestrictBackgroundUL() again to restore state.
+                return;
+            }
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+
+        if (mRestrictBackgroundPowerState.globalBatterySaverEnabled) {
+            mRestrictBackgroundChangedInBsm = true;
+        }
+        synchronized (mNetworkPoliciesSecondLock) {
+            updateNotificationsNL();
+            writePolicyAL();
+        }
+!!!11864069.java!!!	getRestrictBackgroundByCaller() : int
+        mContext.enforceCallingOrSelfPermission(ACCESS_NETWORK_STATE, TAG);
+        final int uid = Binder.getCallingUid();
+
+        synchronized (mUidRulesFirstLock) {
+            // Must clear identity because getUidPolicy() is restricted to system.
+            final long token = Binder.clearCallingIdentity();
+            final int policy;
+            try {
+                policy = getUidPolicy(uid);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+            if (policy == POLICY_REJECT_METERED_BACKGROUND) {
+                // App is blacklisted.
+                return RESTRICT_BACKGROUND_STATUS_ENABLED;
+            }
+            if (!mRestrictBackground) {
+                return RESTRICT_BACKGROUND_STATUS_DISABLED;
+            }
+            return (mUidPolicy.get(uid) & POLICY_ALLOW_METERED_BACKGROUND) != 0
+                    ? RESTRICT_BACKGROUND_STATUS_WHITELISTED
+                    : RESTRICT_BACKGROUND_STATUS_ENABLED;
+        }
+!!!11864197.java!!!	getRestrictBackground() : boolean
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        synchronized (mUidRulesFirstLock) {
+            return mRestrictBackground;
+        }
+!!!11864325.java!!!	setDeviceIdleMode(inout enabled : boolean) : void
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "setDeviceIdleMode");
+        try {
+            synchronized (mUidRulesFirstLock) {
+                if (mDeviceIdleMode == enabled) {
+                    return;
+                }
+                mDeviceIdleMode = enabled;
+                if (mSystemReady) {
+                    // Device idle change means we need to rebuild rules for all
+                    // known apps, so do a global refresh.
+                    updateRulesForRestrictPowerUL();
+                }
+            }
+            if (enabled) {
+                EventLogTags.writeDeviceIdleOnPhase("net");
+            } else {
+                EventLogTags.writeDeviceIdleOffPhase("net");
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11864453.java!!!	findPolicyForNetworkNL(inout ident : NetworkIdentity) : NetworkPolicy
+        for (int i = mNetworkPolicy.size()-1; i >= 0; i--) {
+            NetworkPolicy policy = mNetworkPolicy.valueAt(i);
+            if (policy.template.matches(ident)) {
+                return policy;
+            }
+        }
+        return null;
+!!!11864581.java!!!	getNetworkQuotaInfo(inout state : NetworkState) : NetworkQuotaInfo
+        mContext.enforceCallingOrSelfPermission(ACCESS_NETWORK_STATE, TAG);
+
+        // only returns usage summary, so we don't require caller to have
+        // READ_NETWORK_USAGE_HISTORY.
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return getNetworkQuotaInfoUnchecked(state);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!11864709.java!!!	getNetworkQuotaInfoUnchecked(inout state : NetworkState) : NetworkQuotaInfo
+        final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, state);
+
+        final NetworkPolicy policy;
+        synchronized (mNetworkPoliciesSecondLock) {
+            policy = findPolicyForNetworkNL(ident);
+        }
+
+        if (policy == null || !policy.hasCycle()) {
+            // missing policy means we can't derive useful quota info
+            return null;
+        }
+
+        final long currentTime = currentTimeMillis();
+
+        // find total bytes used under policy
+        final long start = computeLastCycleBoundary(currentTime, policy);
+        final long end = currentTime;
+        final long totalBytes = getTotalBytes(policy.template, start, end);
+
+        // report soft and hard limits under policy
+        final long softLimitBytes = policy.warningBytes != WARNING_DISABLED ? policy.warningBytes
+                : NetworkQuotaInfo.NO_LIMIT;
+        final long hardLimitBytes = policy.limitBytes != LIMIT_DISABLED ? policy.limitBytes
+                : NetworkQuotaInfo.NO_LIMIT;
+
+        return new NetworkQuotaInfo(totalBytes, softLimitBytes, hardLimitBytes);
+!!!11864837.java!!!	isNetworkMetered(inout state : NetworkState) : boolean
+        if (state.networkInfo == null) {
+            return false;
+        }
+
+        final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, state);
+
+        final NetworkPolicy policy;
+        synchronized (mNetworkPoliciesSecondLock) {
+            policy = findPolicyForNetworkNL(ident);
+        }
+
+        if (policy != null) {
+            return policy.metered;
+        } else {
+            final int type = state.networkInfo.getType();
+            if ((isNetworkTypeMobile(type) && ident.getMetered()) || type == TYPE_WIMAX) {
+                return true;
+            }
+            return false;
+        }
+!!!11864965.java!!!	dump(inout fd : FileDescriptor, inout writer : PrintWriter, inout args : String [[]]) : void
+        if (!DumpUtils.checkDumpPermission(mContext, TAG, writer)) return;
+
+        final IndentingPrintWriter fout = new IndentingPrintWriter(writer, "  ");
+
+        final ArraySet<String> argSet = new ArraySet<String>(args.length);
+        for (String arg : args) {
+            argSet.add(arg);
+        }
+
+        synchronized (mUidRulesFirstLock) {
+            synchronized (mNetworkPoliciesSecondLock) {
+                if (argSet.contains("--unsnooze")) {
+                    for (int i = mNetworkPolicy.size()-1; i >= 0; i--) {
+                        mNetworkPolicy.valueAt(i).clearSnooze();
+                    }
+
+                    handleNetworkPoliciesUpdateAL(true);
+
+                    fout.println("Cleared snooze timestamps");
+                    return;
+                }
+
+                fout.print("System ready: "); fout.println(mSystemReady);
+                fout.print("Restrict background: "); fout.println(mRestrictBackground);
+                fout.print("Restrict power: "); fout.println(mRestrictPower);
+                fout.print("Device idle: "); fout.println(mDeviceIdleMode);
+                fout.println("Network policies:");
+                fout.increaseIndent();
+                for (int i = 0; i < mNetworkPolicy.size(); i++) {
+                    fout.println(mNetworkPolicy.valueAt(i).toString());
+                }
+                fout.decreaseIndent();
+
+                fout.print("Metered ifaces: "); fout.println(String.valueOf(mMeteredIfaces));
+
+                fout.println("Policy for UIDs:");
+                fout.increaseIndent();
+                int size = mUidPolicy.size();
+                for (int i = 0; i < size; i++) {
+                    final int uid = mUidPolicy.keyAt(i);
+                    final int policy = mUidPolicy.valueAt(i);
+                    fout.print("UID=");
+                    fout.print(uid);
+                    fout.print(" policy=");
+                    fout.print(uidPoliciesToString(policy));
+                    fout.println();
+                }
+                fout.decreaseIndent();
+
+                size = mPowerSaveWhitelistExceptIdleAppIds.size();
+                if (size > 0) {
+                    fout.println("Power save whitelist (except idle) app ids:");
+                    fout.increaseIndent();
+                    for (int i = 0; i < size; i++) {
+                        fout.print("UID=");
+                        fout.print(mPowerSaveWhitelistExceptIdleAppIds.keyAt(i));
+                        fout.print(": ");
+                        fout.print(mPowerSaveWhitelistExceptIdleAppIds.valueAt(i));
+                        fout.println();
+                    }
+                    fout.decreaseIndent();
+                }
+
+                size = mPowerSaveWhitelistAppIds.size();
+                if (size > 0) {
+                    fout.println("Power save whitelist app ids:");
+                    fout.increaseIndent();
+                    for (int i = 0; i < size; i++) {
+                        fout.print("UID=");
+                        fout.print(mPowerSaveWhitelistAppIds.keyAt(i));
+                        fout.print(": ");
+                        fout.print(mPowerSaveWhitelistAppIds.valueAt(i));
+                        fout.println();
+                    }
+                    fout.decreaseIndent();
+                }
+
+                size = mDefaultRestrictBackgroundWhitelistUids.size();
+                if (size > 0) {
+                    fout.println("Default restrict background whitelist uids:");
+                    fout.increaseIndent();
+                    for (int i = 0; i < size; i++) {
+                        fout.print("UID=");
+                        fout.print(mDefaultRestrictBackgroundWhitelistUids.keyAt(i));
+                        fout.println();
+                    }
+                    fout.decreaseIndent();
+                }
+
+                size = mRestrictBackgroundWhitelistRevokedUids.size();
+                if (size > 0) {
+                    fout.println("Default restrict background whitelist uids revoked by users:");
+                    fout.increaseIndent();
+                    for (int i = 0; i < size; i++) {
+                        fout.print("UID=");
+                        fout.print(mRestrictBackgroundWhitelistRevokedUids.keyAt(i));
+                        fout.println();
+                    }
+                    fout.decreaseIndent();
+                }
+
+                final SparseBooleanArray knownUids = new SparseBooleanArray();
+                collectKeys(mUidState, knownUids);
+                collectKeys(mUidRules, knownUids);
+
+                fout.println("Status for all known UIDs:");
+                fout.increaseIndent();
+                size = knownUids.size();
+                for (int i = 0; i < size; i++) {
+                    final int uid = knownUids.keyAt(i);
+                    fout.print("UID=");
+                    fout.print(uid);
+
+                    final int state = mUidState.get(uid, ActivityManager.PROCESS_STATE_CACHED_EMPTY);
+                    fout.print(" state=");
+                    fout.print(state);
+                    if (state <= ActivityManager.PROCESS_STATE_TOP) {
+                        fout.print(" (fg)");
+                    } else {
+                        fout.print(state <= ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
+                                ? " (fg svc)" : " (bg)");
+                    }
+
+                    final int uidRules = mUidRules.get(uid, RULE_NONE);
+                    fout.print(" rules=");
+                    fout.print(uidRulesToString(uidRules));
+                    fout.println();
+                }
+                fout.decreaseIndent();
+
+                fout.println("Status for just UIDs with rules:");
+                fout.increaseIndent();
+                size = mUidRules.size();
+                for (int i = 0; i < size; i++) {
+                    final int uid = mUidRules.keyAt(i);
+                    fout.print("UID=");
+                    fout.print(uid);
+                    final int uidRules = mUidRules.get(uid, RULE_NONE);
+                    fout.print(" rules=");
+                    fout.print(uidRulesToString(uidRules));
+                    fout.println();
+                }
+                fout.decreaseIndent();
+
+                fout.println("Observed uid state changes:");
+                fout.increaseIndent();
+                mObservedHistory.dumpUL(fout);
+                fout.decreaseIndent();
+            }
+        }
+!!!11865093.java!!!	onShellCommand(inout in : FileDescriptor, inout out : FileDescriptor, inout err : FileDescriptor, inout args : String [[]], inout callback : ShellCallback, inout resultReceiver : ResultReceiver) : void
+        (new NetworkPolicyManagerShellCommand(mContext, this)).exec(
+                this, in, out, err, args, callback, resultReceiver);
+!!!11865221.java!!!	isUidForeground(in uid : int) : boolean
+        mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
+
+        synchronized (mUidRulesFirstLock) {
+            return isUidForegroundUL(uid);
+        }
+!!!11865349.java!!!	isUidForegroundUL(in uid : int) : boolean
+        return isUidStateForegroundUL(
+                mUidState.get(uid, ActivityManager.PROCESS_STATE_CACHED_EMPTY));
+!!!11865477.java!!!	isUidForegroundOnRestrictBackgroundUL(in uid : int) : boolean
+        final int procState = mUidState.get(uid, ActivityManager.PROCESS_STATE_CACHED_EMPTY);
+        return isProcStateAllowedWhileOnRestrictBackground(procState);
+!!!11865605.java!!!	isUidForegroundOnRestrictPowerUL(in uid : int) : boolean
+        final int procState = mUidState.get(uid, ActivityManager.PROCESS_STATE_CACHED_EMPTY);
+        return isProcStateAllowedWhileIdleOrPowerSaveMode(procState);
+!!!11865733.java!!!	isUidStateForegroundUL(in state : int) : boolean
+        // only really in foreground when screen is also on
+        return state <= ActivityManager.PROCESS_STATE_TOP;
+!!!11865861.java!!!	updateUidStateUL(in uid : int, in uidState : int) : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateUidStateUL");
+        try {
+            final int oldUidState = mUidState.get(uid, ActivityManager.PROCESS_STATE_CACHED_EMPTY);
+            if (oldUidState != uidState) {
+                // state changed, push updated rules
+                mUidState.put(uid, uidState);
+                updateRestrictBackgroundRulesOnUidStatusChangedUL(uid, oldUidState, uidState);
+                if (isProcStateAllowedWhileIdleOrPowerSaveMode(oldUidState)
+                        != isProcStateAllowedWhileIdleOrPowerSaveMode(uidState) ) {
+                    if (isUidIdle(uid)) {
+                        updateRuleForAppIdleUL(uid);
+                    }
+                    if (mDeviceIdleMode) {
+                        updateRuleForDeviceIdleUL(uid);
+                    }
+                    if (mRestrictPower) {
+                        updateRuleForRestrictPowerUL(uid);
+                    }
+                    updateRulesForPowerRestrictionsUL(uid);
+                }
+                updateNetworkStats(uid, isUidStateForegroundUL(uidState));
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11865989.java!!!	removeUidStateUL(in uid : int) : void
+        final int index = mUidState.indexOfKey(uid);
+        if (index >= 0) {
+            final int oldUidState = mUidState.valueAt(index);
+            mUidState.removeAt(index);
+            if (oldUidState != ActivityManager.PROCESS_STATE_CACHED_EMPTY) {
+                updateRestrictBackgroundRulesOnUidStatusChangedUL(uid, oldUidState,
+                        ActivityManager.PROCESS_STATE_CACHED_EMPTY);
+                if (mDeviceIdleMode) {
+                    updateRuleForDeviceIdleUL(uid);
+                }
+                if (mRestrictPower) {
+                    updateRuleForRestrictPowerUL(uid);
+                }
+                updateRulesForPowerRestrictionsUL(uid);
+                updateNetworkStats(uid, false);
+            }
+        }
+!!!11866117.java!!!	updateNetworkStats(in uid : int, inout uidForeground : boolean) : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK,
+                    "updateNetworkStats: " + uid + "/" + (uidForeground ? "F" : "B"));
+        }
+        try {
+            mNetworkStats.setUidForeground(uid, uidForeground);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11866245.java!!!	updateRestrictBackgroundRulesOnUidStatusChangedUL(in uid : int, in oldUidState : int, in newUidState : int) : void
+        final boolean oldForeground =
+                isProcStateAllowedWhileOnRestrictBackground(oldUidState);
+        final boolean newForeground =
+                isProcStateAllowedWhileOnRestrictBackground(newUidState);
+        if (oldForeground != newForeground) {
+            updateRulesForDataUsageRestrictionsUL(uid);
+        }
+!!!11866373.java!!!	updateRulesForPowerSaveUL() : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForPowerSaveUL");
+        try {
+            updateRulesForWhitelistedPowerSaveUL(mRestrictPower, FIREWALL_CHAIN_POWERSAVE,
+                    mUidFirewallPowerSaveRules);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11866501.java!!!	updateRuleForRestrictPowerUL(in uid : int) : void
+        updateRulesForWhitelistedPowerSaveUL(uid, mRestrictPower, FIREWALL_CHAIN_POWERSAVE);
+!!!11866629.java!!!	updateRulesForDeviceIdleUL() : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForDeviceIdleUL");
+        try {
+            updateRulesForWhitelistedPowerSaveUL(mDeviceIdleMode, FIREWALL_CHAIN_DOZABLE,
+                    mUidFirewallDozableRules);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11866757.java!!!	updateRuleForDeviceIdleUL(in uid : int) : void
+        updateRulesForWhitelistedPowerSaveUL(uid, mDeviceIdleMode, FIREWALL_CHAIN_DOZABLE);
+!!!11866885.java!!!	updateRulesForWhitelistedPowerSaveUL(inout enabled : boolean, in chain : int, inout rules : SparseIntArray) : void
+        if (enabled) {
+            // Sync the whitelists before enabling the chain.  We don't care about the rules if
+            // we are disabling the chain.
+            final SparseIntArray uidRules = rules;
+            uidRules.clear();
+            final List<UserInfo> users = mUserManager.getUsers();
+            for (int ui = users.size() - 1; ui >= 0; ui--) {
+                UserInfo user = users.get(ui);
+                updateRulesForWhitelistedAppIds(uidRules, mPowerSaveTempWhitelistAppIds, user.id);
+                updateRulesForWhitelistedAppIds(uidRules, mPowerSaveWhitelistAppIds, user.id);
+                if (chain == FIREWALL_CHAIN_POWERSAVE) {
+                    updateRulesForWhitelistedAppIds(uidRules,
+                            mPowerSaveWhitelistExceptIdleAppIds, user.id);
+                }
+            }
+            for (int i = mUidState.size() - 1; i >= 0; i--) {
+                if (isProcStateAllowedWhileIdleOrPowerSaveMode(mUidState.valueAt(i))) {
+                    uidRules.put(mUidState.keyAt(i), FIREWALL_RULE_ALLOW);
+                }
+            }
+            setUidFirewallRulesAsync(chain, uidRules, CHAIN_TOGGLE_ENABLE);
+        } else {
+            setUidFirewallRulesAsync(chain, null, CHAIN_TOGGLE_DISABLE);
+        }
+!!!11867013.java!!!	updateRulesForWhitelistedAppIds(in uidRules : SparseIntArray, in whitelistedAppIds : SparseBooleanArray, in userId : int) : void
+        for (int i = whitelistedAppIds.size() - 1; i >= 0; --i) {
+            if (whitelistedAppIds.valueAt(i)) {
+                final int appId = whitelistedAppIds.keyAt(i);
+                final int uid = UserHandle.getUid(userId, appId);
+                uidRules.put(uid, FIREWALL_RULE_ALLOW);
+            }
+        }
+!!!11867141.java!!!	isWhitelistedBatterySaverUL(in uid : int, inout deviceIdleMode : boolean) : boolean
+        final int appId = UserHandle.getAppId(uid);
+        boolean isWhitelisted = mPowerSaveTempWhitelistAppIds.get(appId)
+                || mPowerSaveWhitelistAppIds.get(appId);
+        if (!deviceIdleMode) {
+            isWhitelisted = isWhitelisted || mPowerSaveWhitelistExceptIdleAppIds.get(appId);
+        }
+        return isWhitelisted;
+!!!11867269.java!!!	updateRulesForWhitelistedPowerSaveUL(in uid : int, inout enabled : boolean, in chain : int) : void
+        if (enabled) {
+            final boolean isWhitelisted = isWhitelistedBatterySaverUL(uid,
+                    chain == FIREWALL_CHAIN_DOZABLE);
+            if (isWhitelisted || isUidForegroundOnRestrictPowerUL(uid)) {
+                setUidFirewallRule(chain, uid, FIREWALL_RULE_ALLOW);
+            } else {
+                setUidFirewallRule(chain, uid, FIREWALL_RULE_DEFAULT);
+            }
+        }
+!!!11867397.java!!!	updateRulesForAppIdleUL() : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForAppIdleUL");
+        try {
+            final SparseIntArray uidRules = mUidFirewallStandbyRules;
+            uidRules.clear();
+
+            // Fully update the app idle firewall chain.
+            final List<UserInfo> users = mUserManager.getUsers();
+            for (int ui = users.size() - 1; ui >= 0; ui--) {
+                UserInfo user = users.get(ui);
+                int[] idleUids = mUsageStats.getIdleUidsForUser(user.id);
+                for (int uid : idleUids) {
+                    if (!mPowerSaveTempWhitelistAppIds.get(UserHandle.getAppId(uid), false)) {
+                        // quick check: if this uid doesn't have INTERNET permission, it
+                        // doesn't have network access anyway, so it is a waste to mess
+                        // with it here.
+                        if (hasInternetPermissions(uid)) {
+                            uidRules.put(uid, FIREWALL_RULE_DENY);
+                        }
+                    }
+                }
+            }
+
+            setUidFirewallRulesAsync(FIREWALL_CHAIN_STANDBY, uidRules, CHAIN_TOGGLE_NONE);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11867525.java!!!	updateRuleForAppIdleUL(in uid : int) : void
+        if (!isUidValidForBlacklistRules(uid)) return;
+
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRuleForAppIdleUL: " + uid );
+        }
+        try {
+            int appId = UserHandle.getAppId(uid);
+            if (!mPowerSaveTempWhitelistAppIds.get(appId) && isUidIdle(uid)
+                    && !isUidForegroundOnRestrictPowerUL(uid)) {
+                setUidFirewallRule(FIREWALL_CHAIN_STANDBY, uid, FIREWALL_RULE_DENY);
+            } else {
+                setUidFirewallRule(FIREWALL_CHAIN_STANDBY, uid, FIREWALL_RULE_DEFAULT);
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11867653.java!!!	updateRulesForAppIdleParoleUL() : void
+        boolean paroled = mUsageStats.isAppIdleParoleOn();
+        boolean enableChain = !paroled;
+        enableFirewallChainUL(FIREWALL_CHAIN_STANDBY, enableChain);
+
+        int ruleCount = mUidFirewallStandbyRules.size();
+        for (int i = 0; i < ruleCount; i++) {
+            int uid = mUidFirewallStandbyRules.keyAt(i);
+            int oldRules = mUidRules.get(uid);
+            if (enableChain) {
+                // Chain wasn't enabled before and the other power-related
+                // chains are whitelists, so we can clear the
+                // MASK_ALL_NETWORKS part of the rules and re-inform listeners if
+                // the effective rules result in blocking network access.
+                oldRules &= MASK_METERED_NETWORKS;
+            } else {
+                // Skip if it had no restrictions to begin with
+                if ((oldRules & MASK_ALL_NETWORKS) == 0) continue;
+            }
+            final int newUidRules = updateRulesForPowerRestrictionsUL(uid, oldRules, paroled);
+            if (newUidRules == RULE_NONE) {
+                mUidRules.delete(uid);
+            } else {
+                mUidRules.put(uid, newUidRules);
+            }
+        }
+!!!11867781.java!!!	updateRulesForGlobalChangeAL(inout restrictedNetworksChanged : boolean) : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK,
+                    "updateRulesForGlobalChangeAL: " + (restrictedNetworksChanged ? "R" : "-"));
+        }
+        try {
+            updateRulesForAppIdleUL();
+            updateRulesForRestrictPowerUL();
+            updateRulesForRestrictBackgroundUL();
+
+            // If the set of restricted networks may have changed, re-evaluate those.
+            if (restrictedNetworksChanged) {
+                normalizePoliciesNL();
+                updateNetworkRulesNL();
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11867909.java!!!	updateRulesForRestrictPowerUL() : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForRestrictPowerUL");
+        try {
+            updateRulesForDeviceIdleUL();
+            updateRulesForPowerSaveUL();
+            updateRulesForAllAppsUL(TYPE_RESTRICT_POWER);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11868037.java!!!	updateRulesForRestrictBackgroundUL() : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForRestrictBackgroundUL");
+        try {
+            updateRulesForAllAppsUL(TYPE_RESTRICT_BACKGROUND);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11868165.java!!!	updateRulesForAllAppsUL(in type : int) : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "updateRulesForRestrictPowerUL-" + type);
+        }
+        try {
+            // update rules for all installed applications
+
+            final PackageManager pm = mContext.getPackageManager();
+            final List<UserInfo> users;
+            final List<ApplicationInfo> apps;
+
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "list-users");
+            try {
+                users = mUserManager.getUsers();
+            } finally {
+                Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+            }
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "list-uids");
+            try {
+                apps = pm.getInstalledApplications(
+                        PackageManager.MATCH_ANY_USER | PackageManager.MATCH_DISABLED_COMPONENTS
+                                | PackageManager.MATCH_DIRECT_BOOT_AWARE
+                                | PackageManager.MATCH_DIRECT_BOOT_UNAWARE);
+            } finally {
+                Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+            }
+
+            final int usersSize = users.size();
+            final int appsSize = apps.size();
+            for (int i = 0; i < usersSize; i++) {
+                final UserInfo user = users.get(i);
+                for (int j = 0; j < appsSize; j++) {
+                    final ApplicationInfo app = apps.get(j);
+                    final int uid = UserHandle.getUid(user.id, app.uid);
+                    switch (type) {
+                        case TYPE_RESTRICT_BACKGROUND:
+                            updateRulesForDataUsageRestrictionsUL(uid);
+                            break;
+                        case TYPE_RESTRICT_POWER:
+                            updateRulesForPowerRestrictionsUL(uid);
+                            break;
+                        default:
+                            Slog.w(TAG, "Invalid type for updateRulesForAllApps: " + type);
+                    }
+                }
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11868293.java!!!	updateRulesForTempWhitelistChangeUL() : void
+        final List<UserInfo> users = mUserManager.getUsers();
+        for (int i = 0; i < users.size(); i++) {
+            final UserInfo user = users.get(i);
+            for (int j = mPowerSaveTempWhitelistAppIds.size() - 1; j >= 0; j--) {
+                int appId = mPowerSaveTempWhitelistAppIds.keyAt(j);
+                int uid = UserHandle.getUid(user.id, appId);
+                // Update external firewall rules.
+                updateRuleForAppIdleUL(uid);
+                updateRuleForDeviceIdleUL(uid);
+                updateRuleForRestrictPowerUL(uid);
+                // Update internal rules.
+                updateRulesForPowerRestrictionsUL(uid);
+            }
+        }
+!!!11868421.java!!!	isUidValidForBlacklistRules(in uid : int) : boolean
+        // allow rules on specific system services, and any apps
+        if (uid == android.os.Process.MEDIA_UID || uid == android.os.Process.DRM_UID
+            || (UserHandle.isApp(uid) && hasInternetPermissions(uid))) {
+            return true;
+        }
+
+        return false;
+!!!11868549.java!!!	isUidValidForWhitelistRules(in uid : int) : boolean
+        return UserHandle.isApp(uid) && hasInternetPermissions(uid);
+!!!11868677.java!!!	isUidIdle(in uid : int) : boolean
+        final String[] packages = mContext.getPackageManager().getPackagesForUid(uid);
+        final int userId = UserHandle.getUserId(uid);
+
+        if (packages != null) {
+            for (String packageName : packages) {
+                if (!mUsageStats.isAppIdle(packageName, uid, userId)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+!!!11868805.java!!!	hasInternetPermissions(in uid : int) : boolean
+        try {
+            if (mIPm.checkUidPermission(Manifest.permission.INTERNET, uid)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        } catch (RemoteException e) {
+        }
+        return true;
+!!!11868933.java!!!	onUidDeletedUL(in uid : int) : void
+        // First cleanup in-memory state synchronously...
+        mUidRules.delete(uid);
+        mUidPolicy.delete(uid);
+        mUidFirewallStandbyRules.delete(uid);
+        mUidFirewallDozableRules.delete(uid);
+        mUidFirewallPowerSaveRules.delete(uid);
+        mPowerSaveWhitelistExceptIdleAppIds.delete(uid);
+        mPowerSaveWhitelistAppIds.delete(uid);
+        mPowerSaveTempWhitelistAppIds.delete(uid);
+
+        // ...then update iptables asynchronously.
+        mHandler.obtainMessage(MSG_RESET_FIREWALL_RULES_BY_UID, uid, 0).sendToTarget();
+!!!11869061.java!!!	updateRestrictionRulesForUidUL(in uid : int) : void
+        // Methods below only changes the firewall rules for the power-related modes.
+        updateRuleForDeviceIdleUL(uid);
+        updateRuleForAppIdleUL(uid);
+        updateRuleForRestrictPowerUL(uid);
+
+        // Update internal state for power-related modes.
+        updateRulesForPowerRestrictionsUL(uid);
+
+        // Update firewall and internal rules for Data Saver Mode.
+        updateRulesForDataUsageRestrictionsUL(uid);
+!!!11869189.java!!!	updateRulesForDataUsageRestrictionsUL(in uid : int) : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK,
+                    "updateRulesForDataUsageRestrictionsUL: " + uid);
+        }
+        try {
+            updateRulesForDataUsageRestrictionsULInner(uid);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11869317.java!!!	updateRulesForDataUsageRestrictionsULInner(in uid : int) : void
+        if (!isUidValidForWhitelistRules(uid)) {
+            if (LOGD) Slog.d(TAG, "no need to update restrict data rules for uid " + uid);
+            return;
+        }
+
+        final int uidPolicy = mUidPolicy.get(uid, POLICY_NONE);
+        final int oldUidRules = mUidRules.get(uid, RULE_NONE);
+        final boolean isForeground = isUidForegroundOnRestrictBackgroundUL(uid);
+
+        final boolean isBlacklisted = (uidPolicy & POLICY_REJECT_METERED_BACKGROUND) != 0;
+        final boolean isWhitelisted = (uidPolicy & POLICY_ALLOW_METERED_BACKGROUND) != 0;
+        final int oldRule = oldUidRules & MASK_METERED_NETWORKS;
+        int newRule = RULE_NONE;
+
+        // First step: define the new rule based on user restrictions and foreground state.
+        if (isForeground) {
+            if (isBlacklisted || (mRestrictBackground && !isWhitelisted)) {
+                newRule = RULE_TEMPORARY_ALLOW_METERED;
+            } else if (isWhitelisted) {
+                newRule = RULE_ALLOW_METERED;
+            }
+        } else {
+            if (isBlacklisted) {
+                newRule = RULE_REJECT_METERED;
+            } else if (mRestrictBackground && isWhitelisted) {
+                newRule = RULE_ALLOW_METERED;
+            }
+        }
+        final int newUidRules = newRule | (oldUidRules & MASK_ALL_NETWORKS);
+
+        if (LOGV) {
+            Log.v(TAG, "updateRuleForRestrictBackgroundUL(" + uid + ")"
+                    + ": isForeground=" +isForeground
+                    + ", isBlacklisted=" + isBlacklisted
+                    + ", isWhitelisted=" + isWhitelisted
+                    + ", oldRule=" + uidRulesToString(oldRule)
+                    + ", newRule=" + uidRulesToString(newRule)
+                    + ", newUidRules=" + uidRulesToString(newUidRules)
+                    + ", oldUidRules=" + uidRulesToString(oldUidRules));
+        }
+
+        if (newUidRules == RULE_NONE) {
+            mUidRules.delete(uid);
+        } else {
+            mUidRules.put(uid, newUidRules);
+        }
+
+        // Second step: apply bw changes based on change of state.
+        if (newRule != oldRule) {
+            if ((newRule & RULE_TEMPORARY_ALLOW_METERED) != 0) {
+                // Temporarily whitelist foreground app, removing from blacklist if necessary
+                // (since bw_penalty_box prevails over bw_happy_box).
+
+                setMeteredNetworkWhitelist(uid, true);
+                // TODO: if statement below is used to avoid an unnecessary call to netd / iptables,
+                // but ideally it should be just:
+                //    setMeteredNetworkBlacklist(uid, isBlacklisted);
+                if (isBlacklisted) {
+                    setMeteredNetworkBlacklist(uid, false);
+                }
+            } else if ((oldRule & RULE_TEMPORARY_ALLOW_METERED) != 0) {
+                // Remove temporary whitelist from app that is not on foreground anymore.
+
+                // TODO: if statements below are used to avoid unnecessary calls to netd / iptables,
+                // but ideally they should be just:
+                //    setMeteredNetworkWhitelist(uid, isWhitelisted);
+                //    setMeteredNetworkBlacklist(uid, isBlacklisted);
+                if (!isWhitelisted) {
+                    setMeteredNetworkWhitelist(uid, false);
+                }
+                if (isBlacklisted) {
+                    setMeteredNetworkBlacklist(uid, true);
+                }
+            } else if ((newRule & RULE_REJECT_METERED) != 0
+                    || (oldRule & RULE_REJECT_METERED) != 0) {
+                // Flip state because app was explicitly added or removed to blacklist.
+                setMeteredNetworkBlacklist(uid, isBlacklisted);
+                if ((oldRule & RULE_REJECT_METERED) != 0 && isWhitelisted) {
+                    // Since blacklist prevails over whitelist, we need to handle the special case
+                    // where app is whitelisted and blacklisted at the same time (although such
+                    // scenario should be blocked by the UI), then blacklist is removed.
+                    setMeteredNetworkWhitelist(uid, isWhitelisted);
+                }
+            } else if ((newRule & RULE_ALLOW_METERED) != 0
+                    || (oldRule & RULE_ALLOW_METERED) != 0) {
+                // Flip state because app was explicitly added or removed to whitelist.
+                setMeteredNetworkWhitelist(uid, isWhitelisted);
+            } else {
+                // All scenarios should have been covered above.
+                Log.wtf(TAG, "Unexpected change of metered UID state for " + uid
+                        + ": foreground=" + isForeground
+                        + ", whitelisted=" + isWhitelisted
+                        + ", blacklisted=" + isBlacklisted
+                        + ", newRule=" + uidRulesToString(newUidRules)
+                        + ", oldRule=" + uidRulesToString(oldUidRules));
+            }
+
+            // Dispatch changed rule to existing listeners.
+            mHandler.obtainMessage(MSG_RULES_CHANGED, uid, newUidRules).sendToTarget();
+        }
+!!!11869445.java!!!	updateRulesForPowerRestrictionsUL(in uid : int) : void
+        final int oldUidRules = mUidRules.get(uid, RULE_NONE);
+
+        final int newUidRules = updateRulesForPowerRestrictionsUL(uid, oldUidRules, false);
+
+        if (newUidRules == RULE_NONE) {
+            mUidRules.delete(uid);
+        } else {
+            mUidRules.put(uid, newUidRules);
+        }
+!!!11869573.java!!!	updateRulesForPowerRestrictionsUL(in uid : int, in oldUidRules : int, inout paroled : boolean) : int
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK,
+                    "updateRulesForPowerRestrictionsUL: " + uid + "/" + oldUidRules + "/"
+                    + (paroled ? "P" : "-"));
+        }
+        try {
+            return updateRulesForPowerRestrictionsULInner(uid, oldUidRules, paroled);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11869701.java!!!	updateRulesForPowerRestrictionsULInner(in uid : int, in oldUidRules : int, inout paroled : boolean) : int
+        if (!isUidValidForBlacklistRules(uid)) {
+            if (LOGD) Slog.d(TAG, "no need to update restrict power rules for uid " + uid);
+            return RULE_NONE;
+        }
+
+        final boolean isIdle = !paroled && isUidIdle(uid);
+        final boolean restrictMode = isIdle || mRestrictPower || mDeviceIdleMode;
+        final boolean isForeground = isUidForegroundOnRestrictPowerUL(uid);
+
+        final boolean isWhitelisted = isWhitelistedBatterySaverUL(uid, mDeviceIdleMode);
+        final int oldRule = oldUidRules & MASK_ALL_NETWORKS;
+        int newRule = RULE_NONE;
+
+        // First step: define the new rule based on user restrictions and foreground state.
+
+        // NOTE: if statements below could be inlined, but it's easier to understand the logic
+        // by considering the foreground and non-foreground states.
+        if (isForeground) {
+            if (restrictMode) {
+                newRule = RULE_ALLOW_ALL;
+            }
+        } else if (restrictMode) {
+            newRule = isWhitelisted ? RULE_ALLOW_ALL : RULE_REJECT_ALL;
+        }
+
+        final int newUidRules = (oldUidRules & MASK_METERED_NETWORKS) | newRule;
+
+        if (LOGV) {
+            Log.v(TAG, "updateRulesForPowerRestrictionsUL(" + uid + ")"
+                    + ", isIdle: " + isIdle
+                    + ", mRestrictPower: " + mRestrictPower
+                    + ", mDeviceIdleMode: " + mDeviceIdleMode
+                    + ", isForeground=" + isForeground
+                    + ", isWhitelisted=" + isWhitelisted
+                    + ", oldRule=" + uidRulesToString(oldRule)
+                    + ", newRule=" + uidRulesToString(newRule)
+                    + ", newUidRules=" + uidRulesToString(newUidRules)
+                    + ", oldUidRules=" + uidRulesToString(oldUidRules));
+        }
+
+        // Second step: notify listeners if state changed.
+        if (newRule != oldRule) {
+            if (newRule == RULE_NONE || (newRule & RULE_ALLOW_ALL) != 0) {
+                if (LOGV) Log.v(TAG, "Allowing non-metered access for UID " + uid);
+            } else if ((newRule & RULE_REJECT_ALL) != 0) {
+                if (LOGV) Log.v(TAG, "Rejecting non-metered access for UID " + uid);
+            } else {
+                // All scenarios should have been covered above
+                Log.wtf(TAG, "Unexpected change of non-metered UID state for " + uid
+                        + ": foreground=" + isForeground
+                        + ", whitelisted=" + isWhitelisted
+                        + ", newRule=" + uidRulesToString(newUidRules)
+                        + ", oldRule=" + uidRulesToString(oldUidRules));
+            }
+            mHandler.obtainMessage(MSG_RULES_CHANGED, uid, newUidRules).sendToTarget();
+        }
+
+        return newUidRules;
+!!!11870085.java!!!	dispatchUidRulesChanged(inout listener : INetworkPolicyListener, in uid : int, in uidRules : int) : void
+        if (listener != null) {
+            try {
+                listener.onUidRulesChanged(uid, uidRules);
+            } catch (RemoteException ignored) {
+            }
+        }
+!!!11870213.java!!!	dispatchMeteredIfacesChanged(inout listener : INetworkPolicyListener, inout meteredIfaces : String [[]]) : void
+        if (listener != null) {
+            try {
+                listener.onMeteredIfacesChanged(meteredIfaces);
+            } catch (RemoteException ignored) {
+            }
+        }
+!!!11870341.java!!!	dispatchRestrictBackgroundChanged(inout listener : INetworkPolicyListener, inout restrictBackground : boolean) : void
+        if (listener != null) {
+            try {
+                listener.onRestrictBackgroundChanged(restrictBackground);
+            } catch (RemoteException ignored) {
+            }
+        }
+!!!11870469.java!!!	dispatchUidPoliciesChanged(inout listener : INetworkPolicyListener, in uid : int, in uidPolicies : int) : void
+        if (listener != null) {
+            try {
+                listener.onUidPoliciesChanged(uid, uidPolicies);
+            } catch (RemoteException ignored) {
+            }
+        }
+!!!11870597.java!!!	handleUidChanged(in uid : int, in procState : int, in procStateSeq : long) : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "onUidStateChanged");
+        try {
+            synchronized (mUidRulesFirstLock) {
+                // We received a uid state change callback, add it to the history so that it
+                // will be useful for debugging.
+                mObservedHistory.addProcStateSeqUL(uid, procStateSeq);
+                // Now update the network policy rules as per the updated uid state.
+                updateUidStateUL(uid, procState);
+                // Updating the network rules is done, so notify AMS about this.
+                mActivityManagerInternal.notifyNetworkPolicyRulesUpdated(uid, procStateSeq);
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11870725.java!!!	handleUidGone(in uid : int) : void
+        Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "onUidGone");
+        try {
+            synchronized (mUidRulesFirstLock) {
+                removeUidStateUL(uid);
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11870853.java!!!	broadcastRestrictBackgroundChanged(in uid : int, inout changed : Boolean) : void
+        final PackageManager pm = mContext.getPackageManager();
+        final String[] packages = pm.getPackagesForUid(uid);
+        if (packages != null) {
+            final int userId = UserHandle.getUserId(uid);
+            for (String packageName : packages) {
+                final Intent intent =
+                        new Intent(ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED);
+                intent.setPackage(packageName);
+                intent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+                mContext.sendBroadcastAsUser(intent, UserHandle.of(userId));
+            }
+        }
+!!!11870981.java!!!	setInterfaceQuota(in iface : String, in quotaBytes : long) : void
+        try {
+            mNetworkManager.setInterfaceQuota(iface, quotaBytes);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem setting interface quota", e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11871109.java!!!	removeInterfaceQuota(in iface : String) : void
+        try {
+            mNetworkManager.removeInterfaceQuota(iface);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem removing interface quota", e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11871237.java!!!	setMeteredNetworkBlacklist(in uid : int, inout enable : boolean) : void
+        if (LOGV) Slog.v(TAG, "setMeteredNetworkBlacklist " + uid + ": " + enable);
+        try {
+            mNetworkManager.setUidMeteredNetworkBlacklist(uid, enable);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem setting blacklist (" + enable + ") rules for " + uid, e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11871365.java!!!	setMeteredNetworkWhitelist(in uid : int, inout enable : boolean) : void
+        if (LOGV) Slog.v(TAG, "setMeteredNetworkWhitelist " + uid + ": " + enable);
+        try {
+            mNetworkManager.setUidMeteredNetworkWhitelist(uid, enable);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem setting whitelist (" + enable + ") rules for " + uid, e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11871493.java!!!	setUidFirewallRulesAsync(in chain : int, inout uidRules : SparseIntArray, in toggle : int) : void
+        mHandler.obtainMessage(MSG_SET_FIREWALL_RULES, chain, toggle, uidRules).sendToTarget();
+!!!11871621.java!!!	setUidFirewallRules(in chain : int, inout uidRules : SparseIntArray) : void
+        try {
+            int size = uidRules.size();
+            int[] uids = new int[size];
+            int[] rules = new int[size];
+            for(int index = size - 1; index >= 0; --index) {
+                uids[index] = uidRules.keyAt(index);
+                rules[index] = uidRules.valueAt(index);
+            }
+            mNetworkManager.setFirewallUidRules(chain, uids, rules);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem setting firewall uid rules", e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11871749.java!!!	setUidFirewallRule(in chain : int, in uid : int, in rule : int) : void
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_NETWORK)) {
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK,
+                    "setUidFirewallRule: " + chain + "/" + uid + "/" + rule);
+        }
+        try {
+            if (chain == FIREWALL_CHAIN_DOZABLE) {
+                mUidFirewallDozableRules.put(uid, rule);
+            } else if (chain == FIREWALL_CHAIN_STANDBY) {
+                mUidFirewallStandbyRules.put(uid, rule);
+            } else if (chain == FIREWALL_CHAIN_POWERSAVE) {
+                mUidFirewallPowerSaveRules.put(uid, rule);
+            }
+
+            try {
+                mNetworkManager.setFirewallUidRule(chain, uid, rule);
+            } catch (IllegalStateException e) {
+                Log.wtf(TAG, "problem setting firewall uid rules", e);
+            } catch (RemoteException e) {
+                // ignored; service lives in system_server
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_NETWORK);
+        }
+!!!11871877.java!!!	enableFirewallChainUL(in chain : int, inout enable : boolean) : void
+        if (mFirewallChainStates.indexOfKey(chain) >= 0 &&
+                mFirewallChainStates.get(chain) == enable) {
+            // All is the same, nothing to do.
+            return;
+        }
+        mFirewallChainStates.put(chain, enable);
+        try {
+            mNetworkManager.setFirewallChainEnabled(chain, enable);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem enable firewall chain", e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11872005.java!!!	resetUidFirewallRules(in uid : int) : void
+        try {
+            mNetworkManager.setFirewallUidRule(FIREWALL_CHAIN_DOZABLE, uid, FIREWALL_RULE_DEFAULT);
+            mNetworkManager.setFirewallUidRule(FIREWALL_CHAIN_STANDBY, uid, FIREWALL_RULE_DEFAULT);
+            mNetworkManager
+                    .setFirewallUidRule(FIREWALL_CHAIN_POWERSAVE, uid, FIREWALL_RULE_DEFAULT);
+            mNetworkManager.setUidMeteredNetworkWhitelist(uid, false);
+            mNetworkManager.setUidMeteredNetworkBlacklist(uid, false);
+        } catch (IllegalStateException e) {
+            Log.wtf(TAG, "problem resetting firewall uid rules for " + uid, e);
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+        }
+!!!11872133.java!!!	getTotalBytes(inout template : NetworkTemplate, in start : long, in end : long) : long
+        try {
+            return mNetworkStats.getNetworkTotalBytes(template, start, end);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "problem reading network stats: " + e);
+            return 0;
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+            return 0;
+        }
+!!!11872261.java!!!	isBandwidthControlEnabled() : boolean
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return mNetworkManager.isBandwidthControlEnabled();
+        } catch (RemoteException e) {
+            // ignored; service lives in system_server
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!11872389.java!!!	maybeRefreshTrustedTime() : void
+        if (mTime.getCacheAge() > TIME_CACHE_MAX_AGE) {
+            mTime.forceRefresh();
+        }
+!!!11872517.java!!!	currentTimeMillis() : long
+        return mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+!!!11872645.java!!!	buildAllowBackgroundDataIntent() : Intent
+        return new Intent(ACTION_ALLOW_BACKGROUND);
+!!!11872773.java!!!	buildSnoozeWarningIntent(inout template : NetworkTemplate) : Intent
+        final Intent intent = new Intent(ACTION_SNOOZE_WARNING);
+        intent.putExtra(EXTRA_NETWORK_TEMPLATE, template);
+        return intent;
+!!!11872901.java!!!	buildNetworkOverLimitIntent(inout res : Resources, inout template : NetworkTemplate) : Intent
+        final Intent intent = new Intent();
+        intent.setComponent(ComponentName.unflattenFromString(
+                res.getString(R.string.config_networkOverLimitComponent)));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra(EXTRA_NETWORK_TEMPLATE, template);
+        return intent;
+!!!11873029.java!!!	buildViewDataUsageIntent(inout res : Resources, inout template : NetworkTemplate) : Intent
+        final Intent intent = new Intent();
+        intent.setComponent(ComponentName.unflattenFromString(
+                res.getString(R.string.config_dataUsageSummaryComponent)));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra(EXTRA_NETWORK_TEMPLATE, template);
+        return intent;
+!!!11873157.java!!!	addIdleHandler(inout handler : MessageQueue::IdleHandler) : void
+        mHandler.getLooper().getQueue().addIdleHandler(handler);
+!!!11873285.java!!!	updateRestrictBackgroundByLowPowerModeUL(in result : PowerSaveState) : void
+        mRestrictBackgroundPowerState = result;
+
+        boolean restrictBackground = result.batterySaverEnabled;
+        boolean shouldInvokeRestrictBackground;
+        // store the temporary mRestrictBackgroundChangedInBsm and update it at last
+        boolean localRestrictBgChangedInBsm = mRestrictBackgroundChangedInBsm;
+
+        if (result.globalBatterySaverEnabled) {
+            // Try to turn on restrictBackground if (1) it is off and (2) batter saver need to
+            // turn it on.
+            shouldInvokeRestrictBackground = !mRestrictBackground && result.batterySaverEnabled;
+            mRestrictBackgroundBeforeBsm = mRestrictBackground;
+            localRestrictBgChangedInBsm = false;
+        } else {
+            // Try to restore the restrictBackground if it doesn't change in bsm
+            shouldInvokeRestrictBackground = !mRestrictBackgroundChangedInBsm;
+            restrictBackground = mRestrictBackgroundBeforeBsm;
+        }
+
+        if (shouldInvokeRestrictBackground) {
+            setRestrictBackground(restrictBackground);
+        }
+
+        // Change it at last so setRestrictBackground() won't affect this variable
+        mRestrictBackgroundChangedInBsm = localRestrictBgChangedInBsm;
+!!!11873413.java!!!	collectKeys(inout source : SparseIntArray, inout target : SparseBooleanArray) : void
+        final int size = source.size();
+        for (int i = 0; i < size; i++) {
+            target.put(source.keyAt(i), true);
+        }
+!!!11873541.java!!!	factoryReset(in subscriber : String) : void
+        mContext.enforceCallingOrSelfPermission(CONNECTIVITY_INTERNAL, TAG);
+
+        if (mUserManager.hasUserRestriction(UserManager.DISALLOW_NETWORK_RESET)) {
+            return;
+        }
+
+        // Turn mobile data limit off
+        NetworkPolicy[] policies = getNetworkPolicies(mContext.getOpPackageName());
+        NetworkTemplate template = NetworkTemplate.buildTemplateMobileAll(subscriber);
+        for (NetworkPolicy policy : policies) {
+            if (policy.template.equals(template)) {
+                policy.limitBytes = NetworkPolicy.LIMIT_DISABLED;
+                policy.inferred = false;
+                policy.clearSnooze();
+            }
+        }
+        setNetworkPolicies(policies);
+
+        // Turn restrict background data off
+        setRestrictBackground(false);
+
+        if (!mUserManager.hasUserRestriction(UserManager.DISALLOW_APPS_CONTROL)) {
+            // Remove app's "restrict background data" flag
+            for (int uid : getUidsWithPolicy(POLICY_REJECT_METERED_BACKGROUND)) {
+                setUidPolicy(uid, POLICY_NONE);
+            }
+        }
+!!!11874053.java!!!	hasRule(in uidRules : int, in rule : int) : boolean
+        return (uidRules & rule) != 0;
+!!!11874181.java!!!	logUidStatus(in uid : int, in descr : String) : void
+        Slog.d(TAG, String.format("uid %d is %s", uid, descr));

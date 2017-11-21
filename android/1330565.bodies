@@ -1,0 +1,95 @@
+class Settings
+!!!7911301.java!!!	setInSystemServer() : void
+        synchronized (sInSystemServerLock) {
+            sInSystemServer = true;
+        }
+!!!7911429.java!!!	isInSystemServer() : boolean
+        synchronized (sInSystemServerLock) {
+            return sInSystemServer;
+        }
+!!!7913093.java!!!	canDrawOverlays(inout context : Context) : boolean
+        return Settings.isCallingPackageAllowedToDrawOverlays(context, Process.myUid(),
+                context.getOpPackageName(), false);
+!!!7928453.java!!!	getGTalkDeviceId(in androidId : long) : String
+        return "android-" + Long.toHexString(androidId);
+!!!7928581.java!!!	isCallingPackageAllowedToWriteSettings(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean) : boolean
+        return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,
+                callingPackage, throwException, AppOpsManager.OP_WRITE_SETTINGS,
+                PM_WRITE_SETTINGS, false);
+!!!7928709.java!!!	checkAndNoteWriteSettingsOperation(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean) : boolean
+        return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,
+                callingPackage, throwException, AppOpsManager.OP_WRITE_SETTINGS,
+                PM_WRITE_SETTINGS, true);
+!!!7928837.java!!!	checkAndNoteChangeNetworkStateOperation(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean) : boolean
+        if (context.checkCallingOrSelfPermission(android.Manifest.permission.CHANGE_NETWORK_STATE)
+                == PackageManager.PERMISSION_GRANTED) {
+            return true;
+        }
+        return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,
+                callingPackage, throwException, AppOpsManager.OP_WRITE_SETTINGS,
+                PM_CHANGE_NETWORK_STATE, true);
+!!!7928965.java!!!	isCallingPackageAllowedToDrawOverlays(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean) : boolean
+        return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,
+                callingPackage, throwException, AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+                PM_SYSTEM_ALERT_WINDOW, false);
+!!!7929093.java!!!	checkAndNoteDrawOverlaysOperation(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean) : boolean
+        return isCallingPackageAllowedToPerformAppOpsProtectedOperation(context, uid,
+                callingPackage, throwException, AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+                PM_SYSTEM_ALERT_WINDOW, true);
+!!!7929221.java!!!	isCallingPackageAllowedToPerformAppOpsProtectedOperation(inout context : Context, in uid : int, in callingPackage : String, inout throwException : boolean, in appOpsOpCode : int, inout permissions : String [[]], inout makeNote : boolean) : boolean
+        if (callingPackage == null) {
+            return false;
+        }
+
+        AppOpsManager appOpsMgr = (AppOpsManager)context.getSystemService(Context.APP_OPS_SERVICE);
+        int mode = AppOpsManager.MODE_DEFAULT;
+        if (makeNote) {
+            mode = appOpsMgr.noteOpNoThrow(appOpsOpCode, uid, callingPackage);
+        } else {
+            mode = appOpsMgr.checkOpNoThrow(appOpsOpCode, uid, callingPackage);
+        }
+
+        switch (mode) {
+            case AppOpsManager.MODE_ALLOWED:
+                return true;
+
+            case AppOpsManager.MODE_DEFAULT:
+                // this is the default operating mode after an app's installation
+                // In this case we will check all associated static permission to see
+                // if it is granted during install time.
+                for (String permission : permissions) {
+                    if (context.checkCallingOrSelfPermission(permission) == PackageManager
+                            .PERMISSION_GRANTED) {
+                        // if either of the permissions are granted, we will allow it
+                        return true;
+                    }
+                }
+
+            default:
+                // this is for all other cases trickled down here...
+                if (!throwException) {
+                    return false;
+                }
+        }
+
+        // prepare string to throw SecurityException
+        StringBuilder exceptionMessage = new StringBuilder();
+        exceptionMessage.append(callingPackage);
+        exceptionMessage.append(" was not granted ");
+        if (permissions.length > 1) {
+            exceptionMessage.append(" either of these permissions: ");
+        } else {
+            exceptionMessage.append(" this permission: ");
+        }
+        for (int i = 0; i < permissions.length; i++) {
+            exceptionMessage.append(permissions[i]);
+            exceptionMessage.append((i == permissions.length - 1) ? "." : ", ");
+        }
+
+        throw new SecurityException(exceptionMessage.toString());
+!!!7929349.java!!!	getPackageNameForUid(inout context : Context, in uid : int) : String
+        String[] packages = context.getPackageManager().getPackagesForUid(uid);
+        if (packages == null) {
+            return null;
+        }
+        return packages[0];

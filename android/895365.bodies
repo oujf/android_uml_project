@@ -1,0 +1,56 @@
+class PluginPreference
+!!!4231173.java!!!	PluginPreference(inout prefContext : Context, inout info : PackageInfo)
+            super(prefContext);
+            mPm = prefContext.getPackageManager();
+            mHasSettings = mPm.resolveActivity(new Intent(ACTION_PLUGIN_SETTINGS)
+                    .setPackage(info.packageName), 0) != null;
+            mInfo = info;
+            setTitle(info.applicationInfo.loadLabel(mPm));
+            setChecked(isPluginEnabled());
+            setWidgetLayoutResource(R.layout.tuner_widget_settings_switch);
+!!!4231301.java!!!	isPluginEnabled() : boolean
+            for (int i = 0; i < mInfo.services.length; i++) {
+                ComponentName componentName = new ComponentName(mInfo.packageName,
+                        mInfo.services[i].name);
+                if (mPm.getComponentEnabledSetting(componentName)
+                        == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                    return false;
+                }
+            }
+            return true;
+!!!4231429.java!!!	persistBoolean(inout value : boolean) : boolean
+            final int desiredState = value ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                    : PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+            for (int i = 0; i < mInfo.services.length; i++) {
+                ComponentName componentName = new ComponentName(mInfo.packageName,
+                        mInfo.services[i].name);
+                mPm.setComponentEnabledSetting(componentName, desiredState,
+                        PackageManager.DONT_KILL_APP);
+            }
+            final String pkg = mInfo.packageName;
+            final Intent intent = new Intent(PluginManager.PLUGIN_CHANGED,
+                    pkg != null ? Uri.fromParts("package", pkg, null) : null);
+            getContext().sendBroadcast(intent);
+            return true;
+!!!4231557.java!!!	onBindViewHolder(inout holder : PreferenceViewHolder) : void
+            super.onBindViewHolder(holder);
+            holder.findViewById(R.id.settings).setVisibility(mHasSettings ? View.VISIBLE
+                    : View.GONE);
+            holder.findViewById(R.id.divider).setVisibility(mHasSettings ? View.VISIBLE
+                    : View.GONE);
+            holder.findViewById(R.id.settings).setOnClickListener(v -> {
+                ResolveInfo result = v.getContext().getPackageManager().resolveActivity(
+                        new Intent(ACTION_PLUGIN_SETTINGS).setPackage(
+                                mInfo.packageName), 0);
+                if (result != null) {
+                    v.getContext().startActivity(new Intent().setComponent(
+                            new ComponentName(result.activityInfo.packageName,
+                                    result.activityInfo.name)));
+                }
+            });
+            holder.itemView.setOnLongClickListener(v -> {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.fromParts("package", mInfo.packageName, null));
+                getContext().startActivity(intent);
+                return true;
+            });

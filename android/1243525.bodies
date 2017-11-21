@@ -1,0 +1,127 @@
+class IpSecTransform
+!!!7125509.java!!!	IpSecTransform(inout context : Context, inout config : IpSecConfig)
+        mContext = context;
+        mConfig = config;
+        mResourceId = INVALID_RESOURCE_ID;
+!!!7125637.java!!!	getIpSecService() : IIpSecService
+        IBinder b = ServiceManager.getService(android.content.Context.IPSEC_SERVICE);
+        if (b == null) {
+            throw new RemoteException("Failed to connect to IpSecService")
+                    .rethrowAsRuntimeException();
+        }
+
+        return IIpSecService.Stub.asInterface(b);
+!!!7125765.java!!!	checkResultStatusAndThrow(in status : int) : void
+        switch (status) {
+            case IpSecManager.Status.OK:
+                return;
+                // TODO: Pass Error string back from bundle so that errors can be more specific
+            case IpSecManager.Status.RESOURCE_UNAVAILABLE:
+                throw new IpSecManager.ResourceUnavailableException(
+                        "Failed to allocate a new IpSecTransform");
+            case IpSecManager.Status.SPI_UNAVAILABLE:
+                Log.wtf(TAG, "Attempting to use an SPI that was somehow not reserved");
+                // Fall through
+            default:
+                throw new IllegalStateException(
+                        "Failed to Create a Transform with status code " + status);
+        }
+!!!7125893.java!!!	activate() : IpSecTransform
+        synchronized (this) {
+            try {
+                IIpSecService svc = getIpSecService();
+                Bundle result = svc.createTransportModeTransform(mConfig, new Binder());
+                int status = result.getInt(KEY_STATUS);
+                checkResultStatusAndThrow(status);
+                mResourceId = result.getInt(KEY_RESOURCE_ID, INVALID_RESOURCE_ID);
+
+                /* Keepalive will silently fail if not needed by the config; but, if needed and
+                 * it fails to start, we need to bail because a transform will not be reliable
+                 * to use if keepalive is expected to offload and fails.
+                 */
+                // FIXME: if keepalive fails, we need to fail spectacularly
+                startKeepalive(mContext);
+                Log.d(TAG, "Added Transform with Id " + mResourceId);
+                mCloseGuard.open("build");
+            } catch (RemoteException e) {
+                throw e.rethrowAsRuntimeException();
+            }
+        }
+
+        return this;
+!!!7126021.java!!!	close() : void
+        Log.d(TAG, "Removing Transform with Id " + mResourceId);
+
+        // Always safe to attempt cleanup
+        if (mResourceId == INVALID_RESOURCE_ID) {
+            mCloseGuard.close();
+            return;
+        }
+        try {
+            /* Order matters here because the keepalive is best-effort but could fail in some
+             * horrible way to be removed if the wifi (or cell) subsystem has crashed, and we
+             * still want to clear out the transform.
+             */
+            IIpSecService svc = getIpSecService();
+            svc.deleteTransportModeTransform(mResourceId);
+            stopKeepalive();
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
+        } finally {
+            mResourceId = INVALID_RESOURCE_ID;
+            mCloseGuard.close();
+        }
+!!!7126149.java!!!	finalize() : void
+        if (mCloseGuard != null) {
+            mCloseGuard.warnIfOpen();
+        }
+        close();
+!!!7126277.java!!!	getConfig() : IpSecConfig
+        return mConfig;
+!!!7126405.java!!!	startKeepalive(inout c : Context) : void
+        // FIXME: NO_KEEPALIVE needs to be a constant
+        if (mConfig.getNattKeepaliveInterval() == 0) {
+            return;
+        }
+
+        ConnectivityManager cm =
+                (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        if (mKeepalive != null) {
+            Log.wtf(TAG, "Keepalive already started for this IpSecTransform.");
+            return;
+        }
+
+        synchronized (mKeepaliveSyncLock) {
+            mKeepalive =
+                    cm.startNattKeepalive(
+                            mConfig.getNetwork(),
+                            mConfig.getNattKeepaliveInterval(),
+                            mKeepaliveCallback,
+                            mConfig.getLocalAddress(),
+                            mConfig.getEncapLocalPort(),
+                            mConfig.getRemoteAddress());
+            try {
+                // FIXME: this is still a horrible way to fudge the synchronous callback
+                mKeepaliveSyncLock.wait(2000);
+            } catch (InterruptedException e) {
+            }
+        }
+        if (mKeepaliveStatus != ConnectivityManager.PacketKeepalive.SUCCESS) {
+            throw new UnsupportedOperationException("Packet Keepalive cannot be started");
+        }
+!!!7126533.java!!!	getResourceId() : int
+        return mResourceId;
+!!!7126661.java!!!	stopKeepalive() : void
+        if (mKeepalive == null) {
+            return;
+        }
+        mKeepalive.stop();
+        synchronized (mKeepaliveSyncLock) {
+            if (mKeepaliveStatus == ConnectivityManager.PacketKeepalive.SUCCESS) {
+                try {
+                    mKeepaliveSyncLock.wait(2000);
+                } catch (InterruptedException e) {
+                }
+            }
+        }

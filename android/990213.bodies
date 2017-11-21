@@ -1,0 +1,131 @@
+class TransitionManager
+!!!8400645.java!!!	setDefaultTransition(inout transition : Transition) : void
+        sDefaultTransition = transition;
+!!!8400773.java!!!	getDefaultTransition() : Transition
+        return sDefaultTransition;
+!!!8400901.java!!!	setTransition(inout scene : Scene, inout transition : Transition) : void
+        mSceneTransitions.put(scene, transition);
+!!!8401029.java!!!	setTransition(inout fromScene : Scene, inout toScene : Scene, inout transition : Transition) : void
+        ArrayMap<Scene, Transition> sceneTransitionMap = mScenePairTransitions.get(toScene);
+        if (sceneTransitionMap == null) {
+            sceneTransitionMap = new ArrayMap<Scene, Transition>();
+            mScenePairTransitions.put(toScene, sceneTransitionMap);
+        }
+        sceneTransitionMap.put(fromScene, transition);
+!!!8401157.java!!!	getTransition(inout scene : Scene) : Transition
+        Transition transition = null;
+        ViewGroup sceneRoot = scene.getSceneRoot();
+        if (sceneRoot != null) {
+            // TODO: cached in Scene instead? long-term, cache in View itself
+            Scene currScene = Scene.getCurrentScene(sceneRoot);
+            if (currScene != null) {
+                ArrayMap<Scene, Transition> sceneTransitionMap = mScenePairTransitions.get(scene);
+                if (sceneTransitionMap != null) {
+                    transition = sceneTransitionMap.get(currScene);
+                    if (transition != null) {
+                        return transition;
+                    }
+                }
+            }
+        }
+        transition = mSceneTransitions.get(scene);
+        return (transition != null) ? transition : sDefaultTransition;
+!!!8401285.java!!!	changeScene(inout scene : Scene, inout transition : Transition) : void
+
+        final ViewGroup sceneRoot = scene.getSceneRoot();
+        if (!sPendingTransitions.contains(sceneRoot)) {
+            if (transition == null) {
+                scene.enter();
+            } else {
+                sPendingTransitions.add(sceneRoot);
+
+                Transition transitionClone = transition.clone();
+                transitionClone.setSceneRoot(sceneRoot);
+
+                Scene oldScene = Scene.getCurrentScene(sceneRoot);
+                if (oldScene != null && oldScene.isCreatedFromLayoutResource()) {
+                    transitionClone.setCanRemoveViews(true);
+                }
+
+                sceneChangeSetup(sceneRoot, transitionClone);
+
+                scene.enter();
+
+                sceneChangeRunTransition(sceneRoot, transitionClone);
+            }
+        }
+!!!8401413.java!!!	getRunningTransitions() : ArrayMap
+        WeakReference<ArrayMap<ViewGroup, ArrayList<Transition>>> runningTransitions =
+                sRunningTransitions.get();
+        if (runningTransitions == null || runningTransitions.get() == null) {
+            ArrayMap<ViewGroup, ArrayList<Transition>> transitions =
+                    new ArrayMap<ViewGroup, ArrayList<Transition>>();
+            runningTransitions = new WeakReference<ArrayMap<ViewGroup, ArrayList<Transition>>>(
+                    transitions);
+            sRunningTransitions.set(runningTransitions);
+        }
+        return runningTransitions.get();
+!!!8401541.java!!!	sceneChangeRunTransition(in sceneRoot : ViewGroup, in transition : Transition) : void
+        if (transition != null && sceneRoot != null) {
+            MultiListener listener = new MultiListener(transition, sceneRoot);
+            sceneRoot.addOnAttachStateChangeListener(listener);
+            sceneRoot.getViewTreeObserver().addOnPreDrawListener(listener);
+        }
+!!!8402309.java!!!	sceneChangeSetup(inout sceneRoot : ViewGroup, inout transition : Transition) : void
+
+        // Capture current values
+        ArrayList<Transition> runningTransitions = getRunningTransitions().get(sceneRoot);
+
+        if (runningTransitions != null && runningTransitions.size() > 0) {
+            for (Transition runningTransition : runningTransitions) {
+                runningTransition.pause(sceneRoot);
+            }
+        }
+
+        if (transition != null) {
+            transition.captureValues(sceneRoot, true);
+        }
+
+        // Notify previous scene that it is being exited
+        Scene previousScene = Scene.getCurrentScene(sceneRoot);
+        if (previousScene != null) {
+            previousScene.exit();
+        }
+!!!8402437.java!!!	transitionTo(inout scene : Scene) : void
+        // Auto transition if there is no transition declared for the Scene, but there is
+        // a root or parent view
+        changeScene(scene, getTransition(scene));
+!!!8402565.java!!!	go(inout scene : Scene) : void
+        changeScene(scene, sDefaultTransition);
+!!!8402693.java!!!	go(inout scene : Scene, inout transition : Transition) : void
+        changeScene(scene, transition);
+!!!8402821.java!!!	beginDelayedTransition(in sceneRoot : ViewGroup) : void
+        beginDelayedTransition(sceneRoot, null);
+!!!8402949.java!!!	beginDelayedTransition(in sceneRoot : ViewGroup, inout transition : Transition) : void
+        if (!sPendingTransitions.contains(sceneRoot) && sceneRoot.isLaidOut()) {
+            if (Transition.DBG) {
+                Log.d(LOG_TAG, "beginDelayedTransition: root, transition = " +
+                        sceneRoot + ", " + transition);
+            }
+            sPendingTransitions.add(sceneRoot);
+            if (transition == null) {
+                transition = sDefaultTransition;
+            }
+            final Transition transitionClone = transition.clone();
+            sceneChangeSetup(sceneRoot, transitionClone);
+            Scene.setCurrentScene(sceneRoot, null);
+            sceneChangeRunTransition(sceneRoot, transitionClone);
+        }
+!!!8403077.java!!!	endTransitions(in sceneRoot : ViewGroup) : void
+        sPendingTransitions.remove(sceneRoot);
+
+        final ArrayList<Transition> runningTransitions = getRunningTransitions().get(sceneRoot);
+        if (runningTransitions != null && !runningTransitions.isEmpty()) {
+            // Make a copy in case this is called by an onTransitionEnd listener
+            ArrayList<Transition> copy = new ArrayList(runningTransitions);
+            for (int i = copy.size() - 1; i >= 0; i--) {
+                final Transition transition = copy.get(i);
+                transition.forceToEnd(sceneRoot);
+            }
+        }
+

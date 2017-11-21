@@ -1,0 +1,29 @@
+class GnssNavigationMessageCallback
+!!!10570245.cpp!!!	gnssNavigationMessageCb(in message : IGnssNavigationMessageCallback::GnssNavigationMessage) : Return<void>
+    JNIEnv* env = getJniEnv();
+
+    size_t dataLength = message.data.size();
+
+    std::vector<uint8_t> navigationData = message.data;
+    uint8_t* data = &(navigationData[0]);
+    if (dataLength == 0 || data == NULL) {
+      ALOGE("Invalid Navigation Message found: data=%p, length=%zd", data,
+            dataLength);
+      return Void();
+    }
+
+    JavaObject object(env, "android/location/GnssNavigationMessage");
+    SET(Type, static_cast<int32_t>(message.type));
+    SET(Svid, static_cast<int32_t>(message.svid));
+    SET(MessageId, static_cast<int32_t>(message.messageId));
+    SET(SubmessageId, static_cast<int32_t>(message.submessageId));
+    object.callSetter("setData", data, dataLength);
+    SET(Status, static_cast<int32_t>(message.status));
+
+    jobject navigationMessage = object.get();
+    env->CallVoidMethod(mCallbacksObj,
+                        method_reportNavigationMessages,
+                        navigationMessage);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+    env->DeleteLocalRef(navigationMessage);
+    return Void();

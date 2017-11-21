@@ -1,0 +1,57 @@
+class EnqueueNotificationRunnable
+!!!11935749.java!!!	EnqueueNotificationRunnable(in userId : int, inout r : NotificationRecord)
+            this.userId = userId;
+            this.r = r;
+!!!11935877.java!!!	run() : void
+            synchronized (mNotificationLock) {
+                mEnqueuedNotifications.add(r);
+                scheduleTimeoutLocked(r);
+
+                final StatusBarNotification n = r.sbn;
+                if (DBG) Slog.d(TAG, "EnqueueNotificationRunnable.run for: " + n.getKey());
+                NotificationRecord old = mNotificationsByKey.get(n.getKey());
+                if (old != null) {
+                    // Retain ranking information from previous record
+                    r.copyRankingInformation(old);
+                }
+
+                final int callingUid = n.getUid();
+                final int callingPid = n.getInitialPid();
+                final Notification notification = n.getNotification();
+                final String pkg = n.getPackageName();
+                final int id = n.getId();
+                final String tag = n.getTag();
+
+                // Handle grouped notifications and bail out early if we
+                // can to avoid extracting signals.
+                handleGroupedNotificationLocked(r, old, callingUid, callingPid);
+
+                // if this is a group child, unsnooze parent summary
+                if (n.isGroup() && notification.isGroupChild()) {
+                    mSnoozeHelper.repostGroupSummary(pkg, r.getUserId(), n.getGroupKey());
+                }
+
+                // This conditional is a dirty hack to limit the logging done on
+                //     behalf of the download manager without affecting other apps.
+                if (!pkg.equals("com.android.providers.downloads")
+                        || Log.isLoggable("DownloadManager", Log.VERBOSE)) {
+                    int enqueueStatus = EVENTLOG_ENQUEUE_STATUS_NEW;
+                    if (old != null) {
+                        enqueueStatus = EVENTLOG_ENQUEUE_STATUS_UPDATE;
+                    }
+                    EventLogTags.writeNotificationEnqueue(callingUid, callingPid,
+                            pkg, id, tag, userId, notification.toString(),
+                            enqueueStatus);
+                }
+
+                mRankingHelper.extractSignals(r);
+
+                // tell the assistant service about the notification
+                if (mNotificationAssistants.isEnabled()) {
+                    mNotificationAssistants.onNotificationEnqueued(r);
+                    mHandler.postDelayed(new PostNotificationRunnable(r.getKey()),
+                            DELAY_FOR_ASSISTANT_TIME);
+                } else {
+                    mHandler.post(new PostNotificationRunnable(r.getKey()));
+                }
+            }

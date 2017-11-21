@@ -1,0 +1,302 @@
+class AssetManager
+!!!6363781.java!!!	AssetManager()
+        synchronized (this) {
+            if (DEBUG_REFS) {
+                mNumRefs = 0;
+                incRefsLocked(this.hashCode());
+            }
+            init(false);
+            if (localLOGV) Log.v(TAG, "New asset manager: " + this);
+            ensureSystemAssets();
+        }
+!!!6363909.java!!!	ensureSystemAssets() : void
+        synchronized (sSync) {
+            if (sSystem == null) {
+                AssetManager system = new AssetManager(true);
+                system.makeStringBlocks(null);
+                sSystem = system;
+            }
+        }
+!!!6364037.java!!!	AssetManager(inout isSystem : boolean)
+        if (DEBUG_REFS) {
+            synchronized (this) {
+                mNumRefs = 0;
+                incRefsLocked(this.hashCode());
+            }
+        }
+        init(true);
+        if (localLOGV) Log.v(TAG, "New asset manager: " + this);
+!!!6364165.java!!!	getSystem() : AssetManager
+        ensureSystemAssets();
+        return sSystem;
+!!!6364293.java!!!	close() : void
+        synchronized(this) {
+            //System.out.println("Release: num=" + mNumRefs
+            //                   + ", released=" + mReleased);
+            if (mOpen) {
+                mOpen = false;
+                decRefsLocked(this.hashCode());
+            }
+        }
+!!!6364421.java!!!	getResourceText(in resId : int) : CharSequence
+        synchronized (this) {
+            final TypedValue outValue = mValue;
+            if (getResourceValue(resId, 0, outValue, true)) {
+                return outValue.coerceToString();
+            }
+            return null;
+        }
+!!!6364549.java!!!	getResourceBagText(in resId : int, in bagEntryId : int) : CharSequence
+        synchronized (this) {
+            final TypedValue outValue = mValue;
+            final int block = loadResourceBagValue(resId, bagEntryId, outValue, true);
+            if (block < 0) {
+                return null;
+            }
+
+            // Convert the changing configurations flags populated by native code.
+            outValue.changingConfigurations = ActivityInfo.activityInfoConfigNativeToJava(
+                    outValue.changingConfigurations);
+
+            if (outValue.type == TypedValue.TYPE_STRING) {
+                return mStringBlocks[block].get(outValue.data);
+            }
+            return outValue.coerceToString();
+        }
+!!!6364677.java!!!	getResourceStringArray(in resId : int) : String
+        return getArrayStringResource(resId);
+!!!6364805.java!!!	getResourceValue(in resId : int, in densityDpi : int, inout outValue : TypedValue, inout resolveRefs : boolean) : boolean
+        synchronized (this) {
+            final int block = loadResourceValue(resId, (short) densityDpi, outValue, resolveRefs);
+            if (block < 0) {
+                return false;
+            }
+
+            // Convert the changing configurations flags populated by native code.
+            outValue.changingConfigurations = ActivityInfo.activityInfoConfigNativeToJava(
+                    outValue.changingConfigurations);
+
+            if (outValue.type == TypedValue.TYPE_STRING) {
+                outValue.string = mStringBlocks[block].get(outValue.data);
+            }
+            return true;
+        }
+!!!6364933.java!!!	getResourceTextArray(in resId : int) : CharSequence
+        synchronized (this) {
+            final int[] rawInfoArray = getArrayStringInfo(resId);
+            if (rawInfoArray == null) {
+                return null;
+            }
+            final int rawInfoArrayLen = rawInfoArray.length;
+            final int infoArrayLen = rawInfoArrayLen / 2;
+            int block;
+            int index;
+            final CharSequence[] retArray = new CharSequence[infoArrayLen];
+            for (int i = 0, j = 0; i < rawInfoArrayLen; i = i + 2, j++) {
+                block = rawInfoArray[i];
+                index = rawInfoArray[i + 1];
+                retArray[j] = index >= 0 ? mStringBlocks[block].get(index) : null;
+            }
+            return retArray;
+        }
+!!!6365061.java!!!	getThemeValue(in theme : long, in resId : int, inout outValue : TypedValue, inout resolveRefs : boolean) : boolean
+        final int block = loadThemeAttributeValue(theme, resId, outValue, resolveRefs);
+        if (block < 0) {
+            return false;
+        }
+
+        // Convert the changing configurations flags populated by native code.
+        outValue.changingConfigurations = ActivityInfo.activityInfoConfigNativeToJava(
+                outValue.changingConfigurations);
+
+        if (outValue.type == TypedValue.TYPE_STRING) {
+            final StringBlock[] blocks = ensureStringBlocks();
+            outValue.string = blocks[block].get(outValue.data);
+        }
+        return true;
+!!!6365189.java!!!	ensureStringBlocks() : StringBlock
+        synchronized (this) {
+            if (mStringBlocks == null) {
+                makeStringBlocks(sSystem.mStringBlocks);
+            }
+            return mStringBlocks;
+        }
+!!!6365317.java!!!	makeStringBlocks(inout seed : StringBlock [[]]) : void
+        final int seedNum = (seed != null) ? seed.length : 0;
+        final int num = getStringBlockCount();
+        mStringBlocks = new StringBlock[num];
+        if (localLOGV) Log.v(TAG, "Making string blocks for " + this
+                + ": " + num);
+        for (int i=0; i<num; i++) {
+            if (i < seedNum) {
+                mStringBlocks[i] = seed[i];
+            } else {
+                mStringBlocks[i] = new StringBlock(getNativeStringBlock(i), true);
+            }
+        }
+!!!6365445.java!!!	getPooledStringForCookie(in cookie : int, in id : int) : CharSequence
+        synchronized (this) {
+            // Cookies map to string blocks starting at 1.
+            return mStringBlocks[cookie - 1].get(id);
+        }
+!!!6365573.java!!!	open(in fileName : String) : InputStream
+        return open(fileName, ACCESS_STREAMING);
+!!!6365701.java!!!	open(in fileName : String, in accessMode : int) : InputStream
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            long asset = openAsset(fileName, accessMode);
+            if (asset != 0) {
+                AssetInputStream res = new AssetInputStream(asset);
+                incRefsLocked(res.hashCode());
+                return res;
+            }
+        }
+        throw new FileNotFoundException("Asset file: " + fileName);
+!!!6365829.java!!!	openFd(in fileName : String) : AssetFileDescriptor
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            ParcelFileDescriptor pfd = openAssetFd(fileName, mOffsets);
+            if (pfd != null) {
+                return new AssetFileDescriptor(pfd, mOffsets[0], mOffsets[1]);
+            }
+        }
+        throw new FileNotFoundException("Asset file: " + fileName);
+!!!6366085.java!!!	openNonAsset(in fileName : String) : InputStream
+        return openNonAsset(0, fileName, ACCESS_STREAMING);
+!!!6366213.java!!!	openNonAsset(in fileName : String, in accessMode : int) : InputStream
+        return openNonAsset(0, fileName, accessMode);
+!!!6366341.java!!!	openNonAsset(in cookie : int, in fileName : String) : InputStream
+        return openNonAsset(cookie, fileName, ACCESS_STREAMING);
+!!!6366469.java!!!	openNonAsset(in cookie : int, in fileName : String, in accessMode : int) : InputStream
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            long asset = openNonAssetNative(cookie, fileName, accessMode);
+            if (asset != 0) {
+                AssetInputStream res = new AssetInputStream(asset);
+                incRefsLocked(res.hashCode());
+                return res;
+            }
+        }
+        throw new FileNotFoundException("Asset absolute file: " + fileName);
+!!!6366597.java!!!	openNonAssetFd(in fileName : String) : AssetFileDescriptor
+        return openNonAssetFd(0, fileName);
+!!!6366725.java!!!	openNonAssetFd(in cookie : int, in fileName : String) : AssetFileDescriptor
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            ParcelFileDescriptor pfd = openNonAssetFdNative(cookie,
+                    fileName, mOffsets);
+            if (pfd != null) {
+                return new AssetFileDescriptor(pfd, mOffsets[0], mOffsets[1]);
+            }
+        }
+        throw new FileNotFoundException("Asset absolute file: " + fileName);
+!!!6366853.java!!!	openXmlResourceParser(in fileName : String) : XmlResourceParser
+        return openXmlResourceParser(0, fileName);
+!!!6366981.java!!!	openXmlResourceParser(in cookie : int, in fileName : String) : XmlResourceParser
+        XmlBlock block = openXmlBlockAsset(cookie, fileName);
+        XmlResourceParser rp = block.newParser();
+        block.close();
+        return rp;
+!!!6367109.java!!!	openXmlBlockAsset(in fileName : String) : XmlBlock
+        return openXmlBlockAsset(0, fileName);
+!!!6367237.java!!!	openXmlBlockAsset(in cookie : int, in fileName : String) : XmlBlock
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            long xmlBlock = openXmlAssetNative(cookie, fileName);
+            if (xmlBlock != 0) {
+                XmlBlock res = new XmlBlock(this, xmlBlock);
+                incRefsLocked(res.hashCode());
+                return res;
+            }
+        }
+        throw new FileNotFoundException("Asset XML file: " + fileName);
+!!!6367365.java!!!	xmlBlockGone(in id : int) : void
+        synchronized (this) {
+            decRefsLocked(id);
+        }
+!!!6367493.java!!!	createTheme() : long
+        synchronized (this) {
+            if (!mOpen) {
+                throw new RuntimeException("Assetmanager has been closed");
+            }
+            long res = newTheme();
+            incRefsLocked(res);
+            return res;
+        }
+!!!6367621.java!!!	releaseTheme(in theme : long) : void
+        synchronized (this) {
+            deleteTheme(theme);
+            decRefsLocked(theme);
+        }
+!!!6367749.java!!!	finalize() : void
+        try {
+            if (DEBUG_REFS && mNumRefs != 0) {
+                Log.w(TAG, "AssetManager " + this
+                        + " finalized with non-zero refs: " + mNumRefs);
+                if (mRefStacks != null) {
+                    for (RuntimeException e : mRefStacks.values()) {
+                        Log.w(TAG, "Reference from here", e);
+                    }
+                }
+            }
+            destroy();
+        } finally {
+            super.finalize();
+        }
+!!!6369541.java!!!	addAssetPath(in path : String) : int
+        return  addAssetPathInternal(path, false);
+!!!6369669.java!!!	addAssetPathAsSharedLibrary(in path : String) : int
+        return addAssetPathInternal(path, true);
+!!!6369797.java!!!	addAssetPathInternal(in path : String, inout appAsLib : boolean) : int
+        synchronized (this) {
+            int res = addAssetPathNative(path, appAsLib);
+            makeStringBlocks(mStringBlocks);
+            return res;
+        }
+!!!6370053.java!!!	addOverlayPath(in idmapPath : String) : int
+        synchronized (this) {
+            int res = addOverlayPathNative(idmapPath);
+            makeStringBlocks(mStringBlocks);
+            return res;
+        }
+!!!6370309.java!!!	addAssetPaths(inout paths : String [[]]) : int
+        if (paths == null) {
+            return null;
+        }
+
+        int[] cookies = new int[paths.length];
+        for (int i = 0; i < paths.length; i++) {
+            cookies[i] = addAssetPath(paths[i]);
+        }
+
+        return cookies;
+!!!6376709.java!!!	incRefsLocked(in id : long) : void
+        if (DEBUG_REFS) {
+            if (mRefStacks == null) {
+                mRefStacks = new HashMap<Long, RuntimeException>();
+            }
+            RuntimeException ex = new RuntimeException();
+            ex.fillInStackTrace();
+            mRefStacks.put(id, ex);
+        }
+        mNumRefs++;
+!!!6376837.java!!!	decRefsLocked(in id : long) : void
+        if (DEBUG_REFS && mRefStacks != null) {
+            mRefStacks.remove(id);
+        }
+        mNumRefs--;
+        //System.out.println("Dec streams: mNumRefs=" + mNumRefs
+        //                   + " mReleased=" + mReleased);
+        if (mNumRefs == 0) {
+            destroy();
+        }

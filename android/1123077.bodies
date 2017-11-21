@@ -1,0 +1,118 @@
+class PeriodicAdvertisingManager
+!!!6055941.java!!!	PeriodicAdvertisingManager(inout bluetoothManager : IBluetoothManager)
+    mBluetoothManager = bluetoothManager;
+    mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+    callbackWrappers = new IdentityHashMap<>();
+!!!6056069.java!!!	registerSync(inout scanResult : ScanResult, in skip : int, in timeout : int, inout callback : PeriodicAdvertisingCallback) : void
+    registerSync(scanResult, skip, timeout, callback, null);
+!!!6056197.java!!!	registerSync(inout scanResult : ScanResult, in skip : int, in timeout : int, inout callback : PeriodicAdvertisingCallback, inout handler : Handler) : void
+    if (callback == null) {
+      throw new IllegalArgumentException("callback can't be null");
+    }
+
+    if (scanResult == null) {
+      throw new IllegalArgumentException("scanResult can't be null");
+    }
+
+    if (scanResult.getAdvertisingSid() == ScanResult.SID_NOT_PRESENT) {
+      throw new IllegalArgumentException("scanResult must contain a valid sid");
+    }
+
+    if (skip < SKIP_MIN || skip > SKIP_MAX) {
+      throw new IllegalArgumentException(
+          "timeout must be between " + TIMEOUT_MIN + " and " + TIMEOUT_MAX);
+    }
+
+    if (timeout < TIMEOUT_MIN || timeout > TIMEOUT_MAX) {
+      throw new IllegalArgumentException(
+          "timeout must be between " + TIMEOUT_MIN + " and " + TIMEOUT_MAX);
+    }
+
+    IBluetoothGatt gatt;
+    try {
+        gatt = mBluetoothManager.getBluetoothGatt();
+    } catch (RemoteException e) {
+        Log.e(TAG, "Failed to get Bluetooth gatt - ", e);
+        callback.onSyncEstablished(0, scanResult.getDevice(), scanResult.getAdvertisingSid(),
+                                   skip, timeout,
+                                   PeriodicAdvertisingCallback.SYNC_NO_RESOURCES);
+        return;
+    }
+
+    if (handler == null)
+      handler = new Handler(Looper.getMainLooper());
+
+    IPeriodicAdvertisingCallback wrapped = wrap(callback, handler);
+    callbackWrappers.put(callback, wrapped);
+
+    try {
+      gatt.registerSync(scanResult, skip, timeout, wrapped);
+    } catch (RemoteException e) {
+      Log.e(TAG, "Failed to register sync - ", e);
+      return;
+    }
+!!!6056325.java!!!	unregisterSync(inout callback : PeriodicAdvertisingCallback) : void
+    if (callback == null) {
+      throw new IllegalArgumentException("callback can't be null");
+    }
+
+    IBluetoothGatt gatt;
+    try {
+        gatt = mBluetoothManager.getBluetoothGatt();
+    } catch (RemoteException e) {
+        Log.e(TAG, "Failed to get Bluetooth gatt - ", e);
+        return;
+    }
+
+    IPeriodicAdvertisingCallback wrapper = callbackWrappers.remove(callback);
+    if (wrapper == null) {
+      throw new IllegalArgumentException("callback was not properly registered");
+    }
+
+    try {
+      gatt.unregisterSync(wrapper);
+    } catch (RemoteException e) {
+        Log.e(TAG, "Failed to cancel sync creation - ", e);
+        return;
+    }
+!!!6056453.java!!!	wrap(inout callback : PeriodicAdvertisingCallback, inout handler : Handler) : IPeriodicAdvertisingCallback
+    return new IPeriodicAdvertisingCallback.Stub() {
+      public void onSyncEstablished(int syncHandle, BluetoothDevice device,
+                                    int advertisingSid, int skip, int timeout, int status) {
+
+          handler.post(new Runnable() {
+              @Override
+              public void run() {
+                  callback.onSyncEstablished(syncHandle, device, advertisingSid, skip, timeout,
+                                             status);
+
+                  if (status != PeriodicAdvertisingCallback.SYNC_SUCCESS) {
+                      // App can still unregister the sync until notified it failed. Remove callback
+                      // after app was notifed.
+                      callbackWrappers.remove(callback);
+                  }
+              }
+          });
+      }
+
+      public void onPeriodicAdvertisingReport(PeriodicAdvertisingReport report) {
+          handler.post(new Runnable() {
+              @Override
+              public void run() {
+                callback.onPeriodicAdvertisingReport(report);
+              }
+          });
+      }
+
+      public void onSyncLost(int syncHandle) {
+          handler.post(new Runnable() {
+              @Override
+              public void run() {
+                callback.onSyncLost(syncHandle);
+                // App can still unregister the sync until notified it's lost. Remove callback after
+                // app was notifed.
+                callbackWrappers.remove(callback);
+              }
+          });
+      }
+    };

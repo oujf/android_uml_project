@@ -1,0 +1,145 @@
+class RescueParty
+!!!10819077.java!!!	isDisabled() : boolean
+        // Check if we're explicitly enabled for testing
+        if (SystemProperties.getBoolean(PROP_ENABLE_RESCUE, false)) {
+            return false;
+        }
+
+        // We're disabled on all engineering devices
+        if (Build.IS_ENG) {
+            Slog.v(TAG, "Disabled because of eng build");
+            return true;
+        }
+
+        // We're disabled on userdebug devices connected over USB, since that's
+        // a decent signal that someone is actively trying to debug the device,
+        // or that it's in a lab environment.
+        if (Build.IS_USERDEBUG && isUsbActive()) {
+            Slog.v(TAG, "Disabled because of active USB connection");
+            return true;
+        }
+
+        // One last-ditch check
+        if (SystemProperties.getBoolean(PROP_DISABLE_RESCUE, false)) {
+            Slog.v(TAG, "Disabled because of manual property");
+            return true;
+        }
+
+        return false;
+!!!10819205.java!!!	noteBoot(inout context : Context) : void
+        if (isDisabled()) return;
+        if (sBoot.incrementAndTest()) {
+            sBoot.reset();
+            incrementRescueLevel(sBoot.uid);
+            executeRescueLevel(context);
+        }
+!!!10819333.java!!!	notePersistentAppCrash(inout context : Context, in uid : int) : void
+        if (isDisabled()) return;
+        Threshold t = sApps.get(uid);
+        if (t == null) {
+            t = new AppThreshold(uid);
+            sApps.put(uid, t);
+        }
+        if (t.incrementAndTest()) {
+            t.reset();
+            incrementRescueLevel(t.uid);
+            executeRescueLevel(context);
+        }
+!!!10819461.java!!!	isAttemptingFactoryReset() : boolean
+        return SystemProperties.getInt(PROP_RESCUE_LEVEL, LEVEL_NONE) == LEVEL_FACTORY_RESET;
+!!!10819589.java!!!	incrementRescueLevel(in triggerUid : int) : void
+        final int level = MathUtils.constrain(
+                SystemProperties.getInt(PROP_RESCUE_LEVEL, LEVEL_NONE) + 1,
+                LEVEL_NONE, LEVEL_FACTORY_RESET);
+        SystemProperties.set(PROP_RESCUE_LEVEL, Integer.toString(level));
+
+        EventLogTags.writeRescueLevel(level, triggerUid);
+        PackageManagerService.logCriticalInfo(Log.WARN, "Incremented rescue level to "
+                + levelToString(level) + " triggered by UID " + triggerUid);
+!!!10819717.java!!!	onSettingsProviderPublished(inout context : Context) : void
+        executeRescueLevel(context);
+!!!10819845.java!!!	executeRescueLevel(inout context : Context) : void
+        final int level = SystemProperties.getInt(PROP_RESCUE_LEVEL, LEVEL_NONE);
+        if (level == LEVEL_NONE) return;
+
+        Slog.w(TAG, "Attempting rescue level " + levelToString(level));
+        try {
+            executeRescueLevelInternal(context, level);
+            EventLogTags.writeRescueSuccess(level);
+            PackageManagerService.logCriticalInfo(Log.DEBUG,
+                    "Finished rescue level " + levelToString(level));
+        } catch (Throwable t) {
+            final String msg = ExceptionUtils.getCompleteMessage(t);
+            EventLogTags.writeRescueFailure(level, msg);
+            PackageManagerService.logCriticalInfo(Log.ERROR,
+                    "Failed rescue level " + levelToString(level) + ": " + msg);
+        }
+!!!10819973.java!!!	executeRescueLevelInternal(inout context : Context, in level : int) : void
+        switch (level) {
+            case LEVEL_RESET_SETTINGS_UNTRUSTED_DEFAULTS:
+                resetAllSettings(context, Settings.RESET_MODE_UNTRUSTED_DEFAULTS);
+                break;
+            case LEVEL_RESET_SETTINGS_UNTRUSTED_CHANGES:
+                resetAllSettings(context, Settings.RESET_MODE_UNTRUSTED_CHANGES);
+                break;
+            case LEVEL_RESET_SETTINGS_TRUSTED_DEFAULTS:
+                resetAllSettings(context, Settings.RESET_MODE_TRUSTED_DEFAULTS);
+                break;
+            case LEVEL_FACTORY_RESET:
+                RecoverySystem.rebootPromptAndWipeUserData(context, TAG);
+                break;
+        }
+!!!10820101.java!!!	resetAllSettings(inout context : Context, in mode : int) : void
+        // Try our best to reset all settings possible, and once finished
+        // rethrow any exception that we encountered
+        Exception res = null;
+        final ContentResolver resolver = context.getContentResolver();
+        try {
+            Settings.Global.resetToDefaultsAsUser(resolver, null, mode, UserHandle.USER_SYSTEM);
+        } catch (Throwable t) {
+            res = new RuntimeException("Failed to reset global settings", t);
+        }
+        for (int userId : getAllUserIds()) {
+            try {
+                Settings.Secure.resetToDefaultsAsUser(resolver, null, mode, userId);
+            } catch (Throwable t) {
+                res = new RuntimeException("Failed to reset secure settings for " + userId, t);
+            }
+        }
+        if (res != null) {
+            throw res;
+        }
+!!!10822405.java!!!	getAllUserIds() : int
+        int[] userIds = { UserHandle.USER_SYSTEM };
+        try {
+            for (File file : FileUtils.listFilesOrEmpty(Environment.getDataSystemDeDirectory())) {
+                try {
+                    final int userId = Integer.parseInt(file.getName());
+                    if (userId != UserHandle.USER_SYSTEM) {
+                        userIds = ArrayUtils.appendInt(userIds, userId);
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (Throwable t) {
+            Slog.w(TAG, "Trouble discovering users", t);
+        }
+        return userIds;
+!!!10822533.java!!!	isUsbActive() : boolean
+        try {
+            final String state = FileUtils
+                    .readTextFile(new File("/sys/class/android_usb/android0/state"), 128, "");
+            return "CONFIGURED".equals(state.trim());
+        } catch (Throwable t) {
+            Slog.w(TAG, "Failed to determine if device was on USB", t);
+            return false;
+        }
+!!!10822661.java!!!	levelToString(in level : int) : String
+        switch (level) {
+            case LEVEL_NONE: return "NONE";
+            case LEVEL_RESET_SETTINGS_UNTRUSTED_DEFAULTS: return "RESET_SETTINGS_UNTRUSTED_DEFAULTS";
+            case LEVEL_RESET_SETTINGS_UNTRUSTED_CHANGES: return "RESET_SETTINGS_UNTRUSTED_CHANGES";
+            case LEVEL_RESET_SETTINGS_TRUSTED_DEFAULTS: return "RESET_SETTINGS_TRUSTED_DEFAULTS";
+            case LEVEL_FACTORY_RESET: return "FACTORY_RESET";
+            default: return Integer.toString(level);
+        }

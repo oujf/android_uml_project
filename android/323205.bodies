@@ -1,0 +1,170 @@
+class BnMediaSource
+!!!851333.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+        case START: {
+            ALOGV("start");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            sp<MetaData> meta;
+            if (data.dataAvail()) {
+                meta = MetaData::createFromParcel(data);
+            }
+            status_t ret = start(meta.get());
+            if (ret == NO_ERROR && meta != NULL) {
+                meta->writeToParcel(*reply);
+            }
+            return ret;
+        }
+        case STOP: {
+            ALOGV("stop");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            mGroup->signalBufferReturned(nullptr);
+            status_t status = stop();
+            mIndexCache.reset();
+            mBuffersSinceStop = 0;
+            return status;
+        }
+        case PAUSE: {
+            ALOGV("pause");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            mGroup->signalBufferReturned(nullptr);
+            return pause();
+        }
+        case GETFORMAT: {
+            ALOGV("getFormat");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            sp<MetaData> meta = getFormat();
+            if (meta != NULL) {
+                meta->writeToParcel(*reply);
+                return NO_ERROR;
+            }
+            return UNKNOWN_ERROR;
+        }
+        case READMULTIPLE: {
+            ALOGV("readMultiple");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+
+            // Get max number of buffers to read.
+            uint32_t maxNumBuffers;
+            data.readUint32(&maxNumBuffers);
+            if (maxNumBuffers > kMaxNumReadMultiple) {
+                maxNumBuffers = kMaxNumReadMultiple;
+            }
+
+            // Get read options, if any.
+            ReadOptions opts;
+            uint32_t len;
+            const bool useOptions =
+                    data.readUint32(&len) == NO_ERROR
+                    && len == sizeof(opts)
+                    && data.read((void *)&opts, len) == NO_ERROR;
+
+            mGroup->signalBufferReturned(nullptr);
+            mIndexCache.gc();
+            size_t inlineTransferSize = 0;
+            status_t ret = NO_ERROR;
+            uint32_t bufferCount = 0;
+            for (; bufferCount < maxNumBuffers; ++bufferCount, ++mBuffersSinceStop) {
+                MediaBuffer *buf = nullptr;
+                ret = read(&buf, useOptions ? &opts : nullptr);
+                opts.clearNonPersistent(); // Remove options that only apply to first buffer.
+                if (ret != NO_ERROR || buf == nullptr) {
+                    break;
+                }
+
+                // Even if we're using shared memory, we might not want to use it, since for small
+                // sizes it's faster to copy data through the Binder transaction
+                // On the other hand, if the data size is large enough, it's better to use shared
+                // memory. When data is too large, binder can't handle it.
+                //
+                // TODO: reduce MediaBuffer::kSharedMemThreshold
+                MediaBuffer *transferBuf = nullptr;
+                const size_t length = buf->range_length();
+                size_t offset = buf->range_offset();
+                if (length >= (supportNonblockingRead() && buf->mMemory != nullptr ?
+                        kTransferSharedAsSharedThreshold : kTransferInlineAsSharedThreshold)) {
+                    if (buf->mMemory != nullptr) {
+                        ALOGV("Use shared memory: %zu", length);
+                        transferBuf = buf;
+                    } else {
+                        ALOGD("Large buffer %zu without IMemory!", length);
+                        ret = mGroup->acquire_buffer(
+                                &transferBuf, false /* nonBlocking */, length);
+                        if (ret != OK
+                                || transferBuf == nullptr
+                                || transferBuf->mMemory == nullptr) {
+                            ALOGW("Failed to acquire shared memory, size %zu, ret %d",
+                                    length, ret);
+                            if (transferBuf != nullptr) {
+                                transferBuf->release();
+                                transferBuf = nullptr;
+                            }
+                            // Current buffer transmit inline; no more additional buffers.
+                            maxNumBuffers = 0;
+                        } else {
+                            memcpy(transferBuf->data(), (uint8_t*)buf->data() + offset, length);
+                            offset = 0;
+                            if (!mGroup->has_buffers()) {
+                                maxNumBuffers = 0; // No more MediaBuffers, stop readMultiple.
+                            }
+                        }
+                    }
+                }
+                if (transferBuf != nullptr) { // Using shared buffers.
+                    if (!transferBuf->isObserved() && transferBuf != buf) {
+                        // Transfer buffer must be part of a MediaBufferGroup.
+                        ALOGV("adding shared memory buffer %p to local group", transferBuf);
+                        mGroup->add_buffer(transferBuf);
+                        transferBuf->add_ref(); // We have already acquired buffer.
+                    }
+                    uint64_t index = mIndexCache.lookup(transferBuf->mMemory);
+                    if (index == 0) {
+                        index = mIndexCache.insert(transferBuf->mMemory);
+                        reply->writeInt32(SHARED_BUFFER);
+                        reply->writeUint64(index);
+                        reply->writeStrongBinder(IInterface::asBinder(transferBuf->mMemory));
+                        ALOGV("SHARED_BUFFER(%p) %llu",
+                                transferBuf, (unsigned long long)index);
+                    } else {
+                        reply->writeInt32(SHARED_BUFFER_INDEX);
+                        reply->writeUint64(index);
+                        ALOGV("SHARED_BUFFER_INDEX(%p) %llu",
+                                transferBuf, (unsigned long long)index);
+                    }
+                    reply->writeInt32(offset);
+                    reply->writeInt32(length);
+                    buf->meta_data()->writeToParcel(*reply);
+                    transferBuf->addRemoteRefcount(1);
+                    if (transferBuf != buf) {
+                        transferBuf->release(); // release local ref
+                    } else if (!supportNonblockingRead()) {
+                        maxNumBuffers = 0; // stop readMultiple with one shared buffer.
+                    }
+                } else {
+                    ALOGV_IF(buf->mMemory != nullptr,
+                            "INLINE(%p) %zu shared mem available, but only %zu used",
+                            buf, buf->mMemory->size(), length);
+                    reply->writeInt32(INLINE_BUFFER);
+                    reply->writeByteArray(length, (uint8_t*)buf->data() + offset);
+                    buf->meta_data()->writeToParcel(*reply);
+                    inlineTransferSize += length;
+                    if (inlineTransferSize > kInlineMaxTransfer) {
+                        maxNumBuffers = 0; // stop readMultiple if inline transfer is too large.
+                    }
+                }
+                buf->release();
+            }
+            reply->writeInt32(NULL_BUFFER); // Indicate no more MediaBuffers.
+            reply->writeInt32(ret);
+            ALOGV("readMultiple status %d, bufferCount %u, sinceStop %u",
+                    ret, bufferCount, mBuffersSinceStop);
+            return NO_ERROR;
+        }
+        case SUPPORT_NONBLOCKING_READ: {
+            ALOGV("supportNonblockingRead");
+            CHECK_INTERFACE(IMediaSource, data, reply);
+            reply->writeInt32((int32_t)supportNonblockingRead());
+            return NO_ERROR;
+        }
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

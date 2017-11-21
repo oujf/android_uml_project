@@ -1,0 +1,293 @@
+class RemoteInputView
+!!!4171781.java!!!	RemoteInputView(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!4171909.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+
+        mProgressBar = findViewById(R.id.remote_input_progress);
+
+        mSendButton = findViewById(R.id.remote_input_send);
+        mSendButton.setOnClickListener(this);
+
+        mEditText = (RemoteEditText) getChildAt(0);
+        mEditText.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
+                final boolean isSoftImeEvent = event == null
+                        && (actionId == EditorInfo.IME_ACTION_DONE
+                        || actionId == EditorInfo.IME_ACTION_NEXT
+                        || actionId == EditorInfo.IME_ACTION_SEND);
+                final boolean isKeyboardEnterKey = event != null
+                        && KeyEvent.isConfirmKey(event.getKeyCode())
+                        && event.getAction() == KeyEvent.ACTION_DOWN;
+
+                if (isSoftImeEvent || isKeyboardEnterKey) {
+                    if (mEditText.length() > 0) {
+                        sendRemoteInput();
+                    }
+                    // Consume action to prevent IME from closing.
+                    return true;
+                }
+                return false;
+            }
+        });
+        mEditText.addTextChangedListener(this);
+        mEditText.setInnerFocusable(false);
+        mEditText.mRemoteInputView = this;
+!!!4172037.java!!!	sendRemoteInput() : void
+        Bundle results = new Bundle();
+        results.putString(mRemoteInput.getResultKey(), mEditText.getText().toString());
+        Intent fillInIntent = new Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+        RemoteInput.addResultsToIntent(mRemoteInputs, fillInIntent,
+                results);
+
+        mEditText.setEnabled(false);
+        mSendButton.setVisibility(INVISIBLE);
+        mProgressBar.setVisibility(VISIBLE);
+        mEntry.remoteInputText = mEditText.getText();
+        mController.addSpinning(mEntry.key, mToken);
+        mController.removeRemoteInput(mEntry, mToken);
+        mEditText.mShowImeOnInputConnection = false;
+        mController.remoteInputSent(mEntry);
+
+        // Tell ShortcutManager that this package has been "activated".  ShortcutManager
+        // will reset the throttling for this package.
+        // Strictly speaking, the intent receiver may be different from the notification publisher,
+        // but that's an edge case, and also because we can't always know which package will receive
+        // an intent, so we just reset for the publisher.
+        getContext().getSystemService(ShortcutManager.class).onApplicationActive(
+                mEntry.notification.getPackageName(),
+                mEntry.notification.getUser().getIdentifier());
+
+        MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_SEND,
+                mEntry.notification.getPackageName());
+        try {
+            mPendingIntent.send(mContext, 0, fillInIntent);
+        } catch (PendingIntent.CanceledException e) {
+            Log.i(TAG, "Unable to send remote input result", e);
+            MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_FAIL,
+                    mEntry.notification.getPackageName());
+        }
+!!!4172165.java!!!	inflate(inout context : Context, inout root : ViewGroup, inout entry : NotificationData::Entry, inout controller : RemoteInputController) : RemoteInputView
+        RemoteInputView v = (RemoteInputView)
+                LayoutInflater.from(context).inflate(R.layout.remote_input, root, false);
+        v.mController = controller;
+        v.mEntry = entry;
+        v.setTag(VIEW_TAG);
+
+        return v;
+!!!4172293.java!!!	onClick(inout v : View) : void
+        if (v == mSendButton) {
+            sendRemoteInput();
+        }
+!!!4172421.java!!!	onTouchEvent(inout event : MotionEvent) : boolean
+        super.onTouchEvent(event);
+
+        // We never want for a touch to escape to an outer view or one we covered.
+        return true;
+!!!4172549.java!!!	onDefocus(inout animate : boolean) : void
+        mController.removeRemoteInput(mEntry, mToken);
+        mEntry.remoteInputText = mEditText.getText();
+
+        // During removal, we get reattached and lose focus. Not hiding in that
+        // case to prevent flicker.
+        if (!mRemoved) {
+            if (animate && mRevealR > 0) {
+                Animator reveal = ViewAnimationUtils.createCircularReveal(
+                        this, mRevealCx, mRevealCy, mRevealR, 0);
+                reveal.setInterpolator(Interpolators.FAST_OUT_LINEAR_IN);
+                reveal.setDuration(StackStateAnimator.ANIMATION_DURATION_CLOSE_REMOTE_INPUT);
+                reveal.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        setVisibility(INVISIBLE);
+                        if (mWrapper != null) {
+                            mWrapper.setRemoteInputVisible(false);
+                        }
+                    }
+                });
+                reveal.start();
+            } else {
+                setVisibility(INVISIBLE);
+                if (mWrapper != null) {
+                    mWrapper.setRemoteInputVisible(false);
+                }
+            }
+        }
+        MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_CLOSE,
+                mEntry.notification.getPackageName());
+!!!4172677.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        if (mEntry.row.isChangingPosition()) {
+            if (getVisibility() == VISIBLE && mEditText.isFocusable()) {
+                mEditText.requestFocus();
+            }
+        }
+!!!4172805.java!!!	onDetachedFromWindow() : void
+        super.onDetachedFromWindow();
+        if (mEntry.row.isChangingPosition() || isTemporarilyDetached()) {
+            return;
+        }
+        mController.removeRemoteInput(mEntry, mToken);
+        mController.removeSpinning(mEntry.key, mToken);
+!!!4172933.java!!!	setPendingIntent(inout pendingIntent : PendingIntent) : void
+        mPendingIntent = pendingIntent;
+!!!4173061.java!!!	setRemoteInput(inout remoteInputs : RemoteInput [[]], inout remoteInput : RemoteInput) : void
+        mRemoteInputs = remoteInputs;
+        mRemoteInput = remoteInput;
+        mEditText.setHint(mRemoteInput.getLabel());
+!!!4173189.java!!!	focusAnimated() : void
+        if (getVisibility() != VISIBLE) {
+            Animator animator = ViewAnimationUtils.createCircularReveal(
+                    this, mRevealCx, mRevealCy, 0, mRevealR);
+            animator.setDuration(StackStateAnimator.ANIMATION_DURATION_STANDARD);
+            animator.setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN);
+            animator.start();
+        }
+        focus();
+!!!4173317.java!!!	focus() : void
+        MetricsLogger.action(mContext, MetricsProto.MetricsEvent.ACTION_REMOTE_INPUT_OPEN,
+                mEntry.notification.getPackageName());
+
+        setVisibility(VISIBLE);
+        if (mWrapper != null) {
+            mWrapper.setRemoteInputVisible(true);
+        }
+        mController.addRemoteInput(mEntry, mToken);
+        mEditText.setInnerFocusable(true);
+        mEditText.mShowImeOnInputConnection = true;
+        mEditText.setText(mEntry.remoteInputText);
+        mEditText.setSelection(mEditText.getText().length());
+        mEditText.requestFocus();
+        updateSendButton();
+!!!4173445.java!!!	onNotificationUpdateOrReset() : void
+        boolean sending = mProgressBar.getVisibility() == VISIBLE;
+
+        if (sending) {
+            // Update came in after we sent the reply, time to reset.
+            reset();
+        }
+
+        if (isActive() && mWrapper != null) {
+            mWrapper.setRemoteInputVisible(true);
+        }
+!!!4173573.java!!!	reset() : void
+        mResetting = true;
+
+        mEditText.getText().clear();
+        mEditText.setEnabled(true);
+        mSendButton.setVisibility(VISIBLE);
+        mProgressBar.setVisibility(INVISIBLE);
+        mController.removeSpinning(mEntry.key, mToken);
+        updateSendButton();
+        onDefocus(false /* animate */);
+
+        mResetting = false;
+!!!4173701.java!!!	onRequestSendAccessibilityEvent(inout child : View, inout event : AccessibilityEvent) : boolean
+        if (mResetting && child == mEditText) {
+            // Suppress text events if it happens during resetting. Ideally this would be
+            // suppressed by the text view not being shown, but that doesn't work here because it
+            // needs to stay visible for the animation.
+            return false;
+        }
+        return super.onRequestSendAccessibilityEvent(child, event);
+!!!4173829.java!!!	updateSendButton() : void
+        mSendButton.setEnabled(mEditText.getText().length() != 0);
+!!!4174213.java!!!	afterTextChanged(inout s : Editable) : void
+        updateSendButton();
+!!!4174341.java!!!	close() : void
+        mEditText.defocusIfNeeded(false /* animated */);
+!!!4174469.java!!!	onInterceptTouchEvent(inout ev : MotionEvent) : boolean
+        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+            findScrollContainer();
+            if (mScrollContainer != null) {
+                mScrollContainer.requestDisallowLongPress();
+                mScrollContainer.requestDisallowDismiss();
+            }
+        }
+        return super.onInterceptTouchEvent(ev);
+!!!4174597.java!!!	requestScrollTo() : boolean
+        findScrollContainer();
+        mScrollContainer.lockScrollTo(mScrollContainerChild);
+        return true;
+!!!4174725.java!!!	findScrollContainer() : void
+        if (mScrollContainer == null) {
+            mScrollContainerChild = null;
+            ViewParent p = this;
+            while (p != null) {
+                if (mScrollContainerChild == null && p instanceof ExpandableView) {
+                    mScrollContainerChild = (View) p;
+                }
+                if (p.getParent() instanceof ScrollContainer) {
+                    mScrollContainer = (ScrollContainer) p.getParent();
+                    if (mScrollContainerChild == null) {
+                        mScrollContainerChild = (View) p;
+                    }
+                    break;
+                }
+                p = p.getParent();
+            }
+        }
+!!!4174853.java!!!	isActive() : boolean
+        return mEditText.isFocused() && mEditText.isEnabled();
+!!!4174981.java!!!	stealFocusFrom(inout other : RemoteInputView) : void
+        other.close();
+        setPendingIntent(other.mPendingIntent);
+        setRemoteInput(other.mRemoteInputs, other.mRemoteInput);
+        setRevealParameters(other.mRevealCx, other.mRevealCy, other.mRevealR);
+        focus();
+!!!4175109.java!!!	updatePendingIntentFromActions(inout actions : Notification.Action [[]]) : boolean
+        if (mPendingIntent == null || actions == null) {
+            return false;
+        }
+        Intent current = mPendingIntent.getIntent();
+        if (current == null) {
+            return false;
+        }
+
+        for (Notification.Action a : actions) {
+            RemoteInput[] inputs = a.getRemoteInputs();
+            if (a.actionIntent == null || inputs == null) {
+                continue;
+            }
+            Intent candidate = a.actionIntent.getIntent();
+            if (!current.filterEquals(candidate)) {
+                continue;
+            }
+
+            RemoteInput input = null;
+            for (RemoteInput i : inputs) {
+                if (i.getAllowFreeFormInput()) {
+                    input = i;
+                }
+            }
+            if (input == null) {
+                continue;
+            }
+            setPendingIntent(a.actionIntent);
+            setRemoteInput(inputs, input);
+            return true;
+        }
+        return false;
+!!!4175237.java!!!	getPendingIntent() : PendingIntent
+        return mPendingIntent;
+!!!4175365.java!!!	setRemoved() : void
+        mRemoved = true;
+!!!4175493.java!!!	setRevealParameters(in cx : int, in cy : int, in r : int) : void
+        mRevealCx = cx;
+        mRevealCy = cy;
+        mRevealR = r;
+!!!4175621.java!!!	dispatchStartTemporaryDetach() : void
+        super.dispatchStartTemporaryDetach();
+        // Detach the EditText temporarily such that it doesn't get onDetachedFromWindow and
+        // won't lose IME focus.
+        detachViewFromParent(mEditText);
+!!!4175749.java!!!	dispatchFinishTemporaryDetach() : void
+        if (isAttachedToWindow()) {
+            attachViewToParent(mEditText, 0, mEditText.getLayoutParams());
+        } else {
+            removeDetachedView(mEditText, false /* animate */);
+        }
+        super.dispatchFinishTemporaryDetach();
+!!!4175877.java!!!	setWrapper(inout wrapper : NotificationViewWrapper) : void
+        mWrapper = wrapper;

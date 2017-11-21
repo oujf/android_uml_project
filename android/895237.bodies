@@ -1,0 +1,67 @@
+class PluginFragment
+!!!4230405.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+        IntentFilter filter = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addDataScheme("package");
+        getContext().registerReceiver(mReceiver, filter);
+        filter = new IntentFilter(Intent.ACTION_USER_UNLOCKED);
+        getContext().registerReceiver(mReceiver, filter);
+!!!4230533.java!!!	onDestroy() : void
+        super.onDestroy();
+        getContext().unregisterReceiver(mReceiver);
+!!!4230661.java!!!	onCreatePreferences(inout savedInstanceState : Bundle, in rootKey : String) : void
+        loadPrefs();
+!!!4230789.java!!!	loadPrefs() : void
+        PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(getContext());
+        screen.setOrderingAsAdded(false);
+        Context prefContext = getPreferenceManager().getContext();
+        mPluginPrefs = new PluginPrefs(getContext());
+        PackageManager pm = getContext().getPackageManager();
+
+        Set<String> pluginActions = mPluginPrefs.getPluginList();
+        ArrayMap<String, ArraySet<String>> plugins = new ArrayMap<>();
+        for (String action : pluginActions) {
+            String name = toName(action);
+            List<ResolveInfo> result = pm.queryIntentServices(
+                    new Intent(action), PackageManager.MATCH_DISABLED_COMPONENTS);
+            for (ResolveInfo info : result) {
+                String packageName = info.serviceInfo.packageName;
+                if (!plugins.containsKey(packageName)) {
+                    plugins.put(packageName, new ArraySet<>());
+                }
+                plugins.get(packageName).add(name);
+            }
+        }
+
+        List<PackageInfo> apps = pm.getPackagesHoldingPermissions(new String[]{
+                PluginInstanceManager.PLUGIN_PERMISSION},
+                PackageManager.MATCH_DISABLED_COMPONENTS | PackageManager.GET_SERVICES);
+        apps.forEach(app -> {
+            if (!plugins.containsKey(app.packageName)) return;
+            SwitchPreference pref = new PluginPreference(prefContext, app);
+            pref.setSummary("Plugins: " + toString(plugins.get(app.packageName)));
+            screen.addPreference(pref);
+        });
+        setPreferenceScreen(screen);
+!!!4230917.java!!!	toString(inout plugins : ArraySet<String>) : String
+        StringBuilder b = new StringBuilder();
+        for (String string : plugins) {
+            if (b.length() != 0) {
+                b.append(", ");
+            }
+            b.append(string);
+        }
+        return b.toString();
+!!!4231045.java!!!	toName(in action : String) : String
+        String str = action.replace("com.android.systemui.action.PLUGIN_", "");
+        StringBuilder b = new StringBuilder();
+        for (String s : str.split("_")) {
+            if (b.length() != 0) {
+                b.append(' ');
+            }
+            b.append(s.substring(0, 1));
+            b.append(s.substring(1).toLowerCase());
+        }
+        return b.toString();

@@ -1,0 +1,36 @@
+class ProcessInitializer
+!!!8579077.java!!!	init(inout context : Context, in renderProxy : long) : void
+            if (mInitialized) return;
+            mInitialized = true;
+            mAppContext = context.getApplicationContext();
+            initSched(context, renderProxy);
+            initGraphicsStats();
+!!!8579205.java!!!	initSched(inout context : Context, in renderProxy : long) : void
+            try {
+                int tid = nGetRenderThreadTid(renderProxy);
+                ActivityManager.getService().setRenderThread(tid);
+            } catch (Throwable t) {
+                Log.w(LOG_TAG, "Failed to set scheduler for RenderThread", t);
+            }
+!!!8579333.java!!!	initGraphicsStats() : void
+            try {
+                IBinder binder = ServiceManager.getService("graphicsstats");
+                if (binder == null) return;
+                mGraphicsStatsService = IGraphicsStats.Stub.asInterface(binder);
+                requestBuffer();
+            } catch (Throwable t) {
+                Log.w(LOG_TAG, "Could not acquire gfx stats buffer", t);
+            }
+!!!8579461.java!!!	rotateBuffer() : void
+            nRotateProcessStatsBuffer();
+            requestBuffer();
+!!!8579589.java!!!	requestBuffer() : void
+            try {
+                final String pkg = mAppContext.getApplicationInfo().packageName;
+                ParcelFileDescriptor pfd = mGraphicsStatsService
+                        .requestBufferForProcess(pkg, mGraphicsStatsCallback);
+                nSetProcessStatsBuffer(pfd.getFd());
+                pfd.close();
+            } catch (Throwable t) {
+                Log.w(LOG_TAG, "Could not acquire gfx stats buffer", t);
+            }

@@ -1,0 +1,91 @@
+class AudioEndpointParcelable
+!!!663685.cpp!!!	addFileDescriptor(in fd : int, in sizeInBytes : int32_t) : int32_t
+    if (mNumSharedMemories >= MAX_SHARED_MEMORIES) {
+        return AAUDIO_ERROR_OUT_OF_RANGE;
+    }
+    int32_t index = mNumSharedMemories++;
+    mSharedMemories[index].setup(fd, sizeInBytes);
+    return index;
+!!!663813.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    parcel->writeInt32(mNumSharedMemories);
+    for (int i = 0; i < mNumSharedMemories; i++) {
+        mSharedMemories[i].writeToParcel(parcel);
+    }
+    mUpMessageQueueParcelable.writeToParcel(parcel);
+    mDownMessageQueueParcelable.writeToParcel(parcel);
+    mUpDataQueueParcelable.writeToParcel(parcel);
+    mDownDataQueueParcelable.writeToParcel(parcel);
+    return NO_ERROR; // TODO check for errors above
+!!!663941.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    parcel->readInt32(&mNumSharedMemories);
+    for (int i = 0; i < mNumSharedMemories; i++) {
+        mSharedMemories[i].readFromParcel(parcel);
+    }
+    mUpMessageQueueParcelable.readFromParcel(parcel);
+    mDownMessageQueueParcelable.readFromParcel(parcel);
+    mUpDataQueueParcelable.readFromParcel(parcel);
+    mDownDataQueueParcelable.readFromParcel(parcel);
+    return NO_ERROR; // TODO check for errors above
+!!!664069.cpp!!!	resolve(inout descriptor : EndpointDescriptor) : aaudio_result_t
+    aaudio_result_t result = mUpMessageQueueParcelable.resolve(mSharedMemories,
+                                                           &descriptor->upMessageQueueDescriptor);
+    if (result != AAUDIO_OK) return result;
+    result = mDownMessageQueueParcelable.resolve(mSharedMemories,
+                                        &descriptor->downMessageQueueDescriptor);
+    if (result != AAUDIO_OK) return result;
+
+    result = mDownDataQueueParcelable.resolve(mSharedMemories,
+                                              &descriptor->dataQueueDescriptor);
+    return result;
+!!!664197.cpp!!!	validate() : aaudio_result_t
+    aaudio_result_t result;
+    if (mNumSharedMemories < 0 || mNumSharedMemories >= MAX_SHARED_MEMORIES) {
+        ALOGE("AudioEndpointParcelable invalid mNumSharedMemories = %d", mNumSharedMemories);
+        return AAUDIO_ERROR_INTERNAL;
+    }
+    for (int i = 0; i < mNumSharedMemories; i++) {
+        result = mSharedMemories[i].validate();
+        if (result != AAUDIO_OK) {
+            ALOGE("AudioEndpointParcelable invalid mSharedMemories[%d] = %d", i, result);
+            return result;
+        }
+    }
+    if ((result = mUpMessageQueueParcelable.validate()) != AAUDIO_OK) {
+        ALOGE("AudioEndpointParcelable invalid mUpMessageQueueParcelable = %d", result);
+        return result;
+    }
+    if ((result = mDownMessageQueueParcelable.validate()) != AAUDIO_OK) {
+        ALOGE("AudioEndpointParcelable invalid mDownMessageQueueParcelable = %d", result);
+        return result;
+    }
+    if ((result = mUpDataQueueParcelable.validate()) != AAUDIO_OK) {
+        ALOGE("AudioEndpointParcelable invalid mUpDataQueueParcelable = %d", result);
+        return result;
+    }
+    if ((result = mDownDataQueueParcelable.validate()) != AAUDIO_OK) {
+        ALOGE("AudioEndpointParcelable invalid mDownDataQueueParcelable = %d", result);
+        return result;
+    }
+    return AAUDIO_OK;
+!!!664325.cpp!!!	close() : aaudio_result_t
+    int err = 0;
+    for (int i = 0; i < mNumSharedMemories; i++) {
+        int lastErr = mSharedMemories[i].close();
+        if (lastErr < 0) err = lastErr;
+    }
+    return AAudioConvert_androidToAAudioResult(err);
+!!!664453.cpp!!!	dump() : void
+    ALOGD("AudioEndpointParcelable ======================================= BEGIN");
+    ALOGD("AudioEndpointParcelable mNumSharedMemories = %d", mNumSharedMemories);
+    for (int i = 0; i < mNumSharedMemories; i++) {
+        mSharedMemories[i].dump();
+    }
+    ALOGD("AudioEndpointParcelable mUpMessageQueueParcelable =========");
+    mUpMessageQueueParcelable.dump();
+    ALOGD("AudioEndpointParcelable mDownMessageQueueParcelable =======");
+    mDownMessageQueueParcelable.dump();
+    ALOGD("AudioEndpointParcelable mUpDataQueueParcelable ============");
+    mUpDataQueueParcelable.dump();
+    ALOGD("AudioEndpointParcelable mDownDataQueueParcelable ==========");
+    mDownDataQueueParcelable.dump();
+    ALOGD("AudioEndpointParcelable ======================================= END");

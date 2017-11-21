@@ -1,0 +1,88 @@
+class AudioEndpoint
+!!!670725.cpp!!!	configure(in pEndpointDescriptor : EndpointDescriptor) : aaudio_result_t
+    aaudio_result_t result = AudioEndpoint_validateDescriptor(pEndpointDescriptor);
+    if (result != AAUDIO_OK) {
+        ALOGE("AudioEndpoint_validateQueueDescriptor returned %d %s",
+              result, AAudio_convertResultToText(result));
+        return result;
+    }
+
+    // ============================ up message queue =============================
+    const RingBufferDescriptor *descriptor = &pEndpointDescriptor->upMessageQueueDescriptor;
+    if(descriptor->bytesPerFrame != sizeof(AAudioServiceMessage)) {
+        ALOGE("AudioEndpoint::configure() bytesPerFrame != sizeof(AAudioServiceMessage) = %d",
+              descriptor->bytesPerFrame);
+        return AAUDIO_ERROR_INTERNAL;
+    }
+
+    if(descriptor->readCounterAddress == nullptr || descriptor->writeCounterAddress == nullptr) {
+        ALOGE("AudioEndpoint_validateQueueDescriptor() NULL counter address");
+        return AAUDIO_ERROR_NULL;
+    }
+
+    mUpCommandQueue = new FifoBuffer(
+            descriptor->bytesPerFrame,
+            descriptor->capacityInFrames,
+            descriptor->readCounterAddress,
+            descriptor->writeCounterAddress,
+            descriptor->dataAddress
+    );
+
+    // ============================ down data queue =============================
+    descriptor = &pEndpointDescriptor->dataQueueDescriptor;
+    ALOGV("AudioEndpoint::configure() data framesPerBurst = %d", descriptor->framesPerBurst);
+    ALOGV("AudioEndpoint::configure() data readCounterAddress = %p", descriptor->readCounterAddress);
+    mFreeRunning = descriptor->readCounterAddress == nullptr;
+    ALOGV("AudioEndpoint::configure() mFreeRunning = %d", mFreeRunning ? 1 : 0);
+    int64_t *readCounterAddress = (descriptor->readCounterAddress == nullptr)
+                                  ? &mDataReadCounter
+                                  : descriptor->readCounterAddress;
+    int64_t *writeCounterAddress = (descriptor->writeCounterAddress == nullptr)
+                                  ? &mDataWriteCounter
+                                  : descriptor->writeCounterAddress;
+
+    mDataQueue = new FifoBuffer(
+            descriptor->bytesPerFrame,
+            descriptor->capacityInFrames,
+            readCounterAddress,
+            writeCounterAddress,
+            descriptor->dataAddress
+    );
+    uint32_t threshold = descriptor->capacityInFrames / 2;
+    mDataQueue->setThreshold(threshold);
+    return result;
+!!!670853.cpp!!!	readUpCommand(inout commandPtr : AAudioServiceMessage) : aaudio_result_t
+    return mUpCommandQueue->read(commandPtr, 1);
+!!!670981.cpp!!!	writeDataNow(in buffer : void, in numFrames : int32_t) : aaudio_result_t
+    return mDataQueue->write(buffer, numFrames);
+!!!671109.cpp!!!	getEmptyFramesAvailable(inout wrappingBuffer : WrappingBuffer) : void
+    mDataQueue->getEmptyRoomAvailable(wrappingBuffer);
+!!!671237.cpp!!!	getEmptyFramesAvailable() : int32_t
+    return mDataQueue->getFifoControllerBase()->getEmptyFramesAvailable();
+!!!671365.cpp!!!	getFullFramesAvailable(inout wrappingBuffer : WrappingBuffer) : void
+    return mDataQueue->getFullDataAvailable(wrappingBuffer);
+!!!671493.cpp!!!	getFullFramesAvailable() : int32_t
+    return mDataQueue->getFifoControllerBase()->getFullFramesAvailable();
+!!!671621.cpp!!!	advanceReadIndex(in deltaFrames : int32_t) : void
+    mDataQueue->getFifoControllerBase()->advanceReadIndex(deltaFrames);
+!!!671749.cpp!!!	advanceWriteIndex(in deltaFrames : int32_t) : void
+    mDataQueue->getFifoControllerBase()->advanceWriteIndex(deltaFrames);
+!!!671877.cpp!!!	setDataReadCounter(in framesRead : fifo_counter_t) : void
+    mDataQueue->setReadCounter(framesRead);
+!!!672005.cpp!!!	getDataReadCounter() : fifo_counter_t
+    return mDataQueue->getReadCounter();
+!!!672133.cpp!!!	setDataWriteCounter(in framesRead : fifo_counter_t) : void
+    mDataQueue->setWriteCounter(framesRead);
+!!!672261.cpp!!!	getDataWriteCounter() : fifo_counter_t
+    return mDataQueue->getWriteCounter();
+!!!672517.cpp!!!	setBufferSizeInFrames(in requestedFrames : int32_t, inout actualFrames : int32_t) : int32_t
+    if (requestedFrames < ENDPOINT_DATA_QUEUE_SIZE_MIN) {
+        requestedFrames = ENDPOINT_DATA_QUEUE_SIZE_MIN;
+    }
+    mDataQueue->setThreshold(requestedFrames);
+    *actualFrames = mDataQueue->getThreshold();
+    return AAUDIO_OK;
+!!!672645.cpp!!!	getBufferSizeInFrames() : int32_t
+    return mDataQueue->getThreshold();
+!!!672773.cpp!!!	getBufferCapacityInFrames() : int32_t
+    return (int32_t)mDataQueue->getBufferCapacityInFrames();

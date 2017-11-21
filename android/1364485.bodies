@@ -1,0 +1,76 @@
+class SynthesisSpeechItem
+!!!8129029.java!!!	SynthesisSpeechItem(inout callerIdentity : Object, in callerUid : int, in callerPid : int, inout params : Bundle, in utteranceId : String, inout text : CharSequence)
+            super(callerIdentity, callerUid, callerPid, params, utteranceId);
+            mText = text;
+            mCallerUid = callerUid;
+            mSynthesisRequest = new SynthesisRequest(mText, mParams);
+            mDefaultLocale = getSettingsLocale();
+            setRequestParams(mSynthesisRequest);
+            mEventLogger = new EventLogger(mSynthesisRequest, callerUid, callerPid, mPackageName);
+!!!8129157.java!!!	getText() : CharSequence
+            return mText;
+!!!8129285.java!!!	isValid() : boolean
+            if (mText == null) {
+                Log.e(TAG, "null synthesis text");
+                return false;
+            }
+            if (mText.length() >= TextToSpeech.getMaxSpeechInputLength()) {
+                Log.w(TAG, "Text too long: " + mText.length() + " chars");
+                return false;
+            }
+            return true;
+!!!8129413.java!!!	playImpl() : void
+            AbstractSynthesisCallback synthesisCallback;
+            mEventLogger.onRequestProcessingStart();
+            synchronized (this) {
+                // stop() might have been called before we enter this
+                // synchronized block.
+                if (isStopped()) {
+                    return;
+                }
+                mSynthesisCallback = createSynthesisCallback();
+                synthesisCallback = mSynthesisCallback;
+            }
+
+            TextToSpeechService.this.onSynthesizeText(mSynthesisRequest, synthesisCallback);
+
+            // Fix for case where client called .start() & .error(), but did not called .done()
+            if (synthesisCallback.hasStarted() && !synthesisCallback.hasFinished()) {
+                synthesisCallback.done();
+            }
+!!!8129541.java!!!	createSynthesisCallback() : AbstractSynthesisCallback
+            return new PlaybackSynthesisCallback(getAudioParams(),
+                    mAudioPlaybackHandler, this, getCallerIdentity(), mEventLogger, false);
+!!!8129669.java!!!	setRequestParams(inout request : SynthesisRequest) : void
+            String voiceName = getVoiceName();
+            request.setLanguage(getLanguage(), getCountry(), getVariant());
+            if (!TextUtils.isEmpty(voiceName)) {
+                request.setVoiceName(getVoiceName());
+            }
+            request.setSpeechRate(getSpeechRate());
+            request.setCallerUid(mCallerUid);
+            request.setPitch(getPitch());
+!!!8129797.java!!!	stopImpl() : void
+            AbstractSynthesisCallback synthesisCallback;
+            synchronized (this) {
+                synthesisCallback = mSynthesisCallback;
+            }
+            if (synthesisCallback != null) {
+                // If the synthesis callback is null, it implies that we haven't
+                // entered the synchronized(this) block in playImpl which in
+                // turn implies that synthesis would not have started.
+                synthesisCallback.stop();
+                TextToSpeechService.this.onStop();
+            } else {
+                dispatchOnStop();
+            }
+!!!8129925.java!!!	getCountry() : String
+            if (!hasLanguage()) return mDefaultLocale[1];
+            return getStringParam(mParams, Engine.KEY_PARAM_COUNTRY, "");
+!!!8130053.java!!!	getVariant() : String
+            if (!hasLanguage()) return mDefaultLocale[2];
+            return getStringParam(mParams, Engine.KEY_PARAM_VARIANT, "");
+!!!8130181.java!!!	getLanguage() : String
+            return getStringParam(mParams, Engine.KEY_PARAM_LANGUAGE, mDefaultLocale[0]);
+!!!8130309.java!!!	getVoiceName() : String
+            return getStringParam(mParams, Engine.KEY_PARAM_VOICE_NAME, "");

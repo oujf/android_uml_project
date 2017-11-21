@@ -1,0 +1,48 @@
+class WorkLockActivityController
+!!!3263237.java!!!	WorkLockActivityController(inout context : Context)
+        this(context, SystemServicesProxy.getInstance(context), ActivityManager.getService());
+!!!3263365.java!!!	WorkLockActivityController(inout context : Context, inout ssp : SystemServicesProxy, inout am : IActivityManager)
+        mContext = context;
+        mSsp = ssp;
+        mIam = am;
+
+        mSsp.registerTaskStackListener(mLockListener);
+!!!3263493.java!!!	startWorkChallengeInTask(in taskId : int, in userId : int) : void
+        Intent intent = new Intent(KeyguardManager.ACTION_CONFIRM_DEVICE_CREDENTIAL_WITH_USER)
+                .setComponent(new ComponentName(mContext, WorkLockActivity.class))
+                .putExtra(Intent.EXTRA_USER_ID, userId)
+                .putExtra(WorkLockActivity.EXTRA_TASK_DESCRIPTION, mSsp.getTaskDescription(taskId))
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        final ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchTaskId(taskId);
+        options.setTaskOverlay(true, false /* canResume */);
+
+        final int result = startActivityAsUser(intent, options.toBundle(), UserHandle.USER_CURRENT);
+        if (ActivityManager.isStartResultSuccessful(result)) {
+            // OK
+        } else {
+            // Starting the activity inside the task failed. We can't be sure why, so to be
+            // safe just remove the whole task if it still exists.
+            mSsp.removeTask(taskId);
+        }
+!!!3263621.java!!!	startActivityAsUser(inout intent : Intent, inout options : Bundle, in userId : int) : int
+        try {
+            return mIam.startActivityAsUser(
+                    mContext.getIApplicationThread() /*caller*/,
+                    mContext.getBasePackageName() /*callingPackage*/,
+                    intent /*intent*/,
+                    intent.resolveTypeIfNeeded(mContext.getContentResolver()) /*resolvedType*/,
+                    null /*resultTo*/,
+                    null /*resultWho*/,
+                    0 /*requestCode*/,
+                    Intent.FLAG_ACTIVITY_NEW_TASK /*flags*/,
+                    null /*profilerInfo*/,
+                    options /*options*/,
+                    userId /*user*/);
+        } catch (RemoteException e) {
+            return ActivityManager.START_CANCELED;
+        } catch (Exception e) {
+            return ActivityManager.START_CANCELED;
+        }

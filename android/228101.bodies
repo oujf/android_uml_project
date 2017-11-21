@@ -1,0 +1,194 @@
+class DeviceHalHidl
+!!!587013.cpp!!!	getSupportedDevices(inout devices : uint32_t) : status_t
+    // Obsolete.
+    return INVALID_OPERATION;
+!!!587141.cpp!!!	initCheck() : status_t
+    if (mDevice == 0) return NO_INIT;
+    return processReturn("initCheck", mDevice->initCheck());
+!!!587269.cpp!!!	setVoiceVolume(in volume : float) : status_t
+    if (mDevice == 0) return NO_INIT;
+    sp<IPrimaryDevice> primaryDev = IPrimaryDevice::castFrom(mDevice);
+    if (primaryDev == 0) return INVALID_OPERATION;
+    return processReturn("setVoiceVolume", primaryDev->setVoiceVolume(volume));
+!!!587397.cpp!!!	setMasterVolume(in volume : float) : status_t
+    if (mDevice == 0) return NO_INIT;
+    sp<IPrimaryDevice> primaryDev = IPrimaryDevice::castFrom(mDevice);
+    if (primaryDev == 0) return INVALID_OPERATION;
+    return processReturn("setMasterVolume", primaryDev->setMasterVolume(volume));
+!!!587525.cpp!!!	getMasterVolume(inout volume : float) : status_t
+    if (mDevice == 0) return NO_INIT;
+    sp<IPrimaryDevice> primaryDev = IPrimaryDevice::castFrom(mDevice);
+    if (primaryDev == 0) return INVALID_OPERATION;
+    Result retval;
+    Return<void> ret = primaryDev->getMasterVolume(
+            [&](Result r, float v) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *volume = v;
+                }
+            });
+    return processReturn("getMasterVolume", ret, retval);
+!!!587653.cpp!!!	setMode(in mode : audio_mode_t) : status_t
+    if (mDevice == 0) return NO_INIT;
+    sp<IPrimaryDevice> primaryDev = IPrimaryDevice::castFrom(mDevice);
+    if (primaryDev == 0) return INVALID_OPERATION;
+    return processReturn("setMode", primaryDev->setMode(AudioMode(mode)));
+!!!587781.cpp!!!	setMicMute(in state : bool) : status_t
+    if (mDevice == 0) return NO_INIT;
+    return processReturn("setMicMute", mDevice->setMicMute(state));
+!!!587909.cpp!!!	getMicMute(inout state : bool) : status_t
+    if (mDevice == 0) return NO_INIT;
+    Result retval;
+    Return<void> ret = mDevice->getMicMute(
+            [&](Result r, bool mute) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *state = mute;
+                }
+            });
+    return processReturn("getMicMute", ret, retval);
+!!!588037.cpp!!!	setMasterMute(in state : bool) : status_t
+    if (mDevice == 0) return NO_INIT;
+    return processReturn("setMasterMute", mDevice->setMasterMute(state));
+!!!588165.cpp!!!	getMasterMute(inout state : bool) : status_t
+    if (mDevice == 0) return NO_INIT;
+    Result retval;
+    Return<void> ret = mDevice->getMasterMute(
+            [&](Result r, bool mute) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *state = mute;
+                }
+            });
+    return processReturn("getMasterMute", ret, retval);
+!!!588293.cpp!!!	setParameters(in kvPairs : String8) : status_t
+    if (mDevice == 0) return NO_INIT;
+    hidl_vec<ParameterValue> hidlParams;
+    status_t status = parametersFromHal(kvPairs, &hidlParams);
+    if (status != OK) return status;
+    return processReturn("setParameters", mDevice->setParameters(hidlParams));
+!!!588421.cpp!!!	getParameters(in keys : String8, inout values : String8) : status_t
+    values->clear();
+    if (mDevice == 0) return NO_INIT;
+    hidl_vec<hidl_string> hidlKeys;
+    status_t status = keysFromHal(keys, &hidlKeys);
+    if (status != OK) return status;
+    Result retval;
+    Return<void> ret = mDevice->getParameters(
+            hidlKeys,
+            [&](Result r, const hidl_vec<ParameterValue>& parameters) {
+                retval = r;
+                if (retval == Result::OK) {
+                    parametersToHal(parameters, values);
+                }
+            });
+    return processReturn("getParameters", ret, retval);
+!!!588549.cpp!!!	getInputBufferSize(in config : audio_config, inout size : size_t) : status_t
+    if (mDevice == 0) return NO_INIT;
+    AudioConfig hidlConfig;
+    HidlUtils::audioConfigFromHal(*config, &hidlConfig);
+    Result retval;
+    Return<void> ret = mDevice->getInputBufferSize(
+            hidlConfig,
+            [&](Result r, uint64_t bufferSize) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *size = static_cast<size_t>(bufferSize);
+                }
+            });
+    return processReturn("getInputBufferSize", ret, retval);
+!!!588677.cpp!!!	openOutputStream(in handle : audio_io_handle_t, in devices : audio_devices_t, in flags : audio_output_flags_t, inout config : audio_config, in address : char, inout outStream : sp<StreamOutHalInterface>) : status_t
+    if (mDevice == 0) return NO_INIT;
+    DeviceAddress hidlDevice;
+    status_t status = deviceAddressFromHal(devices, address, &hidlDevice);
+    if (status != OK) return status;
+    AudioConfig hidlConfig;
+    HidlUtils::audioConfigFromHal(*config, &hidlConfig);
+    Result retval = Result::NOT_INITIALIZED;
+    Return<void> ret = mDevice->openOutputStream(
+            handle,
+            hidlDevice,
+            hidlConfig,
+            AudioOutputFlag(flags),
+            [&](Result r, const sp<IStreamOut>& result, const AudioConfig& suggestedConfig) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *outStream = new StreamOutHalHidl(result);
+                }
+                HidlUtils::audioConfigToHal(suggestedConfig, config);
+            });
+    return processReturn("openOutputStream", ret, retval);
+!!!588805.cpp!!!	openInputStream(in handle : audio_io_handle_t, in devices : audio_devices_t, inout config : audio_config, in flags : audio_input_flags_t, in address : char, in source : audio_source_t, inout inStream : sp<StreamInHalInterface>) : status_t
+    if (mDevice == 0) return NO_INIT;
+    DeviceAddress hidlDevice;
+    status_t status = deviceAddressFromHal(devices, address, &hidlDevice);
+    if (status != OK) return status;
+    AudioConfig hidlConfig;
+    HidlUtils::audioConfigFromHal(*config, &hidlConfig);
+    Result retval = Result::NOT_INITIALIZED;
+    Return<void> ret = mDevice->openInputStream(
+            handle,
+            hidlDevice,
+            hidlConfig,
+            AudioInputFlag(flags),
+            AudioSource(source),
+            [&](Result r, const sp<IStreamIn>& result, const AudioConfig& suggestedConfig) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *inStream = new StreamInHalHidl(result);
+                }
+                HidlUtils::audioConfigToHal(suggestedConfig, config);
+            });
+    return processReturn("openInputStream", ret, retval);
+!!!588933.cpp!!!	supportsAudioPatches(inout supportsPatches : bool) : status_t
+    if (mDevice == 0) return NO_INIT;
+    return processReturn("supportsAudioPatches", mDevice->supportsAudioPatches(), supportsPatches);
+!!!589061.cpp!!!	createAudioPatch(in num_sources : uint, in sources : audio_port_config, in num_sinks : uint, in sinks : audio_port_config, inout patch : audio_patch_handle_t) : status_t
+    if (mDevice == 0) return NO_INIT;
+    hidl_vec<AudioPortConfig> hidlSources, hidlSinks;
+    HidlUtils::audioPortConfigsFromHal(num_sources, sources, &hidlSources);
+    HidlUtils::audioPortConfigsFromHal(num_sinks, sinks, &hidlSinks);
+    Result retval;
+    Return<void> ret = mDevice->createAudioPatch(
+            hidlSources, hidlSinks,
+            [&](Result r, AudioPatchHandle hidlPatch) {
+                retval = r;
+                if (retval == Result::OK) {
+                    *patch = static_cast<audio_patch_handle_t>(hidlPatch);
+                }
+            });
+    return processReturn("createAudioPatch", ret, retval);
+!!!589189.cpp!!!	releaseAudioPatch(in patch : audio_patch_handle_t) : status_t
+    if (mDevice == 0) return NO_INIT;
+    return processReturn("releaseAudioPatch", mDevice->releaseAudioPatch(patch));
+!!!589317.cpp!!!	getAudioPort(inout port : audio_port) : status_t
+    if (mDevice == 0) return NO_INIT;
+    AudioPort hidlPort;
+    HidlUtils::audioPortFromHal(*port, &hidlPort);
+    Result retval;
+    Return<void> ret = mDevice->getAudioPort(
+            hidlPort,
+            [&](Result r, const AudioPort& p) {
+                retval = r;
+                if (retval == Result::OK) {
+                    HidlUtils::audioPortToHal(p, port);
+                }
+            });
+    return processReturn("getAudioPort", ret, retval);
+!!!589445.cpp!!!	setAudioPortConfig(in config : audio_port_config) : status_t
+    if (mDevice == 0) return NO_INIT;
+    AudioPortConfig hidlConfig;
+    HidlUtils::audioPortConfigFromHal(*config, &hidlConfig);
+    return processReturn("setAudioPortConfig", mDevice->setAudioPortConfig(hidlConfig));
+!!!589573.cpp!!!	dump(in fd : int) : status_t
+    if (mDevice == 0) return NO_INIT;
+    native_handle_t* hidlHandle = native_handle_create(1, 0);
+    hidlHandle->data[0] = fd;
+    Return<void> ret = mDevice->debugDump(hidlHandle);
+    native_handle_delete(hidlHandle);
+    return processReturn("dump", ret);
+!!!589829.cpp!!!	~DeviceHalHidl()
+    if (mDevice != 0) {
+        mDevice.clear();
+        hardware::IPCThreadState::self()->flushCommands();
+    }

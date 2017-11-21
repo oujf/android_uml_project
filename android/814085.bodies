@@ -1,0 +1,72 @@
+class HotspotTile
+!!!3443973.java!!!	HotspotTile(inout host : QSHost)
+        super(host);
+        mController = Dependency.get(HotspotController.class);
+        mAirplaneMode = new GlobalSetting(mContext, mHandler, Global.AIRPLANE_MODE_ON) {
+            @Override
+            protected void handleValueChanged(int value) {
+                refreshState();
+            }
+        };
+!!!3444101.java!!!	isAvailable() : boolean
+        return mController.isHotspotSupported();
+!!!3444229.java!!!	handleDestroy() : void
+        super.handleDestroy();
+!!!3444357.java!!!	newTileState() : AirplaneBooleanState
+        return new AirplaneBooleanState();
+!!!3444485.java!!!	setListening(inout listening : boolean) : void
+        if (mListening == listening) return;
+        mListening = listening;
+        if (listening) {
+            mController.addCallback(mCallback);
+            final IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+            refreshState();
+        } else {
+            mController.removeCallback(mCallback);
+        }
+        mAirplaneMode.setListening(listening);
+!!!3444613.java!!!	getLongClickIntent() : Intent
+        return new Intent(TETHER_SETTINGS);
+!!!3444741.java!!!	handleClick() : void
+        final boolean isEnabled = (Boolean) mState.value;
+        if (!isEnabled && mAirplaneMode.getValue() != 0) {
+            return;
+        }
+        mController.setHotspotEnabled(!isEnabled);
+!!!3444869.java!!!	getTileLabel() : CharSequence
+        return mContext.getString(R.string.quick_settings_hotspot_label);
+!!!3444997.java!!!	handleUpdateState(inout state : AirplaneBooleanState, inout arg : Object) : void
+        state.label = mContext.getString(R.string.quick_settings_hotspot_label);
+
+        checkIfRestrictionEnforcedByAdminOnly(state, UserManager.DISALLOW_CONFIG_TETHERING);
+        if (arg instanceof Boolean) {
+            state.value = (boolean) arg;
+        } else {
+            state.value = mController.isHotspotEnabled();
+        }
+        state.icon = !state.value ? mDisable
+                : state.isTransient ? mEnabledStatic
+                : mEnable;
+        boolean wasAirplane = state.isAirplaneMode;
+        state.isAirplaneMode = mAirplaneMode.getValue() != 0;
+        state.isTransient = mController.isHotspotTransient();
+        if (state.isTransient) {
+            state.icon = ResourceIcon.get(R.drawable.ic_hotspot_transient_animation);
+        } else if (state.isAirplaneMode) {
+            state.icon = mUnavailable;
+        } else if (wasAirplane) {
+            state.icon = mDisableNoAnimation;
+        }
+        state.expandedAccessibilityClassName = Switch.class.getName();
+        state.contentDescription = state.label;
+        state.state = state.isAirplaneMode ? Tile.STATE_UNAVAILABLE
+                : state.value || state.isTransient ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
+!!!3445125.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_HOTSPOT;
+!!!3445253.java!!!	composeChangeAnnouncement() : String
+        if (mState.value) {
+            return mContext.getString(R.string.accessibility_quick_settings_hotspot_changed_on);
+        } else {
+            return mContext.getString(R.string.accessibility_quick_settings_hotspot_changed_off);
+        }

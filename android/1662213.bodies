@@ -1,0 +1,214 @@
+class ClipboardService
+!!!11351685.java!!!	ClipboardService(inout context : Context)
+        super(context);
+
+        mAm = ActivityManager.getService();
+        mPm = getContext().getPackageManager();
+        mUm = (IUserManager) ServiceManager.getService(Context.USER_SERVICE);
+        mAppOps = (AppOpsManager) getContext().getSystemService(Context.APP_OPS_SERVICE);
+        IBinder permOwner = null;
+        try {
+            permOwner = mAm.newUriPermissionOwner("clipboard");
+        } catch (RemoteException e) {
+            Slog.w("clipboard", "AM dead", e);
+        }
+        mPermissionOwner = permOwner;
+        if (IS_EMULATOR) {
+            mHostClipboardMonitor = new HostClipboardMonitor(
+                new HostClipboardMonitor.HostClipboardCallback() {
+                    @Override
+                    public void onHostClipboardUpdated(String contents){
+                        ClipData clip =
+                            new ClipData("host clipboard",
+                                         new String[]{"text/plain"},
+                                         new ClipData.Item(contents));
+                        synchronized(mClipboards) {
+                            setPrimaryClipInternal(getClipboard(0), clip);
+                        }
+                    }
+                });
+            mHostMonitorThread = new Thread(mHostClipboardMonitor);
+            mHostMonitorThread.start();
+        }
+!!!11351813.java!!!	onStart() : void
+        publishBinderService(Context.CLIPBOARD_SERVICE, new ClipboardImpl());
+!!!11351941.java!!!	onCleanupUser(in userId : int) : void
+        synchronized (mClipboards) {
+            mClipboards.remove(userId);
+        }
+!!!11353349.java!!!	getClipboard() : ClipboardService::PerUserClipboard
+        return getClipboard(UserHandle.getCallingUserId());
+!!!11353477.java!!!	getClipboard(in userId : int) : ClipboardService::PerUserClipboard
+        synchronized (mClipboards) {
+            PerUserClipboard puc = mClipboards.get(userId);
+            if (puc == null) {
+                puc = new PerUserClipboard(userId);
+                mClipboards.put(userId, puc);
+            }
+            return puc;
+        }
+!!!11353605.java!!!	getRelatedProfiles(in userId : int) : UserInfo
+        final List<UserInfo> related;
+        final long origId = Binder.clearCallingIdentity();
+        try {
+            related = mUm.getProfiles(userId, true);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Remote Exception calling UserManager: " + e);
+            return null;
+        } finally{
+            Binder.restoreCallingIdentity(origId);
+        }
+        return related;
+!!!11353733.java!!!	setPrimaryClipInternal(inout clipboard : ClipboardService::PerUserClipboard, inout clip : ClipData) : void
+        clipboard.activePermissionOwners.clear();
+        if (clip == null && clipboard.primaryClip == null) {
+            return;
+        }
+        clipboard.primaryClip = clip;
+        if (clip != null) {
+            final ClipDescription description = clip.getDescription();
+            if (description != null) {
+                description.setTimestamp(System.currentTimeMillis());
+            }
+        }
+        final long ident = Binder.clearCallingIdentity();
+        final int n = clipboard.primaryClipListeners.beginBroadcast();
+        try {
+            for (int i = 0; i < n; i++) {
+                try {
+                    ListenerInfo li = (ListenerInfo)
+                            clipboard.primaryClipListeners.getBroadcastCookie(i);
+
+                    if (clipboardAccessAllowed(AppOpsManager.OP_READ_CLIPBOARD, li.mPackageName,
+                                li.mUid)) {
+                        clipboard.primaryClipListeners.getBroadcastItem(i)
+                                .dispatchPrimaryClipChanged();
+                    }
+                } catch (RemoteException e) {
+                    // The RemoteCallbackList will take care of removing
+                    // the dead object for us.
+                }
+            }
+        } finally {
+            clipboard.primaryClipListeners.finishBroadcast();
+            Binder.restoreCallingIdentity(ident);
+        }
+!!!11353861.java!!!	checkUriOwnerLocked(inout uri : Uri, in uid : int) : void
+        if (!"content".equals(uri.getScheme())) {
+            return;
+        }
+        long ident = Binder.clearCallingIdentity();
+        try {
+            // This will throw SecurityException for us.
+            mAm.checkGrantUriPermission(uid, null, ContentProvider.getUriWithoutUserId(uri),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    ContentProvider.getUserIdFromUri(uri, UserHandle.getUserId(uid)));
+        } catch (RemoteException e) {
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+!!!11353989.java!!!	checkItemOwnerLocked(inout item : ClipData::Item, in uid : int) : void
+        if (item.getUri() != null) {
+            checkUriOwnerLocked(item.getUri(), uid);
+        }
+        Intent intent = item.getIntent();
+        if (intent != null && intent.getData() != null) {
+            checkUriOwnerLocked(intent.getData(), uid);
+        }
+!!!11354117.java!!!	checkDataOwnerLocked(inout data : ClipData, in uid : int) : void
+        final int N = data.getItemCount();
+        for (int i=0; i<N; i++) {
+            checkItemOwnerLocked(data.getItemAt(i), uid);
+        }
+!!!11354245.java!!!	grantUriLocked(inout uri : Uri, in pkg : String, in userId : int) : void
+        long ident = Binder.clearCallingIdentity();
+        try {
+            int sourceUserId = ContentProvider.getUserIdFromUri(uri, userId);
+            uri = ContentProvider.getUriWithoutUserId(uri);
+            mAm.grantUriPermissionFromOwner(mPermissionOwner, Process.myUid(), pkg,
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION, sourceUserId, userId);
+        } catch (RemoteException e) {
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+!!!11354373.java!!!	grantItemLocked(inout item : ClipData::Item, in pkg : String, in userId : int) : void
+        if (item.getUri() != null) {
+            grantUriLocked(item.getUri(), pkg, userId);
+        }
+        Intent intent = item.getIntent();
+        if (intent != null && intent.getData() != null) {
+            grantUriLocked(intent.getData(), pkg, userId);
+        }
+!!!11354501.java!!!	addActiveOwnerLocked(in uid : int, in pkg : String) : void
+        final IPackageManager pm = AppGlobals.getPackageManager();
+        final int targetUserHandle = UserHandle.getCallingUserId();
+        final long oldIdentity = Binder.clearCallingIdentity();
+        try {
+            PackageInfo pi = pm.getPackageInfo(pkg, 0, targetUserHandle);
+            if (pi == null) {
+                throw new IllegalArgumentException("Unknown package " + pkg);
+            }
+            if (!UserHandle.isSameApp(pi.applicationInfo.uid, uid)) {
+                throw new SecurityException("Calling uid " + uid
+                        + " does not own package " + pkg);
+            }
+        } catch (RemoteException e) {
+            // Can't happen; the package manager is in the same process
+        } finally {
+            Binder.restoreCallingIdentity(oldIdentity);
+        }
+        PerUserClipboard clipboard = getClipboard();
+        if (clipboard.primaryClip != null && !clipboard.activePermissionOwners.contains(pkg)) {
+            final int N = clipboard.primaryClip.getItemCount();
+            for (int i=0; i<N; i++) {
+                grantItemLocked(clipboard.primaryClip.getItemAt(i), pkg, UserHandle.getUserId(uid));
+            }
+            clipboard.activePermissionOwners.add(pkg);
+        }
+!!!11354629.java!!!	revokeUriLocked(inout uri : Uri) : void
+        int userId = ContentProvider.getUserIdFromUri(uri,
+                UserHandle.getUserId(Binder.getCallingUid()));
+        long ident = Binder.clearCallingIdentity();
+        try {
+            uri = ContentProvider.getUriWithoutUserId(uri);
+            mAm.revokeUriPermissionFromOwner(mPermissionOwner, uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    userId);
+        } catch (RemoteException e) {
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+!!!11354757.java!!!	revokeItemLocked(inout item : ClipData::Item) : void
+        if (item.getUri() != null) {
+            revokeUriLocked(item.getUri());
+        }
+        Intent intent = item.getIntent();
+        if (intent != null && intent.getData() != null) {
+            revokeUriLocked(intent.getData());
+        }
+!!!11354885.java!!!	revokeUris(inout clipboard : ClipboardService::PerUserClipboard) : void
+        if (clipboard.primaryClip == null) {
+            return;
+        }
+        final int N = clipboard.primaryClip.getItemCount();
+        for (int i=0; i<N; i++) {
+            revokeItemLocked(clipboard.primaryClip.getItemAt(i));
+        }
+!!!11355013.java!!!	clipboardAccessAllowed(in op : int, in callingPackage : String, in callingUid : int) : boolean
+        // Check the AppOp.
+        if (mAppOps.checkOp(op, callingUid, callingPackage) != AppOpsManager.MODE_ALLOWED) {
+            return false;
+        }
+        try {
+            // Installed apps can access the clipboard at any time.
+            if (!AppGlobals.getPackageManager().isInstantApp(callingPackage,
+                        UserHandle.getUserId(callingUid))) {
+                return true;
+            }
+            // Instant apps can only access the clipboard if they are in the foreground.
+            return mAm.isAppForeground(callingUid);
+        } catch (RemoteException e) {
+            Slog.e("clipboard", "Failed to get Instant App status for package " + callingPackage,
+                    e);
+            return false;
+        }

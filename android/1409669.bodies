@@ -1,0 +1,343 @@
+class EncodedBuffer
+!!!8544901.java!!!	EncodedBuffer()
+        this(0);
+!!!8545029.java!!!	EncodedBuffer(in chunkSize : int)
+        if (chunkSize <= 0) {
+            chunkSize = 8 * 1024;
+        }
+        mChunkSize = chunkSize;
+        mWriteBuffer = new byte[mChunkSize];
+        mBuffers.add(mWriteBuffer);
+        mBufferCount = 1;
+!!!8545157.java!!!	startEditing() : void
+        mReadableSize = ((mWriteBufIndex) * mChunkSize) + mWriteIndex;
+        mReadLimit = mWriteIndex;
+
+        mWriteBuffer = mBuffers.get(0);
+        mWriteIndex = 0;
+        mWriteBufIndex = 0;
+
+        mReadBuffer = mWriteBuffer;
+        mReadBufIndex = 0;
+        mReadIndex = 0;
+!!!8545285.java!!!	rewindRead() : void
+        mReadBuffer = mBuffers.get(0);
+        mReadBufIndex = 0;
+        mReadIndex = 0;
+!!!8545413.java!!!	getReadableSize() : int
+        return mReadableSize;
+!!!8545541.java!!!	getReadPos() : int
+        return ((mReadBufIndex) * mChunkSize) + mReadIndex;
+!!!8545669.java!!!	skipRead(in amount : int) : void
+        if (amount < 0) {
+            throw new RuntimeException("skipRead with negative amount=" + amount);
+        }
+        if (amount == 0) {
+            return;
+        }
+        if (amount <= mChunkSize - mReadIndex) {
+            mReadIndex += amount;
+        } else {
+            amount -= mChunkSize - mReadIndex;
+            mReadIndex = amount % mChunkSize;
+            if (mReadIndex == 0) {
+                mReadIndex = mChunkSize;
+                mReadBufIndex += (amount / mChunkSize);
+            } else {
+                mReadBufIndex += 1 + (amount / mChunkSize);
+            }
+            mReadBuffer = mBuffers.get(mReadBufIndex);
+        }
+!!!8545797.java!!!	readRawByte() : byte
+        if (mReadBufIndex > mBufferCount
+                || (mReadBufIndex == mBufferCount - 1 && mReadIndex >= mReadLimit)) {
+            throw new IndexOutOfBoundsException("Trying to read too much data"
+                    + " mReadBufIndex=" + mReadBufIndex + " mBufferCount=" + mBufferCount
+                    + " mReadIndex=" + mReadIndex + " mReadLimit=" + mReadLimit);
+        }
+        if (mReadIndex >= mChunkSize) {
+            mReadBufIndex++;
+            mReadBuffer = mBuffers.get(mReadBufIndex);
+            mReadIndex = 0;
+        }
+        return mReadBuffer[mReadIndex++];
+!!!8545925.java!!!	readRawUnsigned() : long
+        int bits = 0;
+        long result = 0;
+        while (true) {
+            final byte b = readRawByte();
+            result |= ((long)(b & 0x7F)) << bits;
+            if ((b & 0x80) == 0) {
+                return result;
+            }
+            bits += 7;
+            if (bits > 64) {
+                throw new ProtoParseException("Varint too long -- " + getDebugString());
+            }
+        }
+!!!8546053.java!!!	readRawFixed32() : int
+        return (readRawByte() & 0x0ff)
+                | ((readRawByte() & 0x0ff) << 8)
+                | ((readRawByte() & 0x0ff) << 16)
+                | ((readRawByte() & 0x0ff) << 24);
+!!!8546181.java!!!	nextWriteBuffer() : void
+        mWriteBufIndex++;
+        if (mWriteBufIndex >= mBufferCount) {
+            mWriteBuffer = new byte[mChunkSize];
+            mBuffers.add(mWriteBuffer);
+            mBufferCount++;
+        } else {
+            mWriteBuffer = mBuffers.get(mWriteBufIndex);
+        }
+        mWriteIndex = 0;
+!!!8546309.java!!!	writeRawByte(in val : byte) : void
+        if (mWriteIndex >= mChunkSize) {
+            nextWriteBuffer();
+        }
+        mWriteBuffer[mWriteIndex++] = val;
+!!!8546437.java!!!	getRawVarint32Size(in val : int) : int
+        if ((val & (0xffffffff << 7)) == 0) return 1;
+        if ((val & (0xffffffff << 14)) == 0) return 2;
+        if ((val & (0xffffffff << 21)) == 0) return 3;
+        if ((val & (0xffffffff << 28)) == 0) return 4;
+        return 5;
+!!!8546565.java!!!	writeRawVarint32(in val : int) : void
+        while (true) {
+            if ((val & ~0x7F) == 0) {
+                writeRawByte((byte)val);
+                return;
+            } else {
+                writeRawByte((byte)((val & 0x7F) | 0x80));
+                val >>>= 7;
+            }
+        }
+!!!8546693.java!!!	getRawZigZag32Size(in val : int) : int
+        return getRawVarint32Size(zigZag32(val));
+!!!8546821.java!!!	writeRawZigZag32(in val : int) : void
+        writeRawVarint32(zigZag32(val));
+!!!8546949.java!!!	getRawVarint64Size(in val : long) : int
+        if ((val & (0xffffffffffffffffL << 7)) == 0) return 1;
+        if ((val & (0xffffffffffffffffL << 14)) == 0) return 2;
+        if ((val & (0xffffffffffffffffL << 21)) == 0) return 3;
+        if ((val & (0xffffffffffffffffL << 28)) == 0) return 4;
+        if ((val & (0xffffffffffffffffL << 35)) == 0) return 5;
+        if ((val & (0xffffffffffffffffL << 42)) == 0) return 6;
+        if ((val & (0xffffffffffffffffL << 49)) == 0) return 7;
+        if ((val & (0xffffffffffffffffL << 56)) == 0) return 8;
+        if ((val & (0xffffffffffffffffL << 63)) == 0) return 9;
+        return 10;
+!!!8547077.java!!!	writeRawVarint64(in val : long) : void
+        while (true) {
+            if ((val & ~0x7FL) == 0) {
+                writeRawByte((byte)val);
+                return;
+            } else {
+                writeRawByte((byte)((val & 0x7F) | 0x80));
+                val >>>= 7;
+            }
+        }
+!!!8547205.java!!!	getRawZigZag64Size(in val : long) : int
+        return getRawVarint64Size(zigZag64(val));
+!!!8547333.java!!!	writeRawZigZag64(in val : long) : void
+        writeRawVarint64(zigZag64(val));
+!!!8547461.java!!!	writeRawFixed32(in val : int) : void
+        writeRawByte((byte)(val));
+        writeRawByte((byte)(val >> 8));
+        writeRawByte((byte)(val >> 16));
+        writeRawByte((byte)(val >> 24));
+!!!8547589.java!!!	writeRawFixed64(in val : long) : void
+        writeRawByte((byte)(val));
+        writeRawByte((byte)(val >> 8));
+        writeRawByte((byte)(val >> 16));
+        writeRawByte((byte)(val >> 24));
+        writeRawByte((byte)(val >> 32));
+        writeRawByte((byte)(val >> 40));
+        writeRawByte((byte)(val >> 48));
+        writeRawByte((byte)(val >> 56));
+!!!8547717.java!!!	writeRawBuffer(inout val : byte [[]]) : void
+        if (val != null && val.length > 0) {
+            writeRawBuffer(val, 0, val.length);
+        }
+!!!8547845.java!!!	writeRawBuffer(inout val : byte [[]], in offset : int, in length : int) : void
+        if (val == null) {
+            return;
+        }
+        // Write up to the amount left in the first chunk to write.
+        int amt = length < (mChunkSize - mWriteIndex) ? length : (mChunkSize - mWriteIndex);
+        if (amt > 0) {
+            System.arraycopy(val, offset, mWriteBuffer, mWriteIndex, amt);
+            mWriteIndex += amt;
+            length -= amt;
+            offset += amt;
+        }
+        while (length > 0) {
+            // We know we're now at the beginning of a chunk
+            nextWriteBuffer();
+            amt = length < mChunkSize ? length : mChunkSize;
+            System.arraycopy(val, offset, mWriteBuffer, mWriteIndex, amt);
+            mWriteIndex += amt;
+            length -= amt;
+            offset += amt;
+        }
+!!!8547973.java!!!	writeFromThisBuffer(in srcOffset : int, in size : int) : void
+        if (mReadLimit < 0) {
+            throw new IllegalStateException("writeFromThisBuffer before startEditing");
+        }
+        if (srcOffset < getWritePos()) {
+            throw new IllegalArgumentException("Can only move forward in the buffer --"
+                    + " srcOffset=" + srcOffset + " size=" + size + " " + getDebugString());
+        }
+        if (srcOffset + size > mReadableSize) {
+            throw new IllegalArgumentException("Trying to move more data than there is --"
+                    + " srcOffset=" + srcOffset + " size=" + size + " " + getDebugString());
+        }
+        if (size == 0) {
+            return;
+        }
+        if (srcOffset == ((mWriteBufIndex) * mChunkSize) + mWriteIndex /* write pos */) {
+            // Writing to the same location. Just advance the write pointer.  We already
+            // checked that size is in bounds, so we don't need to do any more range
+            // checking.
+            if (size <= mChunkSize - mWriteIndex) {
+                mWriteIndex += size;
+            } else {
+                size -= mChunkSize - mWriteIndex;
+                mWriteIndex = size % mChunkSize;
+                if (mWriteIndex == 0) {
+                    // Roll it back so nextWriteBuffer can do its job
+                    // on the next call (also makes mBuffers.get() not
+                    // fail if we're at the end).
+                    mWriteIndex = mChunkSize;
+                    mWriteBufIndex += (size / mChunkSize);
+                } else {
+                    mWriteBufIndex += 1 + (size / mChunkSize);
+                }
+                mWriteBuffer = mBuffers.get(mWriteBufIndex);
+            }
+        } else {
+            // Loop through the buffer, copying as much as we can each time.
+            // We already bounds checked so we don't need to do it again here,
+            // and nextWriteBuffer will never allocate.
+            int readBufIndex = srcOffset / mChunkSize;
+            byte[] readBuffer = mBuffers.get(readBufIndex);
+            int readIndex = srcOffset % mChunkSize;
+            while (size > 0) {
+                if (mWriteIndex >= mChunkSize) {
+                    nextWriteBuffer();
+                }
+                if (readIndex >= mChunkSize) {
+                    readBufIndex++;
+                    readBuffer = mBuffers.get(readBufIndex);
+                    readIndex = 0;
+                }
+                final int spaceInWriteBuffer = mChunkSize - mWriteIndex;
+                final int availableInReadBuffer = mChunkSize - readIndex;
+                final int amt = Math.min(size, Math.min(spaceInWriteBuffer, availableInReadBuffer));
+                System.arraycopy(readBuffer, readIndex, mWriteBuffer, mWriteIndex, amt);
+                mWriteIndex += amt;
+                readIndex += amt;
+                size -= amt;
+            }
+        }
+!!!8548101.java!!!	getWritePos() : int
+        return ((mWriteBufIndex) * mChunkSize) + mWriteIndex;
+!!!8548229.java!!!	rewindWriteTo(in writePos : int) : void
+        if (writePos > getWritePos()) {
+            throw new RuntimeException("rewindWriteTo only can go backwards" + writePos);
+        }
+        mWriteBufIndex = writePos / mChunkSize;
+        mWriteIndex = writePos % mChunkSize;
+        if (mWriteIndex == 0 && mWriteBufIndex != 0) {
+            // Roll back so nextWriteBuffer can do its job on the next call
+            // but at the first write we're at 0.
+            mWriteIndex = mChunkSize;
+            mWriteBufIndex--;
+        }
+        mWriteBuffer = mBuffers.get(mWriteBufIndex);
+!!!8548357.java!!!	getRawFixed32At(in pos : int) : int
+        return (0x00ff & (int)mBuffers.get(pos / mChunkSize)[pos % mChunkSize])
+                | ((0x0ff & (int)mBuffers.get((pos+1) / mChunkSize)[(pos+1) % mChunkSize]) << 8)
+                | ((0x0ff & (int)mBuffers.get((pos+2) / mChunkSize)[(pos+2) % mChunkSize]) << 16)
+                | ((0x0ff & (int)mBuffers.get((pos+3) / mChunkSize)[(pos+3) % mChunkSize]) << 24);
+!!!8548485.java!!!	editRawFixed32(in pos : int, in val : int) : void
+        mBuffers.get(pos / mChunkSize)[pos % mChunkSize] = (byte)(val);
+        mBuffers.get((pos+1) / mChunkSize)[(pos+1) % mChunkSize] = (byte)(val >> 8);
+        mBuffers.get((pos+2) / mChunkSize)[(pos+2) % mChunkSize] = (byte)(val >> 16);
+        mBuffers.get((pos+3) / mChunkSize)[(pos+3) % mChunkSize] = (byte)(val >> 24);
+!!!8548613.java!!!	zigZag32(in val : int) : int
+        return (val << 1) ^ (val >> 31);
+!!!8548741.java!!!	zigZag64(in val : long) : long
+        return (val << 1) ^ (val >> 63);
+!!!8548869.java!!!	getBytes(in size : int) : byte
+        final byte[] result = new byte[size];
+
+        final int bufCount = size / mChunkSize;
+        int bufIndex;
+        int writeIndex = 0;
+
+        for (bufIndex=0; bufIndex<bufCount; bufIndex++) {
+            System.arraycopy(mBuffers.get(bufIndex), 0, result, writeIndex, mChunkSize);
+            writeIndex += mChunkSize;
+        }
+
+        final int lastSize = size - (bufCount * mChunkSize);
+        if (lastSize > 0) {
+            System.arraycopy(mBuffers.get(bufIndex), 0, result, writeIndex, lastSize);
+        }
+
+        return result;
+!!!8548997.java!!!	getChunkCount() : int
+        return mBuffers.size();
+!!!8549125.java!!!	getWriteIndex() : int
+        return mWriteIndex;
+!!!8549253.java!!!	getWriteBufIndex() : int
+        return mWriteBufIndex;
+!!!8549381.java!!!	getDebugString() : String
+        return "EncodedBuffer( mChunkSize=" + mChunkSize + " mBuffers.size=" + mBuffers.size()
+                + " mBufferCount=" + mBufferCount + " mWriteIndex=" + mWriteIndex
+                + " mWriteBufIndex=" + mWriteBufIndex + " mReadBufIndex=" + mReadBufIndex
+                + " mReadIndex=" + mReadIndex + " mReadableSize=" + mReadableSize
+                + " mReadLimit=" + mReadLimit + " )";
+!!!8549509.java!!!	dumpBuffers(in tag : String) : void
+        final int N = mBuffers.size();
+        int start = 0;
+        for (int i=0; i<N; i++) {
+            start += dumpByteString(tag, "{" + i + "} ", start, mBuffers.get(i));
+        }
+!!!8549637.java!!!	dumpByteString(in tag : String, in prefix : String, inout buf : byte [[]]) : void
+        dumpByteString(tag, prefix, 0, buf);
+!!!8549765.java!!!	dumpByteString(in tag : String, in prefix : String, in start : int, inout buf : byte [[]]) : int
+        StringBuffer sb = new StringBuffer();
+        final int length = buf.length;
+        final int lineLen = 16;
+        int i;
+        for (i=0; i<length; i++) {
+            if (i % lineLen == 0) {
+                if (i != 0) {
+                    Log.d(tag, sb.toString());
+                    sb = new StringBuffer();
+                }
+                sb.append(prefix);
+                sb.append('[');
+                sb.append(start + i);
+                sb.append(']');
+                sb.append(' ');
+            } else {
+                sb.append(' ');
+            }
+            byte b = buf[i];
+            byte c = (byte)((b >> 4) & 0x0f);
+            if (c < 10) {
+                sb.append((char)('0' + c));
+            } else {
+                sb.append((char)('a' - 10 + c));
+            }
+            byte d = (byte)(b & 0x0f);
+            if (d < 10) {
+                sb.append((char)('0' + d));
+            } else {
+                sb.append((char)('a' - 10 + d));
+            }
+        }
+        Log.d(tag, sb.toString());
+        return length;

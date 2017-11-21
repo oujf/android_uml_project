@@ -1,0 +1,142 @@
+class TrackedViews
+!!!4789253.java!!!	isInSet(inout set : ArraySet, inout value : T) : boolean
+            return set != null && set.contains(value);
+!!!4789381.java!!!	addToSet(inout set : ArraySet, inout valueToAdd : T) : ArraySet
+            if (set == null) {
+                set = new ArraySet<>(1);
+            }
+
+            set.add(valueToAdd);
+
+            return set;
+!!!4789509.java!!!	removeFromSet(inout set : ArraySet, inout valueToRemove : T) : ArraySet
+            if (set == null) {
+                return null;
+            }
+
+            set.remove(valueToRemove);
+
+            if (set.isEmpty()) {
+                return null;
+            }
+
+            return set;
+!!!4789637.java!!!	TrackedViews(inout trackedIds : AutofillId [[]])
+            final AutofillClient client = getClientLocked();
+            if (trackedIds != null && client != null) {
+                final boolean[] isVisible;
+
+                if (client.isVisibleForAutofill()) {
+                    isVisible = client.getViewVisibility(getViewIds(trackedIds));
+                } else {
+                    // All false
+                    isVisible = new boolean[trackedIds.length];
+                }
+
+                final int numIds = trackedIds.length;
+                for (int i = 0; i < numIds; i++) {
+                    final AutofillId id = trackedIds[i];
+
+                    if (isVisible[i]) {
+                        mVisibleTrackedIds = addToSet(mVisibleTrackedIds, id);
+                    } else {
+                        mInvisibleTrackedIds = addToSet(mInvisibleTrackedIds, id);
+                    }
+                }
+            }
+
+            if (sVerbose) {
+                Log.v(TAG, "TrackedViews(trackedIds=" + trackedIds + "): "
+                        + " mVisibleTrackedIds=" + mVisibleTrackedIds
+                        + " mInvisibleTrackedIds=" + mInvisibleTrackedIds);
+            }
+
+            if (mVisibleTrackedIds == null) {
+                finishSessionLocked();
+            }
+!!!4789765.java!!!	notifyViewVisibilityChange(inout view : View, inout isVisible : boolean) : void
+            AutofillId id = getAutofillId(view);
+            AutofillClient client = getClientLocked();
+
+            if (sDebug) {
+                Log.d(TAG, "notifyViewVisibilityChange(): id=" + id + " isVisible="
+                        + isVisible);
+            }
+
+            if (client != null && client.isVisibleForAutofill()) {
+                if (isVisible) {
+                    if (isInSet(mInvisibleTrackedIds, id)) {
+                        mInvisibleTrackedIds = removeFromSet(mInvisibleTrackedIds, id);
+                        mVisibleTrackedIds = addToSet(mVisibleTrackedIds, id);
+                    }
+                } else {
+                    if (isInSet(mVisibleTrackedIds, id)) {
+                        mVisibleTrackedIds = removeFromSet(mVisibleTrackedIds, id);
+                        mInvisibleTrackedIds = addToSet(mInvisibleTrackedIds, id);
+                    }
+                }
+            }
+
+            if (mVisibleTrackedIds == null) {
+                if (sVerbose) {
+                    Log.v(TAG, "No more visible ids. Invisibile = " + mInvisibleTrackedIds);
+                }
+                finishSessionLocked();
+            }
+!!!4789893.java!!!	onVisibleForAutofillLocked() : void
+            // The visibility of the views might have changed while the client was not be visible,
+            // hence update the visibility state for all views.
+            AutofillClient client = getClientLocked();
+            ArraySet<AutofillId> updatedVisibleTrackedIds = null;
+            ArraySet<AutofillId> updatedInvisibleTrackedIds = null;
+            if (client != null) {
+                if (mInvisibleTrackedIds != null) {
+                    final ArrayList<AutofillId> orderedInvisibleIds =
+                            new ArrayList<>(mInvisibleTrackedIds);
+                    final boolean[] isVisible = client.getViewVisibility(
+                            getViewIds(orderedInvisibleIds));
+
+                    final int numInvisibleTrackedIds = orderedInvisibleIds.size();
+                    for (int i = 0; i < numInvisibleTrackedIds; i++) {
+                        final AutofillId id = orderedInvisibleIds.get(i);
+                        if (isVisible[i]) {
+                            updatedVisibleTrackedIds = addToSet(updatedVisibleTrackedIds, id);
+
+                            if (sDebug) {
+                                Log.d(TAG, "onVisibleForAutofill() " + id + " became visible");
+                            }
+                        } else {
+                            updatedInvisibleTrackedIds = addToSet(updatedInvisibleTrackedIds, id);
+                        }
+                    }
+                }
+
+                if (mVisibleTrackedIds != null) {
+                    final ArrayList<AutofillId> orderedVisibleIds =
+                            new ArrayList<>(mVisibleTrackedIds);
+                    final boolean[] isVisible = client.getViewVisibility(
+                            getViewIds(orderedVisibleIds));
+
+                    final int numVisibleTrackedIds = orderedVisibleIds.size();
+                    for (int i = 0; i < numVisibleTrackedIds; i++) {
+                        final AutofillId id = orderedVisibleIds.get(i);
+
+                        if (isVisible[i]) {
+                            updatedVisibleTrackedIds = addToSet(updatedVisibleTrackedIds, id);
+                        } else {
+                            updatedInvisibleTrackedIds = addToSet(updatedInvisibleTrackedIds, id);
+
+                            if (sDebug) {
+                                Log.d(TAG, "onVisibleForAutofill() " + id + " became invisible");
+                            }
+                        }
+                    }
+                }
+
+                mInvisibleTrackedIds = updatedInvisibleTrackedIds;
+                mVisibleTrackedIds = updatedVisibleTrackedIds;
+            }
+
+            if (mVisibleTrackedIds == null) {
+                finishSessionLocked();
+            }

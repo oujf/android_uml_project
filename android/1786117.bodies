@@ -1,0 +1,448 @@
+class Task
+!!!12742277.java!!!	Task(in taskId : int, inout stack : TaskStack, in userId : int, inout service : WindowManagerService, inout bounds : Rect, inout overrideConfig : Configuration, in resizeMode : int, inout supportsPictureInPicture : boolean, inout homeTask : boolean, inout taskDescription : ActivityManager::TaskDescription, inout controller : TaskWindowContainerController)
+        mTaskId = taskId;
+        mStack = stack;
+        mUserId = userId;
+        mService = service;
+        mResizeMode = resizeMode;
+        mSupportsPictureInPicture = supportsPictureInPicture;
+        mHomeTask = homeTask;
+        setController(controller);
+        setBounds(bounds, overrideConfig);
+        mTaskDescription = taskDescription;
+
+        // Tasks have no set orientation value (including SCREEN_ORIENTATION_UNSPECIFIED).
+        setOrientation(SCREEN_ORIENTATION_UNSET);
+!!!12742405.java!!!	getDisplayContent() : DisplayContent
+        return mStack != null ? mStack.getDisplayContent() : null;
+!!!12742533.java!!!	getAdjustedAddPosition(in suggestedPosition : int) : int
+        final int size = mChildren.size();
+        if (suggestedPosition >= size) {
+            return Math.min(size, suggestedPosition);
+        }
+
+        for (int pos = 0; pos < size && pos < suggestedPosition; ++pos) {
+            // TODO: Confirm that this is the behavior we want long term.
+            if (mChildren.get(pos).removed) {
+                // suggestedPosition assumes removed tokens are actually gone.
+                ++suggestedPosition;
+            }
+        }
+        return Math.min(size, suggestedPosition);
+!!!12742661.java!!!	addChild(inout wtoken : AppWindowToken, in position : int) : void
+        position = getAdjustedAddPosition(position);
+        super.addChild(wtoken, position);
+        mDeferRemoval = false;
+!!!12742789.java!!!	positionChildAt(in position : int, inout child : AppWindowToken, inout includingParents : boolean) : void
+        position = getAdjustedAddPosition(position);
+        super.positionChildAt(position, child, includingParents);
+        mDeferRemoval = false;
+!!!12742917.java!!!	hasWindowsAlive() : boolean
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            if (mChildren.get(i).hasWindowsAlive()) {
+                return true;
+            }
+        }
+        return false;
+!!!12743045.java!!!	shouldDeferRemoval() : boolean
+        // TODO: This should probably return false if mChildren.isEmpty() regardless if the stack
+        // is animating...
+        return hasWindowsAlive() && mStack.isAnimating();
+!!!12743173.java!!!	removeIfPossible() : void
+        if (shouldDeferRemoval()) {
+            if (DEBUG_STACK) Slog.i(TAG, "removeTask: deferring removing taskId=" + mTaskId);
+            mDeferRemoval = true;
+            return;
+        }
+        removeImmediately();
+!!!12743301.java!!!	removeImmediately() : void
+        if (DEBUG_STACK) Slog.i(TAG, "removeTask: removing taskId=" + mTaskId);
+        EventLog.writeEvent(WM_TASK_REMOVED, mTaskId, "removeTask");
+        mDeferRemoval = false;
+
+        // Make sure to remove dim layer user first before removing task its from parent.
+        DisplayContent content = getDisplayContent();
+        if (content != null) {
+            content.mDimLayerController.removeDimLayerUser(this);
+        }
+
+        super.removeImmediately();
+!!!12743429.java!!!	reparent(inout stack : TaskStack, in position : int, inout moveParents : boolean) : void
+        if (stack == mStack) {
+            throw new IllegalArgumentException(
+                    "task=" + this + " already child of stack=" + mStack);
+        }
+        if (DEBUG_STACK) Slog.i(TAG, "reParentTask: removing taskId=" + mTaskId
+                + " from stack=" + mStack);
+        EventLog.writeEvent(WM_TASK_REMOVED, mTaskId, "reParentTask");
+        final DisplayContent prevDisplayContent = getDisplayContent();
+
+        // If we are moving from the fullscreen stack to the pinned stack
+        // then we want to preserve our insets so that there will not
+        // be a jump in the area covered by system decorations. We rely
+        // on the pinned animation to later unset this value.
+        if (stack.mStackId == PINNED_STACK_ID) {
+            mPreserveNonFloatingState = true;
+        } else {
+            mPreserveNonFloatingState = false;
+        }
+
+        getParent().removeChild(this);
+        stack.addTask(this, position, showForAllUsers(), moveParents);
+
+        // Relayout display(s).
+        final DisplayContent displayContent = stack.getDisplayContent();
+        displayContent.setLayoutNeeded();
+        if (prevDisplayContent != displayContent) {
+            onDisplayChanged(displayContent);
+            prevDisplayContent.setLayoutNeeded();
+        }
+!!!12743557.java!!!	positionAt(in position : int, inout bounds : Rect, inout overrideConfig : Configuration) : void
+        mStack.positionChildAt(position, this, false /* includingParents */);
+        resizeLocked(bounds, overrideConfig, false /* force */);
+!!!12743685.java!!!	onParentSet() : void
+        // Update task bounds if needed.
+        updateDisplayInfo(getDisplayContent());
+
+        if (StackId.windowsAreScaleable(mStack.mStackId)) {
+            // We force windows out of SCALING_MODE_FREEZE so that we can continue to animate them
+            // while a resize is pending.
+            forceWindowsScaleable(true /* force */);
+        } else {
+            forceWindowsScaleable(false /* force */);
+        }
+!!!12743813.java!!!	removeChild(inout token : AppWindowToken) : void
+        if (!mChildren.contains(token)) {
+            Slog.e(TAG, "removeChild: token=" + this + " not found.");
+            return;
+        }
+
+        super.removeChild(token);
+
+        if (mChildren.isEmpty()) {
+            EventLog.writeEvent(WM_TASK_REMOVED, mTaskId, "removeAppToken: last token");
+            if (mDeferRemoval) {
+                removeIfPossible();
+            }
+        }
+!!!12743941.java!!!	setSendingToBottom(inout toBottom : boolean) : void
+        for (int appTokenNdx = 0; appTokenNdx < mChildren.size(); appTokenNdx++) {
+            mChildren.get(appTokenNdx).sendingToBottom = toBottom;
+        }
+!!!12744069.java!!!	setBounds(inout bounds : Rect, inout overrideConfig : Configuration) : int
+        if (overrideConfig == null) {
+            overrideConfig = Configuration.EMPTY;
+        }
+        if (bounds == null && !Configuration.EMPTY.equals(overrideConfig)) {
+            throw new IllegalArgumentException("null bounds but non empty configuration: "
+                    + overrideConfig);
+        }
+        if (bounds != null && Configuration.EMPTY.equals(overrideConfig)) {
+            throw new IllegalArgumentException("non null bounds, but empty configuration");
+        }
+        boolean oldFullscreen = mFillsParent;
+        int rotation = Surface.ROTATION_0;
+        final DisplayContent displayContent = mStack.getDisplayContent();
+        if (displayContent != null) {
+            displayContent.getLogicalDisplayRect(mTmpRect);
+            rotation = displayContent.getDisplayInfo().rotation;
+            mFillsParent = bounds == null;
+            if (mFillsParent) {
+                bounds = mTmpRect;
+            }
+        }
+
+        if (bounds == null) {
+            // Can't set to fullscreen if we don't have a display to get bounds from...
+            return BOUNDS_CHANGE_NONE;
+        }
+        if (mBounds.equals(bounds) && oldFullscreen == mFillsParent && mRotation == rotation) {
+            return BOUNDS_CHANGE_NONE;
+        }
+
+        int boundsChange = BOUNDS_CHANGE_NONE;
+        if (mBounds.left != bounds.left || mBounds.top != bounds.top) {
+            boundsChange |= BOUNDS_CHANGE_POSITION;
+        }
+        if (mBounds.width() != bounds.width() || mBounds.height() != bounds.height()) {
+            boundsChange |= BOUNDS_CHANGE_SIZE;
+        }
+
+        mBounds.set(bounds);
+
+        mRotation = rotation;
+        if (displayContent != null) {
+            displayContent.mDimLayerController.updateDimLayer(this);
+        }
+        onOverrideConfigurationChanged(mFillsParent ? Configuration.EMPTY : overrideConfig);
+        return boundsChange;
+!!!12744197.java!!!	setTempInsetBounds(inout tempInsetBounds : Rect) : void
+        if (tempInsetBounds != null) {
+            mTempInsetBounds.set(tempInsetBounds);
+        } else {
+            mTempInsetBounds.setEmpty();
+        }
+!!!12744325.java!!!	getTempInsetBounds(inout out : Rect) : void
+        out.set(mTempInsetBounds);
+!!!12744453.java!!!	setResizeable(in resizeMode : int) : void
+        mResizeMode = resizeMode;
+!!!12744581.java!!!	isResizeable() : boolean
+        return ActivityInfo.isResizeableMode(mResizeMode) || mSupportsPictureInPicture
+                || mService.mForceResizableTasks;
+!!!12744709.java!!!	preserveOrientationOnResize() : boolean
+        return mResizeMode == RESIZE_MODE_FORCE_RESIZABLE_PORTRAIT_ONLY
+                || mResizeMode == RESIZE_MODE_FORCE_RESIZABLE_LANDSCAPE_ONLY
+                || mResizeMode == RESIZE_MODE_FORCE_RESIZABLE_PRESERVE_ORIENTATION;
+!!!12744837.java!!!	cropWindowsToStackBounds() : boolean
+        return isResizeable();
+!!!12744965.java!!!	isHomeTask() : boolean
+        return mHomeTask;
+!!!12745093.java!!!	resizeLocked(inout bounds : Rect, inout overrideConfig : Configuration, inout forced : boolean) : boolean
+        int boundsChanged = setBounds(bounds, overrideConfig);
+        if (forced) {
+            boundsChanged |= BOUNDS_CHANGE_SIZE;
+        }
+        if (boundsChanged == BOUNDS_CHANGE_NONE) {
+            return false;
+        }
+        if ((boundsChanged & BOUNDS_CHANGE_SIZE) == BOUNDS_CHANGE_SIZE) {
+            onResize();
+        } else {
+            onMovedByResize();
+        }
+        return true;
+!!!12745221.java!!!	prepareFreezingBounds() : void
+        mPreparedFrozenBounds.set(mBounds);
+        mPreparedFrozenMergedConfig.setTo(getConfiguration());
+!!!12745349.java!!!	alignToAdjustedBounds(inout adjustedBounds : Rect, inout tempInsetBounds : Rect, inout alignBottom : boolean) : void
+        if (!isResizeable() || Configuration.EMPTY.equals(getOverrideConfiguration())) {
+            return;
+        }
+
+        getBounds(mTmpRect2);
+        if (alignBottom) {
+            int offsetY = adjustedBounds.bottom - mTmpRect2.bottom;
+            mTmpRect2.offset(0, offsetY);
+        } else {
+            mTmpRect2.offsetTo(adjustedBounds.left, adjustedBounds.top);
+        }
+        setTempInsetBounds(tempInsetBounds);
+        resizeLocked(mTmpRect2, getOverrideConfiguration(), false /* forced */);
+!!!12745477.java!!!	useCurrentBounds() : boolean
+        final DisplayContent displayContent = mStack.getDisplayContent();
+        return mFillsParent
+                || !StackId.isTaskResizeableByDockedStack(mStack.mStackId)
+                || displayContent == null
+                || displayContent.getDockedStackIgnoringVisibility() != null;
+!!!12745605.java!!!	getBounds(inout out : Rect) : void
+        if (useCurrentBounds()) {
+            // No need to adjust the output bounds if fullscreen or the docked stack is visible
+            // since it is already what we want to represent to the rest of the system.
+            out.set(mBounds);
+            return;
+        }
+
+        // The bounds has been adjusted to accommodate for a docked stack, but the docked stack is
+        // not currently visible. Go ahead a represent it as fullscreen to the rest of the system.
+        mStack.getDisplayContent().getLogicalDisplayRect(out);
+!!!12745733.java!!!	getMaxVisibleBounds(inout out : Rect) : boolean
+        boolean foundTop = false;
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            final AppWindowToken token = mChildren.get(i);
+            // skip hidden (or about to hide) apps
+            if (token.mIsExiting || token.isClientHidden() || token.hiddenRequested) {
+                continue;
+            }
+            final WindowState win = token.findMainWindow();
+            if (win == null) {
+                continue;
+            }
+            if (!foundTop) {
+                out.set(win.mVisibleFrame);
+                foundTop = true;
+                continue;
+            }
+            if (win.mVisibleFrame.left < out.left) {
+                out.left = win.mVisibleFrame.left;
+            }
+            if (win.mVisibleFrame.top < out.top) {
+                out.top = win.mVisibleFrame.top;
+            }
+            if (win.mVisibleFrame.right > out.right) {
+                out.right = win.mVisibleFrame.right;
+            }
+            if (win.mVisibleFrame.bottom > out.bottom) {
+                out.bottom = win.mVisibleFrame.bottom;
+            }
+        }
+        return foundTop;
+!!!12745861.java!!!	getDimBounds(inout out : Rect) : void
+        final DisplayContent displayContent = mStack.getDisplayContent();
+        // It doesn't matter if we in particular are part of the resize, since we couldn't have
+        // a DimLayer anyway if we weren't visible.
+        final boolean dockedResizing = displayContent != null
+                && displayContent.mDividerControllerLocked.isResizing();
+        if (useCurrentBounds()) {
+            if (inFreeformWorkspace() && getMaxVisibleBounds(out)) {
+                return;
+            }
+
+            if (!mFillsParent) {
+                // When minimizing the docked stack when going home, we don't adjust the task bounds
+                // so we need to intersect the task bounds with the stack bounds here.
+                //
+                // If we are Docked Resizing with snap points, the task bounds could be smaller than the stack
+                // bounds and so we don't even want to use them. Even if the app should not be resized the Dim
+                // should keep up with the divider.
+                if (dockedResizing) {
+                    mStack.getBounds(out);
+                } else {
+                    mStack.getBounds(mTmpRect);
+                    mTmpRect.intersect(mBounds);
+                }
+                out.set(mTmpRect);
+            } else {
+                out.set(mBounds);
+            }
+            return;
+        }
+
+        // The bounds has been adjusted to accommodate for a docked stack, but the docked stack is
+        // not currently visible. Go ahead a represent it as fullscreen to the rest of the system.
+        if (displayContent != null) {
+            displayContent.getLogicalDisplayRect(out);
+        }
+!!!12745989.java!!!	setDragResizing(inout dragResizing : boolean, in dragResizeMode : int) : void
+        if (mDragResizing != dragResizing) {
+            if (!DragResizeMode.isModeAllowedForStack(mStack.mStackId, dragResizeMode)) {
+                throw new IllegalArgumentException("Drag resize mode not allow for stack stackId="
+                        + mStack.mStackId + " dragResizeMode=" + dragResizeMode);
+            }
+            mDragResizing = dragResizing;
+            mDragResizeMode = dragResizeMode;
+            resetDragResizingChangeReported();
+        }
+!!!12746117.java!!!	isDragResizing() : boolean
+        return mDragResizing;
+!!!12746245.java!!!	getDragResizeMode() : int
+        return mDragResizeMode;
+!!!12746373.java!!!	updateDisplayInfo(in displayContent : DisplayContent) : void
+        if (displayContent == null) {
+            return;
+        }
+        if (mFillsParent) {
+            setBounds(null, Configuration.EMPTY);
+            return;
+        }
+        final int newRotation = displayContent.getDisplayInfo().rotation;
+        if (mRotation == newRotation) {
+            return;
+        }
+
+        // Device rotation changed.
+        // - We don't want the task to move around on the screen when this happens, so update the
+        //   task bounds so it stays in the same place.
+        // - Rotate the bounds and notify activity manager if the task can be resized independently
+        //   from its stack. The stack will take care of task rotation for the other case.
+        mTmpRect2.set(mBounds);
+
+        if (!StackId.isTaskResizeAllowed(mStack.mStackId)) {
+            setBounds(mTmpRect2, getOverrideConfiguration());
+            return;
+        }
+
+        displayContent.rotateBounds(mRotation, newRotation, mTmpRect2);
+        if (setBounds(mTmpRect2, getOverrideConfiguration()) != BOUNDS_CHANGE_NONE) {
+            final TaskWindowContainerController controller = getController();
+            if (controller != null) {
+                controller.requestResize(mBounds, RESIZE_MODE_SYSTEM_SCREEN_ROTATION);
+            }
+        }
+!!!12746501.java!!!	cancelTaskWindowTransition() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            mChildren.get(i).mAppAnimator.clearAnimation();
+        }
+!!!12746629.java!!!	cancelTaskThumbnailTransition() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            mChildren.get(i).mAppAnimator.clearThumbnail();
+        }
+!!!12746757.java!!!	showForAllUsers() : boolean
+        final int tokensCount = mChildren.size();
+        return (tokensCount != 0) && mChildren.get(tokensCount - 1).mShowForAllUsers;
+!!!12746885.java!!!	inFreeformWorkspace() : boolean
+        return mStack != null && mStack.mStackId == FREEFORM_WORKSPACE_STACK_ID;
+!!!12747013.java!!!	inPinnedWorkspace() : boolean
+        return mStack != null && mStack.mStackId == PINNED_STACK_ID;
+!!!12747141.java!!!	isFloating() : boolean
+        return StackId.tasksAreFloating(mStack.mStackId)
+                && !mStack.isAnimatingBoundsToFullscreen() && !mPreserveNonFloatingState;
+!!!12747269.java!!!	getTopVisibleAppMainWindow() : WindowState
+        final AppWindowToken token = getTopVisibleAppToken();
+        return token != null ? token.findMainWindow() : null;
+!!!12747397.java!!!	getTopVisibleAppToken() : AppWindowToken
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            final AppWindowToken token = mChildren.get(i);
+            // skip hidden (or about to hide) apps
+            if (!token.mIsExiting && !token.isClientHidden() && !token.hiddenRequested) {
+                return token;
+            }
+        }
+        return null;
+!!!12747525.java!!!	dimFullscreen() : boolean
+        return isFullscreen();
+!!!12747653.java!!!	isFullscreen() : boolean
+        if (useCurrentBounds()) {
+            return mFillsParent;
+        }
+        // The bounds has been adjusted to accommodate for a docked stack, but the docked stack
+        // is not currently visible. Go ahead a represent it as fullscreen to the rest of the
+        // system.
+        return true;
+!!!12747781.java!!!	getDisplayInfo() : DisplayInfo
+        return getDisplayContent().getDisplayInfo();
+!!!12747909.java!!!	isAttachedToDisplay() : boolean
+        return getDisplayContent() != null;
+!!!12748037.java!!!	forceWindowsScaleable(inout force : boolean) : void
+        mService.openSurfaceTransaction();
+        try {
+            for (int i = mChildren.size() - 1; i >= 0; i--) {
+                mChildren.get(i).forceWindowsScaleableInTransaction(force);
+            }
+        } finally {
+            mService.closeSurfaceTransaction();
+        }
+!!!12748165.java!!!	setTaskDescription(inout taskDescription : ActivityManager::TaskDescription) : void
+        mTaskDescription = taskDescription;
+!!!12748293.java!!!	getTaskDescription() : ActivityManager::TaskDescription
+        return mTaskDescription;
+!!!12748421.java!!!	fillsParent() : boolean
+        return mFillsParent || !StackId.isTaskResizeAllowed(mStack.mStackId);
+!!!12748549.java!!!	getController() : TaskWindowContainerController
+        return (TaskWindowContainerController) super.getController();
+!!!12748677.java!!!	forAllTasks(inout callback : Consumer<Task>) : void
+        callback.accept(this);
+!!!12748805.java!!!	toString() : String
+        return "{taskId=" + mTaskId + " appTokens=" + mChildren + " mdr=" + mDeferRemoval + "}";
+!!!12748933.java!!!	getName() : String
+        return toShortString();
+!!!12749061.java!!!	clearPreserveNonFloatingState() : void
+        mPreserveNonFloatingState = false;
+!!!12749189.java!!!	toShortString() : String
+        return "Task=" + mTaskId;
+!!!12749317.java!!!	dump(in prefix : String, inout pw : PrintWriter) : void
+        final String doublePrefix = prefix + "  ";
+
+        pw.println(prefix + "taskId=" + mTaskId);
+        pw.println(doublePrefix + "mFillsParent=" + mFillsParent);
+        pw.println(doublePrefix + "mBounds=" + mBounds.toShortString());
+        pw.println(doublePrefix + "mdr=" + mDeferRemoval);
+        pw.println(doublePrefix + "appTokens=" + mChildren);
+        pw.println(doublePrefix + "mTempInsetBounds=" + mTempInsetBounds.toShortString());
+
+        final String triplePrefix = doublePrefix + "  ";
+
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            final AppWindowToken wtoken = mChildren.get(i);
+            pw.println(triplePrefix + "Activity #" + i + " " + wtoken);
+            wtoken.dump(pw, triplePrefix);
+        }

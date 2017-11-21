@@ -1,0 +1,132 @@
+class FifoBuffer
+!!!692229.cpp!!!	FifoBuffer(in bytesPerFrame : int32_t, in capacityInFrames : fifo_frames_t)
+    // TODO Handle possible failures to allocate. Move out of constructor?
+    mFifo = new FifoController(capacityInFrames, capacityInFrames);
+    // allocate buffer
+    int32_t bytesPerBuffer = bytesPerFrame * capacityInFrames;
+    mStorage = new uint8_t[bytesPerBuffer];
+    mStorageOwned = true;
+    ALOGD("FifoBuffer: capacityInFrames = %d, bytesPerFrame = %d",
+          capacityInFrames, bytesPerFrame);
+!!!692357.cpp!!!	FifoBuffer(in bytesPerFrame : int32_t, in capacityInFrames : fifo_frames_t, inout readIndexAddress : fifo_counter_t, inout writeIndexAddress : fifo_counter_t, inout dataStorageAddress : void)
+    mFifo = new FifoControllerIndirect(capacityInFrames,
+                                       capacityInFrames,
+                                       readIndexAddress,
+                                       writeIndexAddress);
+    mStorageOwned = false;
+!!!692485.cpp!!!	~FifoBuffer()
+    if (mStorageOwned) {
+        delete[] mStorage;
+    }
+    delete mFifo;
+!!!692613.cpp!!!	convertFramesToBytes(in frames : fifo_frames_t) : int32_t
+    return frames * mBytesPerFrame;
+!!!692741.cpp!!!	read(inout buffer : void, in numFrames : fifo_frames_t) : fifo_frames_t
+    WrappingBuffer wrappingBuffer;
+    uint8_t *destination = (uint8_t *) buffer;
+    fifo_frames_t framesLeft = numFrames;
+
+    getFullDataAvailable(&wrappingBuffer);
+
+    // Read data in one or two parts.
+    int partIndex = 0;
+    while (framesLeft > 0 && partIndex < WrappingBuffer::SIZE) {
+        fifo_frames_t framesToRead = framesLeft;
+        fifo_frames_t framesAvailable = wrappingBuffer.numFrames[partIndex];
+        if (framesAvailable > 0) {
+            if (framesToRead > framesAvailable) {
+                framesToRead = framesAvailable;
+            }
+            int32_t numBytes = convertFramesToBytes(framesToRead);
+            memcpy(destination, wrappingBuffer.data[partIndex], numBytes);
+
+            destination += numBytes;
+            framesLeft -= framesToRead;
+        } else {
+            break;
+        }
+        partIndex++;
+    }
+    fifo_frames_t framesRead = numFrames - framesLeft;
+    mFifo->advanceReadIndex(framesRead);
+    return framesRead;
+!!!692869.cpp!!!	write(in buffer : void, in numFrames : fifo_frames_t) : fifo_frames_t
+    WrappingBuffer wrappingBuffer;
+    uint8_t *source = (uint8_t *) buffer;
+    fifo_frames_t framesLeft = numFrames;
+
+    getEmptyRoomAvailable(&wrappingBuffer);
+
+    // Read data in one or two parts.
+    int partIndex = 0;
+    while (framesLeft > 0 && partIndex < WrappingBuffer::SIZE) {
+        fifo_frames_t framesToWrite = framesLeft;
+        fifo_frames_t framesAvailable = wrappingBuffer.numFrames[partIndex];
+        if (framesAvailable > 0) {
+            if (framesToWrite > framesAvailable) {
+                framesToWrite = framesAvailable;
+            }
+            int32_t numBytes = convertFramesToBytes(framesToWrite);
+            memcpy(wrappingBuffer.data[partIndex], source, numBytes);
+
+            source += numBytes;
+            framesLeft -= framesToWrite;
+        } else {
+            break;
+        }
+        partIndex++;
+    }
+    fifo_frames_t framesWritten = numFrames - framesLeft;
+    mFifo->advanceWriteIndex(framesWritten);
+    return framesWritten;
+!!!692997.cpp!!!	getThreshold() : fifo_frames_t
+    return mFifo->getThreshold();
+!!!693125.cpp!!!	setThreshold(in threshold : fifo_frames_t) : void
+    mFifo->setThreshold(threshold);
+!!!693253.cpp!!!	getBufferCapacityInFrames() : fifo_frames_t
+    return mFifo->getCapacity();
+!!!693381.cpp!!!	getFullDataAvailable(inout wrappingBuffer : WrappingBuffer) : void
+    fifo_frames_t framesAvailable = mFifo->getFullFramesAvailable();
+    fifo_frames_t startIndex = mFifo->getReadIndex();
+    fillWrappingBuffer(wrappingBuffer, framesAvailable, startIndex);
+!!!693509.cpp!!!	getEmptyRoomAvailable(inout wrappingBuffer : WrappingBuffer) : void
+    fifo_frames_t framesAvailable = mFifo->getEmptyFramesAvailable();
+    fifo_frames_t startIndex = mFifo->getWriteIndex();
+    fillWrappingBuffer(wrappingBuffer, framesAvailable, startIndex);
+!!!693637.cpp!!!	readNow(inout buffer : void, in numFrames : fifo_frames_t) : fifo_frames_t
+    mLastReadSize = numFrames;
+    fifo_frames_t framesLeft = numFrames;
+    fifo_frames_t framesRead = read(buffer, numFrames);
+    framesLeft -= framesRead;
+    mFramesReadCount += framesRead;
+    mFramesUnderrunCount += framesLeft;
+    // Zero out any samples we could not set.
+    if (framesLeft > 0) {
+        mUnderrunCount++;
+        int32_t bytesToZero = convertFramesToBytes(framesLeft);
+        memset(buffer, 0, bytesToZero);
+    }
+
+    return framesRead;
+!!!694789.cpp!!!	fillWrappingBuffer(inout wrappingBuffer : WrappingBuffer, in framesAvailable : int32_t, in startIndex : int32_t) : void
+    wrappingBuffer->data[1] = nullptr;
+    wrappingBuffer->numFrames[1] = 0;
+    if (framesAvailable > 0) {
+
+        uint8_t *source = &mStorage[convertFramesToBytes(startIndex)];
+        // Does the available data cross the end of the FIFO?
+        if ((startIndex + framesAvailable) > mFrameCapacity) {
+            wrappingBuffer->data[0] = source;
+            wrappingBuffer->numFrames[0] = mFrameCapacity - startIndex;
+            wrappingBuffer->data[1] = &mStorage[0];
+            wrappingBuffer->numFrames[1] = mFrameCapacity - startIndex;
+
+        } else {
+            wrappingBuffer->data[0] = source;
+            wrappingBuffer->numFrames[0] = framesAvailable;
+        }
+    } else {
+        wrappingBuffer->data[0] = nullptr;
+        wrappingBuffer->numFrames[0] = 0;
+    }
+

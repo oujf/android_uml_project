@@ -1,0 +1,114 @@
+class ConnectivityController
+!!!11722117.java!!!	get(inout jms : JobSchedulerService) : ConnectivityController
+        synchronized (sCreationLock) {
+            if (mSingleton == null) {
+                mSingleton = new ConnectivityController(jms, jms.getContext(), jms.getLock());
+            }
+            return mSingleton;
+        }
+!!!11722245.java!!!	ConnectivityController(inout stateChangedListener : StateChangedListener, inout context : Context, inout lock : Object)
+        super(stateChangedListener, context, lock);
+
+        mConnManager = mContext.getSystemService(ConnectivityManager.class);
+        mNetPolicyManager = mContext.getSystemService(NetworkPolicyManager.class);
+
+        mConnected = mValidated = false;
+
+        mConnManager.registerDefaultNetworkCallback(mNetworkCallback);
+        mNetPolicyManager.registerListener(mNetPolicyListener);
+!!!11722373.java!!!	maybeStartTrackingJobLocked(inout jobStatus : JobStatus, inout lastJob : JobStatus) : void
+        if (jobStatus.hasConnectivityConstraint()) {
+            updateConstraintsSatisfied(jobStatus, null);
+            mTrackedJobs.add(jobStatus);
+            jobStatus.setTrackingController(JobStatus.TRACKING_CONNECTIVITY);
+        }
+!!!11722501.java!!!	maybeStopTrackingJobLocked(inout jobStatus : JobStatus, inout incomingJob : JobStatus, inout forUpdate : boolean) : void
+        if (jobStatus.clearTrackingController(JobStatus.TRACKING_CONNECTIVITY)) {
+            mTrackedJobs.remove(jobStatus);
+        }
+!!!11722629.java!!!	updateConstraintsSatisfied(inout jobStatus : JobStatus, inout capabilities : NetworkCapabilities) : boolean
+        final int jobUid = jobStatus.getSourceUid();
+        final boolean ignoreBlocked = (jobStatus.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0;
+        final NetworkInfo info = mConnManager.getActiveNetworkInfoForUid(jobUid, ignoreBlocked);
+        if (capabilities == null) {
+            final Network network = mConnManager.getActiveNetworkForUid(jobUid, ignoreBlocked);
+            capabilities = mConnManager.getNetworkCapabilities(network);
+        }
+
+        final boolean validated = capabilities != null
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        final boolean connected = info != null && info.isConnected();
+        final boolean connectionUsable = connected && validated;
+        final boolean metered = connected && info.isMetered();
+        final boolean unmetered = connected && !info.isMetered();
+        final boolean notRoaming = connected && !info.isRoaming();
+
+        boolean changed = false;
+        changed |= jobStatus.setConnectivityConstraintSatisfied(connectionUsable);
+        changed |= jobStatus.setMeteredConstraintSatisfied(metered);
+        changed |= jobStatus.setUnmeteredConstraintSatisfied(unmetered);
+        changed |= jobStatus.setNotRoamingConstraintSatisfied(notRoaming);
+
+        // Track system-uid connected/validated as a general reportable proxy for the
+        // overall state of connectivity constraint satisfiability.
+        if (jobUid == Process.SYSTEM_UID) {
+            mConnected = connected;
+            mValidated = validated;
+        }
+
+        if (DEBUG) {
+            Slog.i(TAG, "Connectivity " + (changed ? "CHANGED" : "unchanged")
+                    + " for " + jobStatus + ": usable=" + connectionUsable
+                    + " connected=" + connected
+                    + " validated=" + validated
+                    + " metered=" + metered
+                    + " unmetered=" + unmetered
+                    + " notRoaming=" + notRoaming);
+        }
+        return changed;
+!!!11722757.java!!!	updateTrackedJobs(in uid : int, inout capabilities : NetworkCapabilities) : void
+        synchronized (mLock) {
+            boolean changed = false;
+            for (int i = mTrackedJobs.size()-1; i >= 0; i--) {
+                final JobStatus js = mTrackedJobs.valueAt(i);
+                if (uid == -1 || uid == js.getSourceUid()) {
+                    changed |= updateConstraintsSatisfied(js, capabilities);
+                }
+            }
+            if (changed) {
+                mStateChangedListener.onControllerStateChanged();
+            }
+        }
+!!!11722885.java!!!	onNetworkActive() : void
+        synchronized (mLock) {
+            for (int i = mTrackedJobs.size()-1; i >= 0; i--) {
+                final JobStatus js = mTrackedJobs.valueAt(i);
+                if (js.isReady()) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Running " + js + " due to network activity.");
+                    }
+                    mStateChangedListener.onRunJobNow(js);
+                }
+            }
+        }
+!!!11723013.java!!!	dumpControllerStateLocked(inout pw : PrintWriter, in filterUid : int) : void
+        pw.print("Connectivity: connected=");
+        pw.print(mConnected);
+        pw.print(" validated=");
+        pw.println(mValidated);
+        pw.print("Tracking ");
+        pw.print(mTrackedJobs.size());
+        pw.println(":");
+        for (int i = 0; i < mTrackedJobs.size(); i++) {
+            final JobStatus js = mTrackedJobs.valueAt(i);
+            if (js.shouldDump(filterUid)) {
+                pw.print("  #");
+                js.printUniqueId(pw);
+                pw.print(" from ");
+                UserHandle.formatUid(pw, js.getSourceUid());
+                pw.print(": C="); pw.print(js.needsAnyConnectivity());
+                pw.print(": M="); pw.print(js.needsMeteredConnectivity());
+                pw.print(": UM="); pw.print(js.needsUnmeteredConnectivity());
+                pw.print(": NR="); pw.println(js.needsNonRoamingConnectivity());
+            }
+        }

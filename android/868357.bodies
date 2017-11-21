@@ -1,0 +1,190 @@
+class MediaNotificationProcessor
+!!!3867013.java!!!	MediaNotificationProcessor(inout context : Context, inout packageContext : Context)
+        this(context, packageContext, new ImageGradientColorizer());
+!!!3867141.java!!!	MediaNotificationProcessor(inout context : Context, inout packageContext : Context, inout colorizer : ImageGradientColorizer)
+        mContext = context;
+        mPackageContext = packageContext;
+        mColorizer = colorizer;
+!!!3867269.java!!!	processNotification(inout notification : Notification, inout builder : Notification.Builder) : void
+        Icon largeIcon = notification.getLargeIcon();
+        Bitmap bitmap = null;
+        Drawable drawable = null;
+        if (largeIcon != null) {
+            // We're transforming the builder, let's make sure all baked in RemoteViews are
+            // rebuilt!
+            builder.setRebuildStyledRemoteViews(true);
+            drawable = largeIcon.loadDrawable(mPackageContext);
+            int backgroundColor = 0;
+            if (notification.isColorizedMedia()) {
+                int width = drawable.getIntrinsicWidth();
+                int height = drawable.getIntrinsicHeight();
+                int area = width * height;
+                if (area > RESIZE_BITMAP_AREA) {
+                    double factor = Math.sqrt((float) RESIZE_BITMAP_AREA / area);
+                    width = (int) (factor * width);
+                    height = (int) (factor * height);
+                }
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+                drawable.setBounds(0, 0, width, height);
+                drawable.draw(canvas);
+
+                // for the background we only take the left side of the image to ensure
+                // a smooth transition
+                Palette.Builder paletteBuilder = Palette.from(bitmap)
+                        .setRegion(0, 0, bitmap.getWidth() / 2, bitmap.getHeight())
+                        .clearFilters() // we want all colors, red / white / black ones too!
+                        .resizeBitmapArea(RESIZE_BITMAP_AREA);
+                Palette palette = paletteBuilder.generate();
+                backgroundColor = findBackgroundColorAndFilter(palette);
+                // we want most of the full region again, slightly shifted to the right
+                float textColorStartWidthFraction = 0.4f;
+                paletteBuilder.setRegion((int) (bitmap.getWidth() * textColorStartWidthFraction), 0,
+                        bitmap.getWidth(),
+                        bitmap.getHeight());
+                if (mFilteredBackgroundHsl != null) {
+                    paletteBuilder.addFilter((rgb, hsl) -> {
+                        // at least 10 degrees hue difference
+                        float diff = Math.abs(hsl[0] - mFilteredBackgroundHsl[0]);
+                        return diff > 10 && diff < 350;
+                    });
+                }
+                paletteBuilder.addFilter(mBlackWhiteFilter);
+                palette = paletteBuilder.generate();
+                int foregroundColor = selectForegroundColor(backgroundColor, palette);
+                builder.setColorPalette(backgroundColor, foregroundColor);
+            } else {
+                int id = mIsLowPriority
+                        ? R.color.notification_material_background_low_priority_color
+                        : R.color.notification_material_background_color;
+                backgroundColor = mContext.getColor(id);
+            }
+            Bitmap colorized = mColorizer.colorize(drawable, backgroundColor,
+                    mContext.getResources().getConfiguration().getLayoutDirection() ==
+                            LayoutDirection.RTL);
+            builder.setLargeIcon(Icon.createWithBitmap(colorized));
+        }
+!!!3867397.java!!!	selectForegroundColor(in backgroundColor : int, inout palette : Palette) : int
+        if (NotificationColorUtil.isColorLight(backgroundColor)) {
+            return selectForegroundColorForSwatches(palette.getDarkVibrantSwatch(),
+                    palette.getVibrantSwatch(),
+                    palette.getDarkMutedSwatch(),
+                    palette.getMutedSwatch(),
+                    palette.getDominantSwatch(),
+                    Color.BLACK);
+        } else {
+            return selectForegroundColorForSwatches(palette.getLightVibrantSwatch(),
+                    palette.getVibrantSwatch(),
+                    palette.getLightMutedSwatch(),
+                    palette.getMutedSwatch(),
+                    palette.getDominantSwatch(),
+                    Color.WHITE);
+        }
+!!!3867525.java!!!	selectForegroundColorForSwatches(inout moreVibrant : Palette.Swatch, inout vibrant : Palette.Swatch, inout moreMutedSwatch : Palette.Swatch, inout mutedSwatch : Palette.Swatch, inout dominantSwatch : Palette.Swatch, in fallbackColor : int) : int
+        Palette.Swatch coloredCandidate = selectVibrantCandidate(moreVibrant, vibrant);
+        if (coloredCandidate == null) {
+            coloredCandidate = selectMutedCandidate(mutedSwatch, moreMutedSwatch);
+        }
+        if (coloredCandidate != null) {
+            if (dominantSwatch == coloredCandidate) {
+                return coloredCandidate.getRgb();
+            } else if ((float) coloredCandidate.getPopulation() / dominantSwatch.getPopulation()
+                    < POPULATION_FRACTION_FOR_DOMINANT
+                    && dominantSwatch.getHsl()[1] > MIN_SATURATION_WHEN_DECIDING) {
+                return dominantSwatch.getRgb();
+            } else {
+                return coloredCandidate.getRgb();
+            }
+        } else if (hasEnoughPopulation(dominantSwatch)) {
+            return dominantSwatch.getRgb();
+        } else {
+            return fallbackColor;
+        }
+!!!3867653.java!!!	selectMutedCandidate(inout first : Palette.Swatch, inout second : Palette.Swatch) : Palette.Swatch
+        boolean firstValid = hasEnoughPopulation(first);
+        boolean secondValid = hasEnoughPopulation(second);
+        if (firstValid && secondValid) {
+            float firstSaturation = first.getHsl()[1];
+            float secondSaturation = second.getHsl()[1];
+            float populationFraction = first.getPopulation() / (float) second.getPopulation();
+            if (firstSaturation * populationFraction > secondSaturation) {
+                return first;
+            } else {
+                return second;
+            }
+        } else if (firstValid) {
+            return first;
+        } else if (secondValid) {
+            return second;
+        }
+        return null;
+!!!3867781.java!!!	selectVibrantCandidate(inout first : Palette.Swatch, inout second : Palette.Swatch) : Palette.Swatch
+        boolean firstValid = hasEnoughPopulation(first);
+        boolean secondValid = hasEnoughPopulation(second);
+        if (firstValid && secondValid) {
+            int firstPopulation = first.getPopulation();
+            int secondPopulation = second.getPopulation();
+            if (firstPopulation / (float) secondPopulation
+                    < POPULATION_FRACTION_FOR_MORE_VIBRANT) {
+                return second;
+            } else {
+                return first;
+            }
+        } else if (firstValid) {
+            return first;
+        } else if (secondValid) {
+            return second;
+        }
+        return null;
+!!!3867909.java!!!	hasEnoughPopulation(inout swatch : Palette.Swatch) : boolean
+        // We want a fraction that is at least 1% of the image
+        return swatch != null
+                && (swatch.getPopulation() / (float) RESIZE_BITMAP_AREA > MINIMUM_IMAGE_FRACTION);
+!!!3868037.java!!!	findBackgroundColorAndFilter(inout palette : Palette) : int
+        // by default we use the dominant palette
+        Palette.Swatch dominantSwatch = palette.getDominantSwatch();
+        if (dominantSwatch == null) {
+            // We're not filtering on white or black
+            mFilteredBackgroundHsl = null;
+            return Color.WHITE;
+        }
+
+        if (!isWhiteOrBlack(dominantSwatch.getHsl())) {
+            mFilteredBackgroundHsl = dominantSwatch.getHsl();
+            return dominantSwatch.getRgb();
+        }
+        // Oh well, we selected black or white. Lets look at the second color!
+        List<Palette.Swatch> swatches = palette.getSwatches();
+        float highestNonWhitePopulation = -1;
+        Palette.Swatch second = null;
+        for (Palette.Swatch swatch: swatches) {
+            if (swatch != dominantSwatch
+                    && swatch.getPopulation() > highestNonWhitePopulation
+                    && !isWhiteOrBlack(swatch.getHsl())) {
+                second = swatch;
+                highestNonWhitePopulation = swatch.getPopulation();
+            }
+        }
+        if (second == null) {
+            // We're not filtering on white or black
+            mFilteredBackgroundHsl = null;
+            return dominantSwatch.getRgb();
+        }
+        if (dominantSwatch.getPopulation() / highestNonWhitePopulation
+                > POPULATION_FRACTION_FOR_WHITE_OR_BLACK) {
+            // The dominant swatch is very dominant, lets take it!
+            // We're not filtering on white or black
+            mFilteredBackgroundHsl = null;
+            return dominantSwatch.getRgb();
+        } else {
+            mFilteredBackgroundHsl = second.getHsl();
+            return second.getRgb();
+        }
+!!!3868165.java!!!	isWhiteOrBlack(inout hsl : float [[]]) : boolean
+        return isBlack(hsl) || isWhite(hsl);
+!!!3868293.java!!!	isBlack(inout hslColor : float [[]]) : boolean
+        return hslColor[2] <= BLACK_MAX_LIGHTNESS;
+!!!3868421.java!!!	isWhite(inout hslColor : float [[]]) : boolean
+        return hslColor[2] >= WHITE_MIN_LIGHTNESS;
+!!!3868549.java!!!	setIsLowPriority(inout isLowPriority : boolean) : void
+        mIsLowPriority = isLowPriority;

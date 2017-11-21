@@ -1,0 +1,102 @@
+class SelectionActionModeHelper
+!!!9616133.java!!!	SelectionActionModeHelper(inout editor : Editor)
+        mEditor = Preconditions.checkNotNull(editor);
+        final TextView textView = mEditor.getTextView();
+        mTextClassificationHelper = new TextClassificationHelper(
+                textView.getTextClassifier(), textView.getText(), 0, 1, textView.getTextLocales());
+        mSelectionTracker = new SelectionTracker(textView.getTextClassifier());
+!!!9616261.java!!!	startActionModeAsync(inout adjustSelection : boolean) : void
+        cancelAsyncTask();
+        if (isNoOpTextClassifier() || !hasSelection()) {
+            // No need to make an async call for a no-op TextClassifier.
+            // Do not call the TextClassifier if there is no selection.
+            startActionMode(null);
+        } else {
+            resetTextClassificationHelper(true /* resetSelectionTag */);
+            final TextView tv = mEditor.getTextView();
+            mTextClassificationAsyncTask = new TextClassificationAsyncTask(
+                    tv,
+                    TIMEOUT_DURATION,
+                    adjustSelection
+                            ? mTextClassificationHelper::suggestSelection
+                            : mTextClassificationHelper::classifyText,
+                    this::startActionMode)
+                    .execute();
+        }
+!!!9616389.java!!!	invalidateActionModeAsync() : void
+        cancelAsyncTask();
+        if (isNoOpTextClassifier() || !hasSelection()) {
+            // No need to make an async call for a no-op TextClassifier.
+            // Do not call the TextClassifier if there is no selection.
+            invalidateActionMode(null);
+        } else {
+            resetTextClassificationHelper(false /* resetSelectionTag */);
+            mTextClassificationAsyncTask = new TextClassificationAsyncTask(
+                    mEditor.getTextView(), TIMEOUT_DURATION,
+                    mTextClassificationHelper::classifyText, this::invalidateActionMode)
+                    .execute();
+        }
+!!!9616517.java!!!	onSelectionAction() : void
+        mSelectionTracker.onSelectionAction(mTextClassificationHelper.getSelectionTag());
+!!!9616645.java!!!	resetSelection(in textIndex : int) : boolean
+        if (mSelectionTracker.resetSelection(
+                textIndex, mEditor, mTextClassificationHelper.getSelectionTag())) {
+            invalidateActionModeAsync();
+            return true;
+        }
+        return false;
+!!!9616773.java!!!	getTextClassification() : TextClassification
+        return mTextClassification;
+!!!9616901.java!!!	onDestroyActionMode() : void
+        mSelectionTracker.onSelectionDestroyed();
+        cancelAsyncTask();
+!!!9617029.java!!!	cancelAsyncTask() : void
+        if (mTextClassificationAsyncTask != null) {
+            mTextClassificationAsyncTask.cancel(true);
+            mTextClassificationAsyncTask = null;
+        }
+        mTextClassification = null;
+!!!9617157.java!!!	isNoOpTextClassifier() : boolean
+        return mEditor.getTextView().getTextClassifier() == TextClassifier.NO_OP;
+!!!9617285.java!!!	hasSelection() : boolean
+        final TextView textView = mEditor.getTextView();
+        return textView.getSelectionEnd() > textView.getSelectionStart();
+!!!9617413.java!!!	startActionMode(inout result : SelectionActionModeHelper::SelectionResult) : void
+        final TextView textView = mEditor.getTextView();
+        final CharSequence text = textView.getText();
+        mSelectionTracker.setOriginalSelection(
+                textView.getSelectionStart(), textView.getSelectionEnd());
+        if (result != null && text instanceof Spannable) {
+            Selection.setSelection((Spannable) text, result.mStart, result.mEnd);
+            mTextClassification = result.mClassification;
+        } else {
+            mTextClassification = null;
+        }
+        if (mEditor.startSelectionActionModeInternal()) {
+            final SelectionModifierCursorController controller = mEditor.getSelectionController();
+            if (controller != null) {
+                controller.show();
+            }
+            if (result != null) {
+                mSelectionTracker.onSelectionStarted(
+                        result.mStart, result.mEnd, mTextClassificationHelper.getSelectionTag());
+            }
+        }
+        mEditor.setRestartActionModeOnNextRefresh(false);
+        mTextClassificationAsyncTask = null;
+!!!9617541.java!!!	invalidateActionMode(inout result : SelectionActionModeHelper::SelectionResult) : void
+        mTextClassification = result != null ? result.mClassification : null;
+        final ActionMode actionMode = mEditor.getTextActionMode();
+        if (actionMode != null) {
+            actionMode.invalidate();
+        }
+        final TextView textView = mEditor.getTextView();
+        mSelectionTracker.onSelectionUpdated(
+                textView.getSelectionStart(), textView.getSelectionEnd(),
+                mTextClassificationHelper.getSelectionTag());
+        mTextClassificationAsyncTask = null;
+!!!9617669.java!!!	resetTextClassificationHelper(inout resetSelectionTag : boolean) : void
+        final TextView textView = mEditor.getTextView();
+        mTextClassificationHelper.reset(textView.getTextClassifier(), textView.getText(),
+                textView.getSelectionStart(), textView.getSelectionEnd(),
+                resetSelectionTag, textView.getTextLocales());

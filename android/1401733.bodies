@@ -1,0 +1,111 @@
+class Log
+!!!8458885.java!!!	v(in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, VERBOSE, tag, msg);
+!!!8459013.java!!!	v(in tag : String, in msg : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, VERBOSE, tag, msg, tr);
+!!!8459141.java!!!	d(in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, DEBUG, tag, msg);
+!!!8459269.java!!!	d(in tag : String, in msg : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, DEBUG, tag, msg, tr);
+!!!8459397.java!!!	i(in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, INFO, tag, msg);
+!!!8459525.java!!!	i(in tag : String, in msg : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, INFO, tag, msg, tr);
+!!!8459653.java!!!	w(in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, WARN, tag, msg);
+!!!8459781.java!!!	w(in tag : String, in msg : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, WARN, tag, msg, tr);
+!!!8460037.java!!!	w(in tag : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, WARN, tag, "", tr);
+!!!8460165.java!!!	e(in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, ERROR, tag, msg);
+!!!8460293.java!!!	e(in tag : String, in msg : String, inout tr : Throwable) : int
+        return printlns(LOG_ID_MAIN, ERROR, tag, msg, tr);
+!!!8460421.java!!!	wtf(in tag : String, in msg : String) : int
+        return wtf(LOG_ID_MAIN, tag, msg, null, false, false);
+!!!8460549.java!!!	wtfStack(in tag : String, in msg : String) : int
+        return wtf(LOG_ID_MAIN, tag, msg, null, true, false);
+!!!8460677.java!!!	wtf(in tag : String, inout tr : Throwable) : int
+        return wtf(LOG_ID_MAIN, tag, tr.getMessage(), tr, false, false);
+!!!8460805.java!!!	wtf(in tag : String, in msg : String, inout tr : Throwable) : int
+        return wtf(LOG_ID_MAIN, tag, msg, tr, false, false);
+!!!8460933.java!!!	wtf(in logId : int, in tag : String, in msg : String, inout tr : Throwable, inout localStack : boolean, inout system : boolean) : int
+        TerribleFailure what = new TerribleFailure(msg, tr);
+        // Only mark this as ERROR, do not use ASSERT since that should be
+        // reserved for cases where the system is guaranteed to abort.
+        // The onTerribleFailure call does not always cause a crash.
+        int bytes = printlns(logId, ERROR, tag, msg, localStack ? what : tr);
+        sWtfHandler.onTerribleFailure(tag, what, system);
+        return bytes;
+!!!8461061.java!!!	wtfQuiet(in logId : int, in tag : String, in msg : String, inout system : boolean) : void
+        TerribleFailure what = new TerribleFailure(msg, null);
+        sWtfHandler.onTerribleFailure(tag, what, system);
+!!!8461189.java!!!	setWtfHandler(inout handler : Log::TerribleFailureHandler) : Log::TerribleFailureHandler
+        if (handler == null) {
+            throw new NullPointerException("handler == null");
+        }
+        TerribleFailureHandler oldHandler = sWtfHandler;
+        sWtfHandler = handler;
+        return oldHandler;
+!!!8461317.java!!!	getStackTraceString(inout tr : Throwable) : String
+        if (tr == null) {
+            return "";
+        }
+
+        // This is to reduce the amount of log spew that apps do in the non-error
+        // condition of the network being unavailable.
+        Throwable t = tr;
+        while (t != null) {
+            if (t instanceof UnknownHostException) {
+                return "";
+            }
+            t = t.getCause();
+        }
+
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new FastPrintWriter(sw, false, 256);
+        tr.printStackTrace(pw);
+        pw.flush();
+        return sw.toString();
+!!!8461445.java!!!	println(in priority : int, in tag : String, in msg : String) : int
+        return println_native(LOG_ID_MAIN, priority, tag, msg);
+!!!8461829.java!!!	printlns(in bufID : int, in priority : int, in tag : String, in msg : String, inout tr : Throwable) : int
+        ImmediateLogWriter logWriter = new ImmediateLogWriter(bufID, priority, tag);
+        // Acceptable buffer size. Get the native buffer size, subtract two zero terminators,
+        // and the length of the tag.
+        // Note: we implicitly accept possible truncation for Modified-UTF8 differences. It
+        //       is too expensive to compute that ahead of time.
+        int bufferSize = NoPreloadHolder.LOGGER_ENTRY_MAX_PAYLOAD  // Base.
+                - 2                                                // Two terminators.
+                - (tag != null ? tag.length() : 0)                 // Tag length.
+                - 32;                                              // Some slack.
+        // At least assume you can print *some* characters (tag is not too large).
+        bufferSize = Math.max(bufferSize, 100);
+
+        LineBreakBufferedWriter lbbw = new LineBreakBufferedWriter(logWriter, bufferSize);
+
+        lbbw.println(msg);
+
+        if (tr != null) {
+            // This is to reduce the amount of log spew that apps do in the non-error
+            // condition of the network being unavailable.
+            Throwable t = tr;
+            while (t != null) {
+                if (t instanceof UnknownHostException) {
+                    break;
+                }
+                if (t instanceof DeadSystemException) {
+                    lbbw.println("DeadSystemException: The system died; "
+                            + "earlier logs will point to the root cause");
+                    break;
+                }
+                t = t.getCause();
+            }
+            if (t == null) {
+                tr.printStackTrace(lbbw);
+            }
+        }
+
+        lbbw.flush();
+
+        return logWriter.getWritten();

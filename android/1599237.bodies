@@ -1,0 +1,57 @@
+class InputContentUriTokenHandler
+!!!10687493.java!!!	InputContentUriTokenHandler(inout contentUri : Uri, in sourceUid : int, in targetPackage : String, in sourceUserId : int, in targetUserId : int)
+        mUri = contentUri;
+        mSourceUid = sourceUid;
+        mTargetPackage = targetPackage;
+        mSourceUserId = sourceUserId;
+        mTargetUserId = targetUserId;
+!!!10687621.java!!!	take() : void
+        synchronized (mLock) {
+            if (mPermissionOwnerToken != null) {
+                // Permission is already granted.
+                return;
+            }
+
+            try {
+                mPermissionOwnerToken = ActivityManager.getService()
+                        .newUriPermissionOwner("InputContentUriTokenHandler");
+            } catch (RemoteException e) {
+                e.rethrowFromSystemServer();
+            }
+
+            doTakeLocked(mPermissionOwnerToken);
+        }
+!!!10687749.java!!!	doTakeLocked(inout permissionOwner : IBinder) : void
+        long origId = Binder.clearCallingIdentity();
+        try {
+            try {
+                ActivityManager.getService().grantUriPermissionFromOwner(
+                        permissionOwner, mSourceUid, mTargetPackage, mUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION, mSourceUserId, mTargetUserId);
+            } catch (RemoteException e) {
+                e.rethrowFromSystemServer();
+            }
+        } finally {
+            Binder.restoreCallingIdentity(origId);
+        }
+!!!10687877.java!!!	release() : void
+        synchronized (mLock) {
+            if (mPermissionOwnerToken == null) {
+                return;
+            }
+            try {
+                ActivityManager.getService().revokeUriPermissionFromOwner(
+                        mPermissionOwnerToken, mUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION, mSourceUserId);
+            } catch (RemoteException e) {
+                e.rethrowFromSystemServer();
+            } finally {
+                mPermissionOwnerToken = null;
+            }
+        }
+!!!10688005.java!!!	finalize() : void
+        try {
+            release();
+        } finally {
+            super.finalize();
+        }

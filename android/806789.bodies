@@ -1,0 +1,117 @@
+class TileQueryHelper
+!!!3389829.java!!!	TileQueryHelper(inout context : Context, inout host : QSTileHost, inout listener : TileQueryHelper::TileStateListener, inout completion : Runnable)
+        mContext = context;
+        mListener = listener;
+        mHost = host;
+        mCompletion = completion;
+        addSystemTiles();
+        // TODO: Live?
+!!!3389957.java!!!	addSystemTiles() : void
+        // Enqueue jobs to fetch every system tile and then ever package tile.
+        final Handler qsHandler = new Handler((Looper) Dependency.get(Dependency.BG_LOOPER));
+        final Handler mainHandler = new Handler(Looper.getMainLooper());
+        addStockTiles(mainHandler, qsHandler);
+        addPackageTiles(mainHandler, qsHandler);
+        // Then enqueue the completion. It should always be last
+        qsHandler.post(mCompletion);
+!!!3390085.java!!!	addStockTiles(inout mainHandler : Handler, inout bgHandler : Handler) : void
+        String possible = mContext.getString(R.string.quick_settings_tiles_stock);
+        String[] possibleTiles = possible.split(",");
+        for (int i = 0; i < possibleTiles.length; i++) {
+            final String spec = possibleTiles[i];
+            final QSTile tile = mHost.createTile(spec);
+            if (tile == null) {
+                continue;
+            } else if (!tile.isAvailable()) {
+                tile.destroy();
+                continue;
+            }
+            tile.setListening(this, true);
+            tile.clearState();
+            tile.refreshState();
+            tile.setListening(this, false);
+            bgHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    final QSTile.State state = tile.getState().copy();
+                    // Ignore the current state and get the generic label instead.
+                    state.label = tile.getTileLabel();
+                    tile.destroy();
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            addTile(spec, null, state, true);
+                            mListener.onTilesChanged(mTiles);
+                        }
+                    });
+                }
+            });
+        }
+!!!3390213.java!!!	addPackageTiles(inout mainHandler : Handler, inout bgHandler : Handler) : void
+        bgHandler.post(() -> {
+            Collection<QSTile> params = mHost.getTiles();
+            PackageManager pm = mContext.getPackageManager();
+            List<ResolveInfo> services = pm.queryIntentServicesAsUser(
+                    new Intent(TileService.ACTION_QS_TILE), 0, ActivityManager.getCurrentUser());
+            String stockTiles = mContext.getString(R.string.quick_settings_tiles_stock);
+
+            for (ResolveInfo info : services) {
+                String packageName = info.serviceInfo.packageName;
+                ComponentName componentName = new ComponentName(packageName, info.serviceInfo.name);
+
+                // Don't include apps that are a part of the default tile set.
+                if (stockTiles.contains(componentName.flattenToString())) {
+                    continue;
+                }
+
+                final CharSequence appLabel = info.serviceInfo.applicationInfo.loadLabel(pm);
+                String spec = CustomTile.toSpec(componentName);
+                State state = getState(params, spec);
+                if (state != null) {
+                    addTile(spec, appLabel, state, false);
+                    continue;
+                }
+                if (info.serviceInfo.icon == 0 && info.serviceInfo.applicationInfo.icon == 0) {
+                    continue;
+                }
+                Drawable icon = info.serviceInfo.loadIcon(pm);
+                if (!permission.BIND_QUICK_SETTINGS_TILE.equals(info.serviceInfo.permission)) {
+                    continue;
+                }
+                if (icon == null) {
+                    continue;
+                }
+                icon.mutate();
+                icon.setTint(mContext.getColor(android.R.color.white));
+                CharSequence label = info.serviceInfo.loadLabel(pm);
+                addTile(spec, icon, label != null ? label.toString() : "null", appLabel, mContext);
+            }
+            mainHandler.post(() -> mListener.onTilesChanged(mTiles));
+        });
+!!!3390341.java!!!	getState(inout tiles : Collection<QSTile>, in spec : String) : State
+        for (QSTile tile : tiles) {
+            if (spec.equals(tile.getTileSpec())) {
+                return tile.getState().copy();
+            }
+        }
+        return null;
+!!!3390469.java!!!	addTile(in spec : String, inout appLabel : CharSequence, inout state : State, inout isSystem : boolean) : void
+        if (mSpecs.contains(spec)) {
+            return;
+        }
+        TileInfo info = new TileInfo();
+        info.state = state;
+        info.state.dualTarget = false; // No dual targets in edit.
+        info.state.expandedAccessibilityClassName =
+                Button.class.getName();
+        info.spec = spec;
+        info.appLabel = appLabel;
+        info.isSystem = isSystem;
+        mTiles.add(info);
+        mSpecs.add(spec);
+!!!3390597.java!!!	addTile(in spec : String, inout drawable : Drawable, inout label : CharSequence, inout appLabel : CharSequence, inout context : Context) : void
+        QSTile.State state = new QSTile.State();
+        state.label = label;
+        state.contentDescription = label;
+        state.icon = new DrawableIcon(drawable);
+        addTile(spec, appLabel, state, false);

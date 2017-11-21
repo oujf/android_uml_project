@@ -1,0 +1,146 @@
+class ActivityContainer
+!!!11159173.java!!!	ActivityContainer(in stackId : int, inout activityDisplay : ActivityStackSupervisor::ActivityDisplay, inout onTop : boolean)
+            synchronized (mService) {
+                mStackId = stackId;
+                mActivityDisplay = activityDisplay;
+                mIdString = "ActivtyContainer{" + mStackId + "}";
+
+                createStack(stackId, onTop);
+                if (DEBUG_STACK) Slog.d(TAG_STACK, "Creating " + this);
+            }
+!!!11159301.java!!!	createStack(in stackId : int, inout onTop : boolean) : void
+            switch (stackId) {
+                case PINNED_STACK_ID:
+                    new PinnedActivityStack(this, mRecentTasks, onTop);
+                    break;
+                default:
+                    new ActivityStack(this, mRecentTasks, onTop);
+                    break;
+            }
+!!!11159429.java!!!	addToDisplayLocked(inout activityDisplay : ActivityStackSupervisor::ActivityDisplay) : void
+            if (DEBUG_STACK) Slog.d(TAG_STACK, "addToDisplayLocked: " + this
+                    + " to display=" + activityDisplay);
+            if (mActivityDisplay != null) {
+                throw new IllegalStateException("ActivityContainer is already attached, " +
+                        "displayId=" + mActivityDisplay.mDisplayId);
+            }
+            mActivityDisplay = activityDisplay;
+            mStack.reparent(activityDisplay, true /* onTop */);
+!!!11159557.java!!!	addToDisplay(in displayId : int) : void
+            synchronized (mService) {
+                final ActivityDisplay activityDisplay = getActivityDisplayOrCreateLocked(displayId);
+                if (activityDisplay == null) {
+                    return;
+                }
+                addToDisplayLocked(activityDisplay);
+            }
+!!!11159685.java!!!	getDisplayId() : int
+            synchronized (mService) {
+                if (mActivityDisplay != null) {
+                    return mActivityDisplay.mDisplayId;
+                }
+            }
+            return -1;
+!!!11159813.java!!!	getStackId() : int
+            synchronized (mService) {
+                return mStackId;
+            }
+!!!11159941.java!!!	injectEvent(inout event : InputEvent) : boolean
+            final long origId = Binder.clearCallingIdentity();
+            try {
+                synchronized (mService) {
+                    if (mActivityDisplay != null) {
+                        return mInputManagerInternal.injectInputEvent(event,
+                                mActivityDisplay.mDisplayId,
+                                InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
+                    }
+                }
+                return false;
+            } finally {
+                Binder.restoreCallingIdentity(origId);
+            }
+!!!11160069.java!!!	release() : void
+            synchronized (mService) {
+                if (mContainerState == CONTAINER_STATE_FINISHING) {
+                    return;
+                }
+                mContainerState = CONTAINER_STATE_FINISHING;
+
+                long origId = Binder.clearCallingIdentity();
+                try {
+                    mStack.finishAllActivitiesLocked(false);
+                    mService.mActivityStarter.removePendingActivityLaunchesLocked(mStack);
+                } finally {
+                    Binder.restoreCallingIdentity(origId);
+                }
+            }
+!!!11160197.java!!!	removeLocked() : void
+            if (DEBUG_STACK) Slog.d(TAG_STACK, "removeLocked: " + this + " from display="
+                    + mActivityDisplay + " Callers=" + Debug.getCallers(2));
+            if (mActivityDisplay != null) {
+                removeFromDisplayLocked();
+            }
+            mStack.remove();
+!!!11160325.java!!!	removeFromDisplayLocked() : void
+            if (DEBUG_STACK) Slog.d(TAG_STACK, "removeFromDisplayLocked: " + this
+                    + " current displayId=" + mActivityDisplay.mDisplayId);
+
+            mActivityDisplay.detachStack(mStack);
+            mActivityDisplay = null;
+!!!11160453.java!!!	moveToDisplayLocked(inout activityDisplay : ActivityStackSupervisor::ActivityDisplay, inout onTop : boolean) : void
+            if (DEBUG_STACK) Slog.d(TAG_STACK, "moveToDisplayLocked: " + this + " from display="
+                    + mActivityDisplay + " to display=" + activityDisplay
+                    + " Callers=" + Debug.getCallers(2));
+
+            removeFromDisplayLocked();
+
+            mActivityDisplay = activityDisplay;
+            mStack.reparent(activityDisplay, onTop);
+!!!11160581.java!!!	startActivity(inout intent : Intent) : int
+            return mService.startActivity(intent, this);
+!!!11160709.java!!!	startActivityIntentSender(inout intentSender : IIntentSender) : int
+            mService.enforceNotIsolatedCaller("ActivityContainer.startActivityIntentSender");
+
+            if (!(intentSender instanceof PendingIntentRecord)) {
+                throw new IllegalArgumentException("Bad PendingIntent object");
+            }
+
+            final int userId = mService.mUserController.handleIncomingUser(Binder.getCallingPid(),
+                    Binder.getCallingUid(), mCurrentUser, false,
+                    ActivityManagerService.ALLOW_FULL_ONLY, "ActivityContainer", null);
+
+            final PendingIntentRecord pendingIntent = (PendingIntentRecord) intentSender;
+            checkEmbeddedAllowedInner(userId, pendingIntent.key.requestIntent,
+                    pendingIntent.key.requestResolvedType);
+
+            return pendingIntent.sendInner(0, null, null, null, null, null, null, null, 0,
+                    FORCE_NEW_TASK_FLAGS, FORCE_NEW_TASK_FLAGS, null, this);
+!!!11160837.java!!!	checkEmbeddedAllowedInner(in userId : int, inout intent : Intent, in resolvedType : String) : void
+            ActivityInfo aInfo = resolveActivity(intent, resolvedType, 0, null, userId);
+            if (aInfo != null && (aInfo.flags & ActivityInfo.FLAG_ALLOW_EMBEDDED) == 0) {
+                throw new SecurityException(
+                        "Attempt to embed activity that has not set allowEmbedded=\"true\"");
+            }
+!!!11160965.java!!!	asBinder() : IBinder
+            return this;
+!!!11161093.java!!!	setSurface(inout surface : Surface, in width : int, in height : int, in density : int) : void
+            mService.enforceNotIsolatedCaller("ActivityContainer.attachToSurface");
+!!!11161221.java!!!	getOuter() : ActivityStackSupervisor
+            return ActivityStackSupervisor.this;
+!!!11161349.java!!!	isAttachedLocked() : boolean
+            return mActivityDisplay != null;
+!!!11161477.java!!!	setVisible(inout visible : boolean) : void
+            if (mVisible != visible) {
+                mVisible = visible;
+                if (mCallback != null) {
+                    mHandler.obtainMessage(CONTAINER_CALLBACK_VISIBILITY, visible ? 1 : 0,
+                            0 /* unused */, this).sendToTarget();
+                }
+            }
+!!!11161733.java!!!	isEligibleForNewTasks() : boolean
+            return true;
+!!!11161861.java!!!	onTaskListEmptyLocked() : void
+            removeLocked();
+            mHandler.obtainMessage(CONTAINER_CALLBACK_TASK_LIST_EMPTY, this).sendToTarget();
+!!!11161989.java!!!	toString() : String
+            return mIdString + (mActivityDisplay == null ? "N" : "A");

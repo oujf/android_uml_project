@@ -1,0 +1,90 @@
+class Hyphenator
+!!!8200325.java!!!	Hyphenator(in nativePtr : long, inout b : ByteBuffer)
+        mNativePtr = nativePtr;
+        mBuffer = b;
+!!!8200453.java!!!	getNativePtr() : long
+        return mNativePtr;
+!!!8200581.java!!!	get(inout locale : Locale) : Hyphenator
+        synchronized (sLock) {
+            Hyphenator result = sMap.get(locale);
+            if (result != null) {
+                return result;
+            }
+
+            // If there's a variant, fall back to language+variant only, if available
+            final String variant = locale.getVariant();
+            if (!variant.isEmpty()) {
+                final Locale languageAndVariantOnlyLocale =
+                        new Locale(locale.getLanguage(), "", variant);
+                result = sMap.get(languageAndVariantOnlyLocale);
+                if (result != null) {
+                    sMap.put(locale, result);
+                    return result;
+                }
+            }
+
+            // Fall back to language-only, if available
+            final Locale languageOnlyLocale = new Locale(locale.getLanguage());
+            result = sMap.get(languageOnlyLocale);
+            if (result != null) {
+                sMap.put(locale, result);
+                return result;
+            }
+
+            // Fall back to script-only, if available
+            final String script = locale.getScript();
+            if (!script.equals("")) {
+                final Locale scriptOnlyLocale = new Locale.Builder()
+                        .setLanguage("und")
+                        .setScript(script)
+                        .build();
+                result = sMap.get(scriptOnlyLocale);
+                if (result != null) {
+                    sMap.put(locale, result);
+                    return result;
+                }
+            }
+
+            sMap.put(locale, sEmptyHyphenator);  // To remember we found nothing.
+        }
+        return sEmptyHyphenator;
+!!!8200837.java!!!	loadHyphenator(inout data : Hyphenator::HyphenationData) : Hyphenator
+        String patternFilename = "hyph-" + data.mLanguageTag.toLowerCase(Locale.US) + ".hyb";
+        File patternFile = new File(getSystemHyphenatorLocation(), patternFilename);
+        if (!patternFile.canRead()) {
+            Log.e(TAG, "hyphenation patterns for " + patternFile + " not found or unreadable");
+            return null;
+        }
+        try {
+            RandomAccessFile f = new RandomAccessFile(patternFile, "r");
+            try {
+                FileChannel fc = f.getChannel();
+                MappedByteBuffer buf = fc.map(FileChannel.MapMode.READ_ONLY, 0, fc.size());
+                long nativePtr = StaticLayout.nLoadHyphenator(
+                        buf, 0, data.mMinPrefix, data.mMinSuffix);
+                return new Hyphenator(nativePtr, buf);
+            } finally {
+                f.close();
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "error loading hyphenation " + patternFile, e);
+            return null;
+        }
+!!!8200965.java!!!	getSystemHyphenatorLocation() : File
+        return new File("/system/usr/hyphen-data");
+!!!8201093.java!!!	init() : void
+        sMap.put(null, null);
+
+        for (int i = 0; i < AVAILABLE_LANGUAGES.length; i++) {
+            HyphenationData data = AVAILABLE_LANGUAGES[i];
+            Hyphenator h = loadHyphenator(data);
+            if (h != null) {
+                sMap.put(Locale.forLanguageTag(data.mLanguageTag), h);
+            }
+        }
+
+        for (int i = 0; i < LOCALE_FALLBACK_DATA.length; i++) {
+            String language = LOCALE_FALLBACK_DATA[i][0];
+            String fallback = LOCALE_FALLBACK_DATA[i][1];
+            sMap.put(Locale.forLanguageTag(language), sMap.get(Locale.forLanguageTag(fallback)));
+        }

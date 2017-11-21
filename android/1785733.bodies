@@ -1,0 +1,186 @@
+class LocalService
+!!!12653061.java!!!	requestTraversalFromDisplayManager() : void
+            requestTraversal();
+!!!12653189.java!!!	setMagnificationSpec(inout spec : MagnificationSpec) : void
+            synchronized (mWindowMap) {
+                if (mAccessibilityController != null) {
+                    mAccessibilityController.setMagnificationSpecLocked(spec);
+                } else {
+                    throw new IllegalStateException("Magnification callbacks not set!");
+                }
+            }
+            if (Binder.getCallingPid() != myPid()) {
+                spec.recycle();
+            }
+!!!12653317.java!!!	setForceShowMagnifiableBounds(inout show : boolean) : void
+            synchronized (mWindowMap) {
+                if (mAccessibilityController != null) {
+                    mAccessibilityController.setForceShowMagnifiableBoundsLocked(show);
+                } else {
+                    throw new IllegalStateException("Magnification callbacks not set!");
+                }
+            }
+!!!12653445.java!!!	getMagnificationRegion(inout magnificationRegion : Region) : void
+            synchronized (mWindowMap) {
+                if (mAccessibilityController != null) {
+                    mAccessibilityController.getMagnificationRegionLocked(magnificationRegion);
+                } else {
+                    throw new IllegalStateException("Magnification callbacks not set!");
+                }
+            }
+!!!12653573.java!!!	getCompatibleMagnificationSpecForWindow(inout windowToken : IBinder) : MagnificationSpec
+            synchronized (mWindowMap) {
+                WindowState windowState = mWindowMap.get(windowToken);
+                if (windowState == null) {
+                    return null;
+                }
+                MagnificationSpec spec = null;
+                if (mAccessibilityController != null) {
+                    spec = mAccessibilityController.getMagnificationSpecForWindowLocked(windowState);
+                }
+                if ((spec == null || spec.isNop()) && windowState.mGlobalScale == 1.0f) {
+                    return null;
+                }
+                spec = (spec == null) ? MagnificationSpec.obtain() : MagnificationSpec.obtain(spec);
+                spec.scale *= windowState.mGlobalScale;
+                return spec;
+            }
+!!!12653701.java!!!	setMagnificationCallbacks(inout callbacks : WindowManagerInternal::MagnificationCallbacks) : void
+            synchronized (mWindowMap) {
+                if (mAccessibilityController == null) {
+                    mAccessibilityController = new AccessibilityController(
+                            WindowManagerService.this);
+                }
+                mAccessibilityController.setMagnificationCallbacksLocked(callbacks);
+                if (!mAccessibilityController.hasCallbacksLocked()) {
+                    mAccessibilityController = null;
+                }
+            }
+!!!12653829.java!!!	setWindowsForAccessibilityCallback(inout callback : WindowManagerInternal::WindowsForAccessibilityCallback) : void
+            synchronized (mWindowMap) {
+                if (mAccessibilityController == null) {
+                    mAccessibilityController = new AccessibilityController(
+                            WindowManagerService.this);
+                }
+                mAccessibilityController.setWindowsForAccessibilityCallback(callback);
+                if (!mAccessibilityController.hasCallbacksLocked()) {
+                    mAccessibilityController = null;
+                }
+            }
+!!!12653957.java!!!	setInputFilter(inout filter : IInputFilter) : void
+            mInputManager.setInputFilter(filter);
+!!!12654085.java!!!	getFocusedWindowToken() : IBinder
+            synchronized (mWindowMap) {
+                WindowState windowState = getFocusedWindowLocked();
+                if (windowState != null) {
+                    return windowState.mClient.asBinder();
+                }
+                return null;
+            }
+!!!12654213.java!!!	isKeyguardLocked() : boolean
+            return WindowManagerService.this.isKeyguardLocked();
+!!!12654341.java!!!	isKeyguardGoingAway() : boolean
+            return WindowManagerService.this.mKeyguardGoingAway;
+!!!12654469.java!!!	showGlobalActions() : void
+            WindowManagerService.this.showGlobalActions();
+!!!12654597.java!!!	getWindowFrame(inout token : IBinder, inout outBounds : Rect) : void
+            synchronized (mWindowMap) {
+                WindowState windowState = mWindowMap.get(token);
+                if (windowState != null) {
+                    outBounds.set(windowState.mFrame);
+                } else {
+                    outBounds.setEmpty();
+                }
+            }
+!!!12654725.java!!!	waitForAllWindowsDrawn(inout callback : Runnable, in timeout : long) : void
+            boolean allWindowsDrawn = false;
+            synchronized (mWindowMap) {
+                mWaitingForDrawnCallback = callback;
+                getDefaultDisplayContentLocked().waitForAllWindowsDrawn();
+                mWindowPlacerLocked.requestTraversal();
+                mH.removeMessages(H.WAITING_FOR_DRAWN_TIMEOUT);
+                if (mWaitingForDrawn.isEmpty()) {
+                    allWindowsDrawn = true;
+                } else {
+                    mH.sendEmptyMessageDelayed(H.WAITING_FOR_DRAWN_TIMEOUT, timeout);
+                    checkDrawnWindowsLocked();
+                }
+            }
+            if (allWindowsDrawn) {
+                callback.run();
+            }
+!!!12654853.java!!!	addWindowToken(inout token : IBinder, in type : int, in displayId : int) : void
+            WindowManagerService.this.addWindowToken(token, type, displayId);
+!!!12654981.java!!!	removeWindowToken(inout binder : IBinder, inout removeWindows : boolean, in displayId : int) : void
+            synchronized(mWindowMap) {
+                if (removeWindows) {
+                    final DisplayContent dc = mRoot.getDisplayContent(displayId);
+                    if (dc == null) {
+                        Slog.w(TAG_WM, "removeWindowToken: Attempted to remove token: " + binder
+                                + " for non-exiting displayId=" + displayId);
+                        return;
+                    }
+
+                    final WindowToken token = dc.removeWindowToken(binder);
+                    if (token == null) {
+                        Slog.w(TAG_WM, "removeWindowToken: Attempted to remove non-existing token: "
+                                + binder);
+                        return;
+                    }
+
+                    token.removeAllWindowsIfPossible();
+                }
+                WindowManagerService.this.removeWindowToken(binder, displayId);
+            }
+!!!12655109.java!!!	registerAppTransitionListener(inout listener : WindowManagerInternal::AppTransitionListener) : void
+            synchronized (mWindowMap) {
+                mAppTransition.registerListenerLocked(listener);
+            }
+!!!12655237.java!!!	getInputMethodWindowVisibleHeight() : int
+            synchronized (mWindowMap) {
+                return mPolicy.getInputMethodWindowVisibleHeightLw();
+            }
+!!!12655365.java!!!	saveLastInputMethodWindowForTransition() : void
+            synchronized (mWindowMap) {
+                if (mInputMethodWindow != null) {
+                    mPolicy.setLastInputMethodWindowLw(mInputMethodWindow, mInputMethodTarget);
+                }
+            }
+!!!12655493.java!!!	clearLastInputMethodWindowForTransition() : void
+            synchronized (mWindowMap) {
+                mPolicy.setLastInputMethodWindowLw(null, null);
+            }
+!!!12655621.java!!!	updateInputMethodWindowStatus(inout imeToken : IBinder, inout imeWindowVisible : boolean, inout dismissImeOnBackKeyPressed : boolean, inout targetWindowToken : IBinder) : void
+            // TODO (b/34628091): Use this method to address the window animation issue.
+            if (DEBUG_INPUT_METHOD) {
+                Slog.w(TAG_WM, "updateInputMethodWindowStatus: imeToken=" + imeToken
+                        + " dismissImeOnBackKeyPressed=" + dismissImeOnBackKeyPressed
+                        + " imeWindowVisible=" + imeWindowVisible
+                        + " targetWindowToken=" + targetWindowToken);
+            }
+            mPolicy.setDismissImeOnBackKeyPressed(dismissImeOnBackKeyPressed);
+!!!12655749.java!!!	isHardKeyboardAvailable() : boolean
+            synchronized (mWindowMap) {
+                return mHardKeyboardAvailable;
+            }
+!!!12655877.java!!!	setOnHardKeyboardStatusChangeListener(inout listener : WindowManagerInternal::OnHardKeyboardStatusChangeListener) : void
+            synchronized (mWindowMap) {
+                mHardKeyboardStatusChangeListener = listener;
+            }
+!!!12656005.java!!!	isStackVisible(in stackId : int) : boolean
+            synchronized (mWindowMap) {
+                final DisplayContent dc = getDefaultDisplayContentLocked();
+                return dc.isStackVisible(stackId);
+            }
+!!!12656133.java!!!	isDockedDividerResizing() : boolean
+            synchronized (mWindowMap) {
+                return getDefaultDisplayContentLocked().getDockedDividerController().isResizing();
+            }
+!!!12656261.java!!!	computeWindowsForAccessibility() : void
+            final AccessibilityController accessibilityController;
+            synchronized (mWindowMap) {
+                accessibilityController = mAccessibilityController;
+            }
+            if (accessibilityController != null) {
+                accessibilityController.performComputeChangedWindowsNotLocked();
+            }

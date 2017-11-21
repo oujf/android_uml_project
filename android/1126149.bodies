@@ -1,0 +1,215 @@
+class BluetoothGattServer
+!!!5974661.java!!!	BluetoothGattServer(inout iGatt : IBluetoothGatt, in transport : int)
+        mService = iGatt;
+        mAdapter = BluetoothAdapter.getDefaultAdapter();
+        mCallback = null;
+        mServerIf = 0;
+        mTransport = transport;
+        mServices = new ArrayList<BluetoothGattService>();
+!!!5974789.java!!!	getCharacteristicByHandle(in handle : int) : BluetoothGattCharacteristic
+        for(BluetoothGattService svc : mServices) {
+            for(BluetoothGattCharacteristic charac : svc.getCharacteristics()) {
+                if (charac.getInstanceId() == handle)
+                    return charac;
+            }
+        }
+        return null;
+!!!5974917.java!!!	getDescriptorByHandle(in handle : int) : BluetoothGattDescriptor
+        for(BluetoothGattService svc : mServices) {
+            for(BluetoothGattCharacteristic charac : svc.getCharacteristics()) {
+                for(BluetoothGattDescriptor desc : charac.getDescriptors()) {
+                    if (desc.getInstanceId() == handle)
+                        return desc;
+                }
+            }
+        }
+        return null;
+!!!5975045.java!!!	close() : void
+        if (DBG) Log.d(TAG, "close()");
+        unregisterCallback();
+!!!5975173.java!!!	registerCallback(inout callback : BluetoothGattServerCallback) : boolean
+        if (DBG) Log.d(TAG, "registerCallback()");
+        if (mService == null) {
+            Log.e(TAG, "GATT service not available");
+            return false;
+        }
+        UUID uuid = UUID.randomUUID();
+        if (DBG) Log.d(TAG, "registerCallback() - UUID=" + uuid);
+
+        synchronized(mServerIfLock) {
+            if (mCallback != null) {
+                Log.e(TAG, "App can register callback only once");
+                return false;
+            }
+
+            mCallback = callback;
+            try {
+                mService.registerServer(new ParcelUuid(uuid), mBluetoothGattServerCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG,"",e);
+                mCallback = null;
+                return false;
+            }
+
+            try {
+                mServerIfLock.wait(CALLBACK_REG_TIMEOUT);
+            } catch (InterruptedException e) {
+                Log.e(TAG, "" + e);
+                mCallback = null;
+            }
+
+            if (mServerIf == 0) {
+                mCallback = null;
+                return false;
+            } else {
+                return true;
+            }
+        }
+!!!5975301.java!!!	unregisterCallback() : void
+        if (DBG) Log.d(TAG, "unregisterCallback() - mServerIf=" + mServerIf);
+        if (mService == null || mServerIf == 0) return;
+
+        try {
+            mCallback = null;
+            mService.unregisterServer(mServerIf);
+            mServerIf = 0;
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+        }
+!!!5975429.java!!!	getService(inout uuid : UUID, in instanceId : int, in type : int) : BluetoothGattService
+        for(BluetoothGattService svc : mServices) {
+            if (svc.getType() == type &&
+                svc.getInstanceId() == instanceId &&
+                svc.getUuid().equals(uuid)) {
+                return svc;
+            }
+        }
+        return null;
+!!!5975557.java!!!	connect(inout device : BluetoothDevice, inout autoConnect : boolean) : boolean
+        if (DBG) Log.d(TAG, "connect() - device: " + device.getAddress() + ", auto: " + autoConnect);
+        if (mService == null || mServerIf == 0) return false;
+
+        try {
+            mService.serverConnect(mServerIf, device.getAddress(),
+                               autoConnect ? false : true,mTransport); // autoConnect is inverse of "isDirect"
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+            return false;
+        }
+
+        return true;
+!!!5975685.java!!!	cancelConnection(inout device : BluetoothDevice) : void
+        if (DBG) Log.d(TAG, "cancelConnection() - device: " + device.getAddress());
+        if (mService == null || mServerIf == 0) return;
+
+        try {
+            mService.serverDisconnect(mServerIf, device.getAddress());
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+        }
+!!!5975813.java!!!	setPreferredPhy(inout device : BluetoothDevice, in txPhy : int, in rxPhy : int, in phyOptions : int) : void
+        try {
+            mService.serverSetPreferredPhy(mServerIf, device.getAddress(), txPhy, rxPhy,
+                                           phyOptions);
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+        }
+!!!5975941.java!!!	readPhy(inout device : BluetoothDevice) : void
+        try {
+            mService.serverReadPhy(mServerIf, device.getAddress());
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+        }
+!!!5976069.java!!!	sendResponse(inout device : BluetoothDevice, in requestId : int, in status : int, in offset : int, inout value : byte [[]]) : boolean
+        if (VDBG) Log.d(TAG, "sendResponse() - device: " + device.getAddress());
+        if (mService == null || mServerIf == 0) return false;
+
+        try {
+            mService.sendResponse(mServerIf, device.getAddress(), requestId,
+                                  status, offset, value);
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+            return false;
+        }
+        return true;
+!!!5976197.java!!!	notifyCharacteristicChanged(inout device : BluetoothDevice, inout characteristic : BluetoothGattCharacteristic, inout confirm : boolean) : boolean
+        if (VDBG) Log.d(TAG, "notifyCharacteristicChanged() - device: " + device.getAddress());
+        if (mService == null || mServerIf == 0) return false;
+
+        BluetoothGattService service = characteristic.getService();
+        if (service == null) return false;
+
+        if (characteristic.getValue() == null) {
+            throw new IllegalArgumentException("Chracteristic value is empty. Use "
+                    + "BluetoothGattCharacteristic#setvalue to update");
+        }
+
+        try {
+            mService.sendNotification(mServerIf, device.getAddress(),
+                    characteristic.getInstanceId(), confirm,
+                    characteristic.getValue());
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+            return false;
+        }
+
+        return true;
+!!!5976325.java!!!	addService(inout service : BluetoothGattService) : boolean
+        if (DBG) Log.d(TAG, "addService() - service: " + service.getUuid());
+        if (mService == null || mServerIf == 0) return false;
+
+        mPendingService = service;
+
+        try {
+            mService.addService(mServerIf, service);
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+            return false;
+        }
+
+        return true;
+!!!5976453.java!!!	removeService(inout service : BluetoothGattService) : boolean
+        if (DBG) Log.d(TAG, "removeService() - service: " + service.getUuid());
+        if (mService == null || mServerIf == 0) return false;
+
+        BluetoothGattService intService = getService(service.getUuid(),
+                                service.getInstanceId(), service.getType());
+        if (intService == null) return false;
+
+        try {
+            mService.removeService(mServerIf, service.getInstanceId());
+            mServices.remove(intService);
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+            return false;
+        }
+
+        return true;
+!!!5976581.java!!!	clearServices() : void
+        if (DBG) Log.d(TAG, "clearServices()");
+        if (mService == null || mServerIf == 0) return;
+
+        try {
+            mService.clearServices(mServerIf);
+            mServices.clear();
+        } catch (RemoteException e) {
+            Log.e(TAG,"",e);
+        }
+!!!5976709.java!!!	getServices() : BluetoothGattService
+        return mServices;
+!!!5976837.java!!!	getService(inout uuid : UUID) : BluetoothGattService
+        for (BluetoothGattService service : mServices) {
+            if (service.getUuid().equals(uuid)) {
+                return service;
+            }
+        }
+
+        return null;
+!!!5976965.java!!!	getConnectionState(inout device : BluetoothDevice) : int
+        throw new UnsupportedOperationException("Use BluetoothManager#getConnectionState instead.");
+!!!5977093.java!!!	getConnectedDevices() : BluetoothDevice
+        throw new UnsupportedOperationException
+            ("Use BluetoothManager#getConnectedDevices instead.");
+!!!5977221.java!!!	getDevicesMatchingConnectionStates(inout states : int [[]]) : BluetoothDevice
+        throw new UnsupportedOperationException
+            ("Use BluetoothManager#getDevicesMatchingConnectionStates instead.");

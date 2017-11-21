@@ -1,0 +1,62 @@
+class AppFuseBridge
+!!!10844549.java!!!	AppFuseBridge()
+        mNativeLoop = native_new();
+!!!10844677.java!!!	addBridge(inout mountScope : AppFuseBridge::MountScope) : ParcelFileDescriptor
+        try {
+            synchronized (this) {
+                Preconditions.checkArgument(mScopes.indexOfKey(mountScope.mountId) < 0);
+                if (mNativeLoop == 0) {
+                    throw new FuseUnavailableMountException(mountScope.mountId);
+                }
+                final int fd = native_add_bridge(
+                        mNativeLoop, mountScope.mountId, mountScope.open().detachFd());
+                if (fd == -1) {
+                    throw new FuseUnavailableMountException(mountScope.mountId);
+                }
+                final ParcelFileDescriptor result = ParcelFileDescriptor.adoptFd(fd);
+                mScopes.put(mountScope.mountId, mountScope);
+                mountScope = null;
+                return result;
+            }
+        } finally {
+            IoUtils.closeQuietly(mountScope);
+        }
+!!!10844805.java!!!	run() : void
+        native_start_loop(mNativeLoop);
+        synchronized (this) {
+            native_delete(mNativeLoop);
+            mNativeLoop = 0;
+        }
+!!!10844933.java!!!	openFile(in pid : int, in mountId : int, in fileId : int, in mode : int) : ParcelFileDescriptor
+        final MountScope scope;
+        synchronized (this) {
+            scope = mScopes.get(mountId);
+            if (scope == null) {
+                throw new FuseUnavailableMountException(mountId);
+            }
+        }
+        if (scope.pid != pid) {
+            throw new SecurityException("PID does not match");
+        }
+        final boolean result = scope.waitForMount();
+        if (result == false) {
+            throw new FuseUnavailableMountException(mountId);
+        }
+        try {
+            return ParcelFileDescriptor.open(
+                    new File(scope.mountPoint, String.valueOf(fileId)), mode);
+        } catch (FileNotFoundException error) {
+            throw new FuseUnavailableMountException(mountId);
+        }
+!!!10845061.java!!!	onMount(in mountId : int) : void
+        final MountScope scope = mScopes.get(mountId);
+        if (scope != null) {
+            scope.setMountResultLocked(true);
+        }
+!!!10845189.java!!!	onClosed(in mountId : int) : void
+        final MountScope scope = mScopes.get(mountId);
+        if (scope != null) {
+            scope.setMountResultLocked(false);
+            IoUtils.closeQuietly(scope);
+            mScopes.remove(mountId);
+        }

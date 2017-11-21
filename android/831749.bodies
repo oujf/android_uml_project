@@ -1,0 +1,153 @@
+class RecentsViewTouchHandler
+!!!3561093.java!!!	RecentsViewTouchHandler(inout rv : RecentsView)
+        mRv = rv;
+        mDragSlop = ViewConfiguration.get(rv.getContext()).getScaledTouchSlop();
+        updateSnapAlgorithm();
+!!!3561221.java!!!	updateSnapAlgorithm() : void
+        Rect insets = new Rect();
+        SystemServicesProxy.getInstance(mRv.getContext()).getStableInsets(insets);
+        mDividerSnapAlgorithm = DividerSnapAlgorithm.create(mRv.getContext(), insets);
+!!!3561349.java!!!	registerDropTargetForCurrentDrag(inout target : DropTarget) : void
+        mDropTargets.add(target);
+!!!3561477.java!!!	getVisibleDockStates() : TaskStack::DockState
+        return mVisibleDockStates;
+!!!3561605.java!!!	onInterceptTouchEvent(inout ev : MotionEvent) : boolean
+        handleTouchEvent(ev);
+        return mDragRequested;
+!!!3561733.java!!!	onTouchEvent(inout ev : MotionEvent) : boolean
+        handleTouchEvent(ev);
+        if (ev.getAction() == MotionEvent.ACTION_UP && mRv.getStack().getStackTaskCount() == 0) {
+            EventBus.getDefault().send(new HideRecentsEvent(false, true));
+        }
+        return true;
+!!!3561861.java!!!	onBusEvent(inout event : DragStartEvent) : void
+        SystemServicesProxy ssp = Recents.getSystemServices();
+        mRv.getParent().requestDisallowInterceptTouchEvent(true);
+        mDragRequested = true;
+        // We defer starting the actual drag handling until the user moves past the drag slop
+        mIsDragging = false;
+        mDragTask = event.task;
+        mTaskView = event.taskView;
+        mDropTargets.clear();
+
+        int[] recentsViewLocation = new int[2];
+        mRv.getLocationInWindow(recentsViewLocation);
+        mTaskViewOffset.set(mTaskView.getLeft() - recentsViewLocation[0] + event.tlOffset.x,
+                mTaskView.getTop() - recentsViewLocation[1] + event.tlOffset.y);
+
+        // Change space coordinates relative to the view to RecentsView when user initiates a touch
+        if (event.isUserTouchInitiated) {
+            float x = mDownPos.x - mTaskViewOffset.x;
+            float y = mDownPos.y - mTaskViewOffset.y;
+            mTaskView.setTranslationX(x);
+            mTaskView.setTranslationY(y);
+        }
+
+        mVisibleDockStates.clear();
+        if (ActivityManager.supportsMultiWindow(mRv.getContext()) && !ssp.hasDockedTask()
+                && mDividerSnapAlgorithm.isSplitScreenFeasible()) {
+            Recents.logDockAttempt(mRv.getContext(), event.task.getTopComponent(),
+                    event.task.resizeMode);
+            if (!event.task.isDockable) {
+                EventBus.getDefault().send(new ShowIncompatibleAppOverlayEvent());
+            } else {
+                // Add the dock state drop targets (these take priority)
+                TaskStack.DockState[] dockStates = Recents.getConfiguration()
+                        .getDockStatesForCurrentOrientation();
+                for (TaskStack.DockState dockState : dockStates) {
+                    registerDropTargetForCurrentDrag(dockState);
+                    dockState.update(mRv.getContext());
+                    mVisibleDockStates.add(dockState);
+                }
+            }
+        }
+
+        // Request other drop targets to register themselves
+        EventBus.getDefault().send(new DragStartInitializeDropTargetsEvent(event.task,
+                event.taskView, this));
+        if (mDeviceId != -1) {
+            InputDevice device = InputDevice.getDevice(mDeviceId);
+            if (device != null) {
+                device.setPointerType(PointerIcon.TYPE_GRABBING);
+            }
+        }
+!!!3561989.java!!!	onBusEvent(inout event : DragEndEvent) : void
+        if (!mDragTask.isDockable) {
+            EventBus.getDefault().send(new HideIncompatibleAppOverlayEvent());
+        }
+        mDragRequested = false;
+        mDragTask = null;
+        mTaskView = null;
+        mLastDropTarget = null;
+!!!3562117.java!!!	onBusEvent(inout event : ConfigurationChangedEvent) : void
+        if (event.fromDisplayDensityChange || event.fromDeviceOrientationChange) {
+            updateSnapAlgorithm();
+        }
+!!!3562245.java!!!	handleTouchEvent(inout ev : MotionEvent) : void
+        int action = ev.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                mDownPos.set((int) ev.getX(), (int) ev.getY());
+                mDeviceId = ev.getDeviceId();
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float evX = ev.getX();
+                float evY = ev.getY();
+                float x = evX - mTaskViewOffset.x;
+                float y = evY - mTaskViewOffset.y;
+
+                if (mDragRequested) {
+                    if (!mIsDragging) {
+                        mIsDragging = Math.hypot(evX - mDownPos.x, evY - mDownPos.y) > mDragSlop;
+                    }
+                    if (mIsDragging) {
+                        int width = mRv.getMeasuredWidth();
+                        int height = mRv.getMeasuredHeight();
+
+                        DropTarget currentDropTarget = null;
+
+                        // Give priority to the current drop target to retain the touch handling
+                        if (mLastDropTarget != null) {
+                            if (mLastDropTarget.acceptsDrop((int) evX, (int) evY, width, height,
+                                    mRv.mSystemInsets, true /* isCurrentTarget */)) {
+                                currentDropTarget = mLastDropTarget;
+                            }
+                        }
+
+                        // Otherwise, find the next target to handle this event
+                        if (currentDropTarget == null) {
+                            for (DropTarget target : mDropTargets) {
+                                if (target.acceptsDrop((int) evX, (int) evY, width, height,
+                                        mRv.mSystemInsets, false /* isCurrentTarget */)) {
+                                    currentDropTarget = target;
+                                    break;
+                                }
+                            }
+                        }
+                        if (mLastDropTarget != currentDropTarget) {
+                            mLastDropTarget = currentDropTarget;
+                            EventBus.getDefault().send(new DragDropTargetChangedEvent(mDragTask,
+                                    currentDropTarget));
+                        }
+
+                    }
+
+                    mTaskView.setTranslationX(x);
+                    mTaskView.setTranslationY(y);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                if (mDragRequested) {
+                    boolean cancelled = action == MotionEvent.ACTION_CANCEL;
+                    if (cancelled) {
+                        EventBus.getDefault().send(new DragDropTargetChangedEvent(mDragTask, null));
+                    }
+                    EventBus.getDefault().send(new DragEndEvent(mDragTask, mTaskView,
+                            !cancelled ? mLastDropTarget : null));
+                    break;
+                }
+                mDeviceId = -1;
+            }
+        }

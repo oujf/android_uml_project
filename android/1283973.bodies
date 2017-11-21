@@ -1,0 +1,63 @@
+class SystemProperties
+!!!7606149.java!!!	onKeyAccess(in key : String) : void
+        if (!TRACK_KEY_ACCESS) return;
+
+        if (key != null && key.startsWith("ro.")) {
+            synchronized (sRoReads) {
+                MutableInt numReads = sRoReads.getOrDefault(key, null);
+                if (numReads == null) {
+                    numReads = new MutableInt(0);
+                    sRoReads.put(key, numReads);
+                }
+                numReads.value++;
+                if (numReads.value > 3) {
+                    Log.d(TAG, "Repeated read (count=" + numReads.value
+                            + ") of a read-only system property '" + key + "'",
+                            new Exception());
+                }
+            }
+        }
+!!!7607301.java!!!	get(in key : String) : String
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        return native_get(key);
+!!!7607429.java!!!	get(in key : String, in def : String) : String
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        return native_get(key, def);
+!!!7607557.java!!!	getInt(in key : String, in def : int) : int
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        return native_get_int(key, def);
+!!!7607685.java!!!	getLong(in key : String, in def : long) : long
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        return native_get_long(key, def);
+!!!7607813.java!!!	getBoolean(in key : String, inout def : boolean) : boolean
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        return native_get_boolean(key, def);
+!!!7607941.java!!!	set(in key : String, in val : String) : void
+        if (val != null && val.length() > PROP_VALUE_MAX) {
+            throw newValueTooLargeException(key, val);
+        }
+        if (TRACK_KEY_ACCESS) onKeyAccess(key);
+        native_set(key, val);
+!!!7608069.java!!!	addChangeCallback(inout callback : Runnable) : void
+        synchronized (sChangeCallbacks) {
+            if (sChangeCallbacks.size() == 0) {
+                native_add_change_callback();
+            }
+            sChangeCallbacks.add(callback);
+        }
+!!!7608197.java!!!	callChangeCallbacks() : void
+        synchronized (sChangeCallbacks) {
+            //Log.i("foo", "Calling " + sChangeCallbacks.size() + " change callbacks!");
+            if (sChangeCallbacks.size() == 0) {
+                return;
+            }
+            ArrayList<Runnable> callbacks = new ArrayList<Runnable>(sChangeCallbacks);
+            for (int i=0; i<callbacks.size(); i++) {
+                callbacks.get(i).run();
+            }
+        }
+!!!7608325.java!!!	newValueTooLargeException(in key : String, in value : String) : IllegalArgumentException
+        return new IllegalArgumentException("value of system property '" + key + "' is longer than "
+                + PROP_VALUE_MAX + " characters: " + value);
+!!!7608453.java!!!	reportSyspropChanged() : void
+        native_report_sysprop_change();

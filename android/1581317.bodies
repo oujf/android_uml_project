@@ -1,0 +1,80 @@
+class AGnssCallback
+!!!10571141.cpp!!!	agnssStatusIpV6Cb(in agps_status : IAGnssCallback::AGnssStatusIpV6) : Return<void>
+    JNIEnv* env = getJniEnv();
+    jbyteArray byteArray = NULL;
+    bool isSupported = false;
+
+    byteArray = env->NewByteArray(16);
+    if (byteArray != NULL) {
+        env->SetByteArrayRegion(byteArray, 0, 16,
+                                (const jbyte*)(agps_status.ipV6Addr.data()));
+        isSupported = true;
+    } else {
+        ALOGE("Unable to allocate byte array for IPv6 address.");
+    }
+
+    IF_ALOGD() {
+        // log the IP for reference in case there is a bogus value pushed by HAL
+        char str[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, agps_status.ipV6Addr.data(), str, INET6_ADDRSTRLEN);
+        ALOGD("AGPS IP is v6: %s", str);
+    }
+
+    jsize byteArrayLength = byteArray != NULL ? env->GetArrayLength(byteArray) : 0;
+    ALOGV("Passing AGPS IP addr: size %d", byteArrayLength);
+    env->CallVoidMethod(mCallbacksObj, method_reportAGpsStatus,
+                        agps_status.type, agps_status.status, byteArray);
+
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+    if (byteArray) {
+        env->DeleteLocalRef(byteArray);
+    }
+
+    return Void();
+!!!10571269.cpp!!!	agnssStatusIpV4Cb(in agps_status : IAGnssCallback::AGnssStatusIpV4) : Return<void>
+    JNIEnv* env = getJniEnv();
+    jbyteArray byteArray = NULL;
+
+    uint32_t ipAddr = agps_status.ipV4Addr;
+    byteArray = convertToIpV4(ipAddr);
+
+    IF_ALOGD() {
+        /*
+         * log the IP for reference in case there is a bogus value pushed by
+         * HAL.
+         */
+        char str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &ipAddr, str, INET_ADDRSTRLEN);
+        ALOGD("AGPS IP is v4: %s", str);
+    }
+
+    jsize byteArrayLength =
+      byteArray != NULL ? env->GetArrayLength(byteArray) : 0;
+    ALOGV("Passing AGPS IP addr: size %d", byteArrayLength);
+    env->CallVoidMethod(mCallbacksObj, method_reportAGpsStatus,
+                      agps_status.type, agps_status.status, byteArray);
+
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+
+    if (byteArray) {
+        env->DeleteLocalRef(byteArray);
+    }
+    return Void();
+!!!10571397.cpp!!!	convertToIpV4(in ip : uint32_t) : jbyteArray
+    if (INADDR_NONE == ip) {
+        return NULL;
+    }
+
+    JNIEnv* env = getJniEnv();
+    jbyteArray byteArray = env->NewByteArray(4);
+    if (byteArray == NULL) {
+        ALOGE("Unable to allocate byte array for IPv4 address");
+        return NULL;
+    }
+
+    jbyte ipv4[4];
+    ALOGV("Converting IPv4 address byte array (net_order) %x", ip);
+    memcpy(ipv4, &ip, sizeof(ipv4));
+    env->SetByteArrayRegion(byteArray, 0, 4, (const jbyte*)ipv4);
+    return byteArray;

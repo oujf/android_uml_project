@@ -1,0 +1,197 @@
+class TrafficStats
+!!!7236741.java!!!	getStatsService() : INetworkStatsService
+        if (sStatsService == null) {
+            sStatsService = INetworkStatsService.Stub.asInterface(
+                    ServiceManager.getService(Context.NETWORK_STATS_SERVICE));
+        }
+        return sStatsService;
+!!!7236869.java!!!	setThreadStatsTag(in tag : int) : void
+        NetworkManagementSocketTagger.setThreadSocketStatsTag(tag);
+!!!7236997.java!!!	getAndSetThreadStatsTag(in tag : int) : int
+        return NetworkManagementSocketTagger.setThreadSocketStatsTag(tag);
+!!!7237125.java!!!	setThreadStatsTagBackup() : void
+        setThreadStatsTag(TAG_SYSTEM_BACKUP);
+!!!7237253.java!!!	setThreadStatsTagRestore() : void
+        setThreadStatsTag(TAG_SYSTEM_RESTORE);
+!!!7237381.java!!!	getThreadStatsTag() : int
+        return NetworkManagementSocketTagger.getThreadSocketStatsTag();
+!!!7237509.java!!!	clearThreadStatsTag() : void
+        NetworkManagementSocketTagger.setThreadSocketStatsTag(-1);
+!!!7237637.java!!!	setThreadStatsUid(in uid : int) : void
+        NetworkManagementSocketTagger.setThreadSocketStatsUid(uid);
+!!!7237765.java!!!	clearThreadStatsUid() : void
+        NetworkManagementSocketTagger.setThreadSocketStatsUid(-1);
+!!!7237893.java!!!	tagSocket(inout socket : Socket) : void
+        SocketTagger.get().tag(socket);
+!!!7238021.java!!!	untagSocket(inout socket : Socket) : void
+        SocketTagger.get().untag(socket);
+!!!7238149.java!!!	tagDatagramSocket(inout socket : DatagramSocket) : void
+        SocketTagger.get().tag(socket);
+!!!7238277.java!!!	untagDatagramSocket(inout socket : DatagramSocket) : void
+        SocketTagger.get().untag(socket);
+!!!7238405.java!!!	startDataProfiling(inout context : Context) : void
+        synchronized (sProfilingLock) {
+            if (sActiveProfilingStart != null) {
+                throw new IllegalStateException("already profiling data");
+            }
+
+            // take snapshot in time; we calculate delta later
+            sActiveProfilingStart = getDataLayerSnapshotForUid(context);
+        }
+!!!7238533.java!!!	stopDataProfiling(inout context : Context) : NetworkStats
+        synchronized (sProfilingLock) {
+            if (sActiveProfilingStart == null) {
+                throw new IllegalStateException("not profiling data");
+            }
+
+            // subtract starting values and return delta
+            final NetworkStats profilingStop = getDataLayerSnapshotForUid(context);
+            final NetworkStats profilingDelta = NetworkStats.subtract(
+                    profilingStop, sActiveProfilingStart, null, null);
+            sActiveProfilingStart = null;
+            return profilingDelta;
+        }
+!!!7238661.java!!!	incrementOperationCount(in operationCount : int) : void
+        final int tag = getThreadStatsTag();
+        incrementOperationCount(tag, operationCount);
+!!!7238789.java!!!	incrementOperationCount(in tag : int, in operationCount : int) : void
+        final int uid = android.os.Process.myUid();
+        try {
+            getStatsService().incrementOperationCount(uid, tag, operationCount);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7238917.java!!!	closeQuietly(inout session : INetworkStatsSession) : void
+        // TODO: move to NetworkStatsService once it exists
+        if (session != null) {
+            try {
+                session.close();
+            } catch (RuntimeException rethrown) {
+                throw rethrown;
+            } catch (Exception ignored) {
+            }
+        }
+!!!7239045.java!!!	getMobileTxPackets() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            total += getTxPackets(iface);
+        }
+        return total;
+!!!7239173.java!!!	getMobileRxPackets() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            total += getRxPackets(iface);
+        }
+        return total;
+!!!7239301.java!!!	getMobileTxBytes() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            total += getTxBytes(iface);
+        }
+        return total;
+!!!7239429.java!!!	getMobileRxBytes() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            total += getRxBytes(iface);
+        }
+        return total;
+!!!7239557.java!!!	getMobileTcpRxPackets() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            final long stat = nativeGetIfaceStat(iface, TYPE_TCP_RX_PACKETS);
+            if (stat != UNSUPPORTED) {
+                total += stat;
+            }
+        }
+        return total;
+!!!7239685.java!!!	getMobileTcpTxPackets() : long
+        long total = 0;
+        for (String iface : getMobileIfaces()) {
+            final long stat = nativeGetIfaceStat(iface, TYPE_TCP_TX_PACKETS);
+            if (stat != UNSUPPORTED) {
+                total += stat;
+            }
+        }
+        return total;
+!!!7239813.java!!!	getTxPackets(in iface : String) : long
+        return nativeGetIfaceStat(iface, TYPE_TX_PACKETS);
+!!!7239941.java!!!	getRxPackets(in iface : String) : long
+        return nativeGetIfaceStat(iface, TYPE_RX_PACKETS);
+!!!7240069.java!!!	getTxBytes(in iface : String) : long
+        return nativeGetIfaceStat(iface, TYPE_TX_BYTES);
+!!!7240197.java!!!	getRxBytes(in iface : String) : long
+        return nativeGetIfaceStat(iface, TYPE_RX_BYTES);
+!!!7240325.java!!!	getTotalTxPackets() : long
+        return nativeGetTotalStat(TYPE_TX_PACKETS);
+!!!7240453.java!!!	getTotalRxPackets() : long
+        return nativeGetTotalStat(TYPE_RX_PACKETS);
+!!!7240581.java!!!	getTotalTxBytes() : long
+        return nativeGetTotalStat(TYPE_TX_BYTES);
+!!!7240709.java!!!	getTotalRxBytes() : long
+        return nativeGetTotalStat(TYPE_RX_BYTES);
+!!!7240837.java!!!	getUidTxBytes(in uid : int) : long
+        // This isn't actually enforcing any security; it just returns the
+        // unsupported value. The real filtering is done at the kernel level.
+        final int callingUid = android.os.Process.myUid();
+        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
+            return nativeGetUidStat(uid, TYPE_TX_BYTES);
+        } else {
+            return UNSUPPORTED;
+        }
+!!!7240965.java!!!	getUidRxBytes(in uid : int) : long
+        // This isn't actually enforcing any security; it just returns the
+        // unsupported value. The real filtering is done at the kernel level.
+        final int callingUid = android.os.Process.myUid();
+        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
+            return nativeGetUidStat(uid, TYPE_RX_BYTES);
+        } else {
+            return UNSUPPORTED;
+        }
+!!!7241093.java!!!	getUidTxPackets(in uid : int) : long
+        // This isn't actually enforcing any security; it just returns the
+        // unsupported value. The real filtering is done at the kernel level.
+        final int callingUid = android.os.Process.myUid();
+        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
+            return nativeGetUidStat(uid, TYPE_TX_PACKETS);
+        } else {
+            return UNSUPPORTED;
+        }
+!!!7241221.java!!!	getUidRxPackets(in uid : int) : long
+        // This isn't actually enforcing any security; it just returns the
+        // unsupported value. The real filtering is done at the kernel level.
+        final int callingUid = android.os.Process.myUid();
+        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
+            return nativeGetUidStat(uid, TYPE_RX_PACKETS);
+        } else {
+            return UNSUPPORTED;
+        }
+!!!7241349.java!!!	getUidTcpTxBytes(in uid : int) : long
+        return UNSUPPORTED;
+!!!7241477.java!!!	getUidTcpRxBytes(in uid : int) : long
+        return UNSUPPORTED;
+!!!7241605.java!!!	getUidUdpTxBytes(in uid : int) : long
+        return UNSUPPORTED;
+!!!7241733.java!!!	getUidUdpRxBytes(in uid : int) : long
+        return UNSUPPORTED;
+!!!7241861.java!!!	getUidTcpTxSegments(in uid : int) : long
+        return UNSUPPORTED;
+!!!7241989.java!!!	getUidTcpRxSegments(in uid : int) : long
+        return UNSUPPORTED;
+!!!7242117.java!!!	getUidUdpTxPackets(in uid : int) : long
+        return UNSUPPORTED;
+!!!7242245.java!!!	getUidUdpRxPackets(in uid : int) : long
+        return UNSUPPORTED;
+!!!7242373.java!!!	getDataLayerSnapshotForUid(inout context : Context) : NetworkStats
+        // TODO: take snapshot locally, since proc file is now visible
+        final int uid = android.os.Process.myUid();
+        try {
+            return getStatsService().getDataLayerSnapshotForUid(uid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7242501.java!!!	getMobileIfaces() : String
+        try {
+            return getStatsService().getMobileIfaces();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }

@@ -1,0 +1,137 @@
+class KeyguardStatusView
+!!!4352901.java!!!	KeyguardStatusView(inout context : Context)
+        this(context, null, 0);
+!!!4353029.java!!!	KeyguardStatusView(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, 0);
+!!!4353157.java!!!	KeyguardStatusView(inout context : Context, inout attrs : AttributeSet, in defStyle : int)
+        super(context, attrs, defStyle);
+        mAlarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        mLockPatternUtils = new LockPatternUtils(getContext());
+!!!4353285.java!!!	setEnableMarquee(inout enabled : boolean) : void
+        if (DEBUG) Log.v(TAG, (enabled ? "Enable" : "Disable") + " transport text marquee");
+        if (mAlarmStatusView != null) mAlarmStatusView.setSelected(enabled);
+        if (mOwnerInfo != null) mOwnerInfo.setSelected(enabled);
+!!!4353413.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        mClockContainer = findViewById(R.id.keyguard_clock_container);
+        mAlarmStatusView = findViewById(R.id.alarm_status);
+        mDateView = findViewById(R.id.date_view);
+        mClockView = findViewById(R.id.clock_view);
+        mClockView.setShowCurrentUserTime(true);
+        mClockView.setAccessibilityDelegate(new KeyguardClockAccessibilityDelegate(mContext));
+        mOwnerInfo = findViewById(R.id.owner_info);
+        mBatteryDoze = findViewById(R.id.battery_doze);
+        mVisibleInDoze = new View[]{mBatteryDoze, mClockView};
+
+        boolean shouldMarquee = KeyguardUpdateMonitor.getInstance(mContext).isDeviceInteractive();
+        setEnableMarquee(shouldMarquee);
+        refresh();
+        updateOwnerInfo();
+
+        // Disable elegant text height because our fancy colon makes the ymin value huge for no
+        // reason.
+        mClockView.setElegantTextHeight(false);
+!!!4353541.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        mClockView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimensionPixelSize(R.dimen.widget_big_font_size));
+        // Some layouts like burmese have a different margin for the clock
+        MarginLayoutParams layoutParams = (MarginLayoutParams) mClockView.getLayoutParams();
+        layoutParams.bottomMargin = getResources().getDimensionPixelSize(
+                R.dimen.bottom_text_spacing_digital);
+        mClockView.setLayoutParams(layoutParams);
+        mDateView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                getResources().getDimensionPixelSize(R.dimen.widget_label_font_size));
+        if (mOwnerInfo != null) {
+            mOwnerInfo.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                    getResources().getDimensionPixelSize(R.dimen.widget_label_font_size));
+        }
+!!!4353669.java!!!	refreshTime() : void
+        mDateView.setDatePattern(Patterns.dateViewSkel);
+
+        mClockView.setFormat12Hour(Patterns.clockView12);
+        mClockView.setFormat24Hour(Patterns.clockView24);
+!!!4353797.java!!!	refresh() : void
+        AlarmManager.AlarmClockInfo nextAlarm =
+                mAlarmManager.getNextAlarmClock(UserHandle.USER_CURRENT);
+        Patterns.update(mContext, nextAlarm != null);
+
+        refreshTime();
+        refreshAlarmStatus(nextAlarm);
+!!!4353925.java!!!	refreshAlarmStatus(inout nextAlarm : AlarmManager.AlarmClockInfo) : void
+        if (nextAlarm != null) {
+            String alarm = formatNextAlarm(mContext, nextAlarm);
+            mAlarmStatusView.setText(alarm);
+            mAlarmStatusView.setContentDescription(
+                    getResources().getString(R.string.keyguard_accessibility_next_alarm, alarm));
+            mAlarmStatusView.setVisibility(View.VISIBLE);
+        } else {
+            mAlarmStatusView.setVisibility(View.GONE);
+        }
+!!!4354053.java!!!	getClockBottom() : int
+        return mClockView.getBottom() +
+                ((MarginLayoutParams) mClockView.getLayoutParams()).bottomMargin;
+!!!4354181.java!!!	formatNextAlarm(inout context : Context, inout info : AlarmManager.AlarmClockInfo) : String
+        if (info == null) {
+            return "";
+        }
+        String skeleton = DateFormat.is24HourFormat(context, ActivityManager.getCurrentUser())
+                ? "EHm"
+                : "Ehma";
+        String pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), skeleton);
+        return DateFormat.format(pattern, info.getTriggerTime()).toString();
+!!!4354309.java!!!	updateOwnerInfo() : void
+        if (mOwnerInfo == null) return;
+        String ownerInfo = getOwnerInfo();
+        if (!TextUtils.isEmpty(ownerInfo)) {
+            mOwnerInfo.setVisibility(View.VISIBLE);
+            mOwnerInfo.setText(ownerInfo);
+        } else {
+            mOwnerInfo.setVisibility(View.GONE);
+        }
+!!!4354437.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        KeyguardUpdateMonitor.getInstance(mContext).registerCallback(mInfoCallback);
+!!!4354565.java!!!	onDetachedFromWindow() : void
+        super.onDetachedFromWindow();
+        KeyguardUpdateMonitor.getInstance(mContext).removeCallback(mInfoCallback);
+!!!4354693.java!!!	getOwnerInfo() : String
+        String info = null;
+        if (mLockPatternUtils.isDeviceOwnerInfoEnabled()) {
+            // Use the device owner information set by device policy client via
+            // device policy manager.
+            info = mLockPatternUtils.getDeviceOwnerInfo();
+        } else {
+            // Use the current user owner information if enabled.
+            final boolean ownerInfoEnabled = mLockPatternUtils.isOwnerInfoEnabled(
+                    KeyguardUpdateMonitor.getCurrentUser());
+            if (ownerInfoEnabled) {
+                info = mLockPatternUtils.getOwnerInfo(KeyguardUpdateMonitor.getCurrentUser());
+            }
+        }
+        return info;
+!!!4354821.java!!!	hasOverlappingRendering() : boolean
+        return false;
+!!!4355077.java!!!	setDark(inout dark : boolean) : void
+        if (mDark == dark) {
+            return;
+        }
+        mDark = dark;
+
+        final int N = mClockContainer.getChildCount();
+        for (int i = 0; i < N; i++) {
+            View child = mClockContainer.getChildAt(i);
+            if (ArrayUtils.contains(mVisibleInDoze, child)) {
+                continue;
+            }
+            child.setAlpha(dark ? 0 : 1);
+        }
+        updateDozeVisibleViews();
+        mBatteryDoze.setDark(dark);
+!!!4355205.java!!!	setPulsing(inout pulsing : boolean) : void
+        mPulsing = pulsing;
+        updateDozeVisibleViews();
+!!!4355333.java!!!	updateDozeVisibleViews() : void
+        for (View child : mVisibleInDoze) {
+            child.setAlpha(mDark && mPulsing ? 0.8f : 1);
+        }

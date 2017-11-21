@@ -1,0 +1,94 @@
+class JobInstance
+!!!11724549.java!!!	JobInstance(inout jobStatus : JobStatus)
+            mJobStatus = jobStatus;
+            mExecuteRunner = new TriggerRunnable(this);
+            mTimeoutRunner = new TriggerRunnable(this);
+            final JobInfo.TriggerContentUri[] uris = jobStatus.getJob().getTriggerContentUris();
+            final int sourceUserId = jobStatus.getSourceUserId();
+            ArrayMap<JobInfo.TriggerContentUri, ObserverInstance> observersOfUser =
+                    mObservers.get(sourceUserId);
+            if (observersOfUser == null) {
+                observersOfUser = new ArrayMap<>();
+                mObservers.put(sourceUserId, observersOfUser);
+            }
+            if (uris != null) {
+                for (JobInfo.TriggerContentUri uri : uris) {
+                    ObserverInstance obs = observersOfUser.get(uri);
+                    if (obs == null) {
+                        obs = new ObserverInstance(mHandler, uri, jobStatus.getSourceUserId());
+                        observersOfUser.put(uri, obs);
+                        final boolean andDescendants = (uri.getFlags() &
+                                JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS) != 0;
+                        if (DEBUG) {
+                            Slog.v(TAG, "New observer " + obs + " for " + uri.getUri()
+                                    + " andDescendants=" + andDescendants
+                                    + " sourceUserId=" + sourceUserId);
+                        }
+                        mContext.getContentResolver().registerContentObserver(
+                                uri.getUri(),
+                                andDescendants,
+                                obs,
+                                sourceUserId
+                        );
+                    } else {
+                        if (DEBUG) {
+                            final boolean andDescendants = (uri.getFlags() &
+                                    JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS) != 0;
+                            Slog.v(TAG, "Reusing existing observer " + obs + " for " + uri.getUri()
+                                    + " andDescendants=" + andDescendants);
+                        }
+                    }
+                    obs.mJobs.add(this);
+                    mMyObservers.add(obs);
+                }
+            }
+!!!11724677.java!!!	trigger() : void
+            boolean reportChange = false;
+            synchronized (mLock) {
+                if (mTriggerPending) {
+                    if (mJobStatus.setContentTriggerConstraintSatisfied(true)) {
+                        reportChange = true;
+                    }
+                    unscheduleLocked();
+                }
+            }
+            // Let the scheduler know that state has changed. This may or may not result in an
+            // execution.
+            if (reportChange) {
+                mStateChangedListener.onControllerStateChanged();
+            }
+!!!11724805.java!!!	scheduleLocked() : void
+            if (!mTriggerPending) {
+                mTriggerPending = true;
+                mHandler.postDelayed(mTimeoutRunner, mJobStatus.getTriggerContentMaxDelay());
+            }
+            mHandler.removeCallbacks(mExecuteRunner);
+            if (mChangedUris.size() >= URIS_URGENT_THRESHOLD) {
+                // If we start getting near the limit, GO NOW!
+                mHandler.post(mExecuteRunner);
+            } else {
+                mHandler.postDelayed(mExecuteRunner, mJobStatus.getTriggerContentUpdateDelay());
+            }
+!!!11724933.java!!!	unscheduleLocked() : void
+            if (mTriggerPending) {
+                mHandler.removeCallbacks(mExecuteRunner);
+                mHandler.removeCallbacks(mTimeoutRunner);
+                mTriggerPending = false;
+            }
+!!!11725061.java!!!	detachLocked() : void
+            final int N = mMyObservers.size();
+            for (int i=0; i<N; i++) {
+                final ObserverInstance obs = mMyObservers.get(i);
+                obs.mJobs.remove(this);
+                if (obs.mJobs.size() == 0) {
+                    if (DEBUG) {
+                        Slog.i(TAG, "Unregistering observer " + obs + " for " + obs.mUri.getUri());
+                    }
+                    mContext.getContentResolver().unregisterContentObserver(obs);
+                    ArrayMap<JobInfo.TriggerContentUri, ObserverInstance> observerOfUser =
+                            mObservers.get(obs.mUserId);
+                    if (observerOfUser !=  null) {
+                        observerOfUser.remove(obs.mUri);
+                    }
+                }
+            }

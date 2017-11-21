@@ -1,0 +1,381 @@
+class WindowSurfaceController
+!!!12826117.java!!!	WindowSurfaceController(inout s : SurfaceSession, in name : String, in w : int, in h : int, in format : int, in flags : int, inout animator : WindowStateAnimator, in windowType : int, in ownerUid : int)
+        mAnimator = animator;
+
+        mSurfaceW = w;
+        mSurfaceH = h;
+
+        title = name;
+
+        mService = animator.mService;
+        final WindowState win = animator.mWin;
+        mWindowType = windowType;
+        mWindowSession = win.mSession;
+
+        if (DEBUG_SURFACE_TRACE) {
+            mSurfaceControl = new SurfaceTrace(
+                    s, name, w, h, format, flags, windowType, ownerUid);
+        } else {
+            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "new SurfaceControl");
+            mSurfaceControl = new SurfaceControl(
+                    s, name, w, h, format, flags, windowType, ownerUid);
+            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
+        }
+
+        if (mService.mRoot.mSurfaceTraceEnabled) {
+            mSurfaceControl = new RemoteSurfaceTrace(
+                    mService.mRoot.mSurfaceTraceFd.getFileDescriptor(), mSurfaceControl, win);
+        }
+!!!12826245.java!!!	installRemoteTrace(inout fd : FileDescriptor) : void
+        mSurfaceControl = new RemoteSurfaceTrace(fd, mSurfaceControl, mAnimator.mWin);
+!!!12826373.java!!!	removeRemoteTrace() : void
+        mSurfaceControl = new SurfaceControl(mSurfaceControl);
+!!!12826501.java!!!	logSurface(in msg : String, inout where : RuntimeException) : void
+        String str = "  SURFACE " + msg + ": " + title;
+        if (where != null) {
+            Slog.i(TAG, str, where);
+        } else {
+            Slog.i(TAG, str);
+        }
+!!!12826629.java!!!	reparentChildrenInTransaction(inout other : WindowSurfaceController) : void
+        if (SHOW_TRANSACTIONS) Slog.i(TAG, "REPARENT from: " + this + " to: " + other);
+        if ((mSurfaceControl != null) && (other.mSurfaceControl != null)) {
+            mSurfaceControl.reparentChildren(other.getHandle());
+        }
+!!!12826757.java!!!	detachChildren() : void
+        if (SHOW_TRANSACTIONS) Slog.i(TAG, "SEVER CHILDREN");
+        if (mSurfaceControl != null) {
+            mSurfaceControl.detachChildren();
+        }
+!!!12826885.java!!!	hideInTransaction(in reason : String) : void
+        if (SHOW_TRANSACTIONS) logSurface("HIDE ( " + reason + " )", null);
+        mHiddenForOtherReasons = true;
+
+        mAnimator.destroyPreservedSurfaceLocked();
+        updateVisibility();
+!!!12827013.java!!!	hideSurface() : void
+        if (mSurfaceControl == null) {
+            return;
+        }
+        setShown(false);
+        try {
+            mSurfaceControl.hide();
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Exception hiding surface in " + this);
+        }
+!!!12827141.java!!!	destroyInTransaction() : void
+        if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) {
+            Slog.i(TAG, "Destroying surface " + this + " called by " + Debug.getCallers(8));
+        }
+        try {
+            if (mSurfaceControl != null) {
+                mSurfaceControl.destroy();
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Error destroying surface in: " + this, e);
+        } finally {
+            setShown(false);
+            mSurfaceControl = null;
+        }
+!!!12827269.java!!!	disconnectInTransaction() : void
+        if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) {
+            Slog.i(TAG, "Disconnecting client: " + this);
+        }
+
+        try {
+            if (mSurfaceControl != null) {
+                mSurfaceControl.disconnect();
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Error disconnecting surface in: " + this, e);
+        }
+!!!12827397.java!!!	setCropInTransaction(inout clipRect : Rect, inout recoveringMemory : boolean) : void
+        if (SHOW_TRANSACTIONS) logSurface(
+                "CROP " + clipRect.toShortString(), null);
+        try {
+            if (clipRect.width() > 0 && clipRect.height() > 0) {
+                mSurfaceControl.setWindowCrop(clipRect);
+                mHiddenForCrop = false;
+                updateVisibility();
+            } else {
+                mHiddenForCrop = true;
+                mAnimator.destroyPreservedSurfaceLocked();
+                updateVisibility();
+            }
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Error setting crop surface of " + this
+                    + " crop=" + clipRect.toShortString(), e);
+            if (!recoveringMemory) {
+                mAnimator.reclaimSomeSurfaceMemory("crop", true);
+            }
+        }
+!!!12827525.java!!!	clearCropInTransaction(inout recoveringMemory : boolean) : void
+        if (SHOW_TRANSACTIONS) logSurface(
+                "CLEAR CROP", null);
+        try {
+            Rect clipRect = new Rect(0, 0, -1, -1);
+            mSurfaceControl.setWindowCrop(clipRect);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Error setting clearing crop of " + this, e);
+            if (!recoveringMemory) {
+                mAnimator.reclaimSomeSurfaceMemory("crop", true);
+            }
+        }
+!!!12827653.java!!!	setFinalCropInTransaction(inout clipRect : Rect) : void
+        if (SHOW_TRANSACTIONS) logSurface(
+                "FINAL CROP " + clipRect.toShortString(), null);
+        try {
+            mSurfaceControl.setFinalCrop(clipRect);
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Error disconnecting surface in: " + this, e);
+        }
+!!!12827781.java!!!	setLayer(in layer : int) : void
+        if (mSurfaceControl != null) {
+            mService.openSurfaceTransaction();
+            try {
+                if (mAnimator.mWin.usesRelativeZOrdering()) {
+                    mSurfaceControl.setRelativeLayer(
+                            mAnimator.mWin.getParentWindow()
+                            .mWinAnimator.mSurfaceController.mSurfaceControl.getHandle(),
+                            -1);
+                } else {
+                    mSurfaceLayer = layer;
+                    mSurfaceControl.setLayer(layer);
+                }
+            } finally {
+                mService.closeSurfaceTransaction();
+            }
+        }
+!!!12827909.java!!!	setLayerStackInTransaction(in layerStack : int) : void
+        if (mSurfaceControl != null) {
+            mSurfaceControl.setLayerStack(layerStack);
+        }
+!!!12828037.java!!!	setPositionInTransaction(in left : float, in top : float, inout recoveringMemory : boolean) : void
+        final boolean surfaceMoved = mSurfaceX != left || mSurfaceY != top;
+        if (surfaceMoved) {
+            mSurfaceX = left;
+            mSurfaceY = top;
+
+            try {
+                if (SHOW_TRANSACTIONS) logSurface(
+                        "POS (setPositionInTransaction) @ (" + left + "," + top + ")", null);
+
+                mSurfaceControl.setPosition(left, top);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "Error positioning surface of " + this
+                        + " pos=(" + left + "," + top + ")", e);
+                if (!recoveringMemory) {
+                    mAnimator.reclaimSomeSurfaceMemory("position", true);
+                }
+            }
+        }
+!!!12828165.java!!!	setGeometryAppliesWithResizeInTransaction(inout recoveringMemory : boolean) : void
+        mSurfaceControl.setGeometryAppliesWithResize();
+!!!12828293.java!!!	setMatrixInTransaction(in dsdx : float, in dtdx : float, in dsdy : float, in dtdy : float, inout recoveringMemory : boolean) : void
+        final boolean matrixChanged = mLastDsdx != dsdx || mLastDtdx != dtdx ||
+                                      mLastDsdy != dsdy || mLastDtdy != dtdy;
+        if (!matrixChanged) {
+            return;
+        }
+
+        mLastDsdx = dsdx;
+        mLastDtdx = dtdx;
+        mLastDsdy = dsdy;
+        mLastDtdy = dtdy;
+
+        try {
+            if (SHOW_TRANSACTIONS) logSurface(
+                    "MATRIX [" + dsdx + "," + dtdx + "," + dsdy + "," + dtdy + "]", null);
+            mSurfaceControl.setMatrix(
+                    dsdx, dtdx, dsdy, dtdy);
+        } catch (RuntimeException e) {
+            // If something goes wrong with the surface (such
+            // as running out of memory), don't take down the
+            // entire system.
+            Slog.e(TAG, "Error setting matrix on surface surface" + title
+                    + " MATRIX [" + dsdx + "," + dtdx + "," + dsdy + "," + dtdy + "]", null);
+            if (!recoveringMemory) {
+                mAnimator.reclaimSomeSurfaceMemory("matrix", true);
+            }
+        }
+!!!12828421.java!!!	setSizeInTransaction(in width : int, in height : int, inout recoveringMemory : boolean) : boolean
+        final boolean surfaceResized = mSurfaceW != width || mSurfaceH != height;
+        if (surfaceResized) {
+            mSurfaceW = width;
+            mSurfaceH = height;
+
+            try {
+                if (SHOW_TRANSACTIONS) logSurface(
+                        "SIZE " + width + "x" + height, null);
+                mSurfaceControl.setSize(width, height);
+            } catch (RuntimeException e) {
+                // If something goes wrong with the surface (such
+                // as running out of memory), don't take down the
+                // entire system.
+                Slog.e(TAG, "Error resizing surface of " + title
+                        + " size=(" + width + "x" + height + ")", e);
+                if (!recoveringMemory) {
+                    mAnimator.reclaimSomeSurfaceMemory("size", true);
+                }
+                return false;
+            }
+            return true;
+        }
+        return false;
+!!!12828549.java!!!	prepareToShowInTransaction(in alpha : float, in dsdx : float, in dtdx : float, in dsdy : float, in dtdy : float, inout recoveringMemory : boolean) : boolean
+        if (mSurfaceControl != null) {
+            try {
+                mSurfaceAlpha = alpha;
+                mSurfaceControl.setAlpha(alpha);
+                mLastDsdx = dsdx;
+                mLastDtdx = dtdx;
+                mLastDsdy = dsdy;
+                mLastDtdy = dtdy;
+                mSurfaceControl.setMatrix(
+                        dsdx, dtdx, dsdy, dtdy);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "Error updating surface in " + title, e);
+                if (!recoveringMemory) {
+                    mAnimator.reclaimSomeSurfaceMemory("update", true);
+                }
+                return false;
+            }
+        }
+        return true;
+!!!12828677.java!!!	setTransparentRegionHint(in region : Region) : void
+        if (mSurfaceControl == null) {
+            Slog.w(TAG, "setTransparentRegionHint: null mSurface after mHasSurface true");
+            return;
+        }
+        if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG, ">>> OPEN TRANSACTION setTransparentRegion");
+        mService.openSurfaceTransaction();
+        try {
+            mSurfaceControl.setTransparentRegionHint(region);
+        } finally {
+            mService.closeSurfaceTransaction();
+            if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG,
+                    "<<< CLOSE TRANSACTION setTransparentRegion");
+        }
+!!!12828805.java!!!	setOpaque(inout isOpaque : boolean) : void
+        if (SHOW_TRANSACTIONS) logSurface("isOpaque=" + isOpaque,
+                null);
+
+        if (mSurfaceControl == null) {
+            return;
+        }
+        if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG, ">>> OPEN TRANSACTION setOpaqueLocked");
+        mService.openSurfaceTransaction();
+        try {
+            mSurfaceControl.setOpaque(isOpaque);
+        } finally {
+            mService.closeSurfaceTransaction();
+            if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG, "<<< CLOSE TRANSACTION setOpaqueLocked");
+        }
+!!!12828933.java!!!	setSecure(inout isSecure : boolean) : void
+        if (SHOW_TRANSACTIONS) logSurface("isSecure=" + isSecure,
+                null);
+
+        if (mSurfaceControl == null) {
+            return;
+        }
+        if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG, ">>> OPEN TRANSACTION setSecureLocked");
+        mService.openSurfaceTransaction();
+        try {
+            mSurfaceControl.setSecure(isSecure);
+        } finally {
+            mService.closeSurfaceTransaction();
+            if (SHOW_LIGHT_TRANSACTIONS) Slog.i(TAG, "<<< CLOSE TRANSACTION setSecureLocked");
+        }
+!!!12829061.java!!!	showRobustlyInTransaction() : boolean
+        if (SHOW_TRANSACTIONS) logSurface(
+                "SHOW (performLayout)", null);
+        if (DEBUG_VISIBILITY) Slog.v(TAG, "Showing " + this
+                + " during relayout");
+        mHiddenForOtherReasons = false;
+        return updateVisibility();
+!!!12829189.java!!!	updateVisibility() : boolean
+        if (mHiddenForCrop || mHiddenForOtherReasons) {
+            if (mSurfaceShown) {
+                hideSurface();
+            }
+            return false;
+        } else {
+            if (!mSurfaceShown) {
+                return showSurface();
+            } else {
+                return true;
+            }
+        }
+!!!12829317.java!!!	showSurface() : boolean
+        try {
+            setShown(true);
+            mSurfaceControl.show();
+            return true;
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "Failure showing surface " + mSurfaceControl + " in " + this, e);
+        }
+
+        mAnimator.reclaimSomeSurfaceMemory("show", true);
+
+        return false;
+!!!12829445.java!!!	deferTransactionUntil(inout handle : IBinder, in frame : long) : void
+        // TODO: Logging
+        mSurfaceControl.deferTransactionUntil(handle, frame);
+!!!12829573.java!!!	forceScaleableInTransaction(inout force : boolean) : void
+        // -1 means we don't override the default or client specified
+        // scaling mode.
+        int scalingMode = force ? SCALING_MODE_SCALE_TO_WINDOW : -1;
+        mSurfaceControl.setOverrideScalingMode(scalingMode);
+!!!12829701.java!!!	clearWindowContentFrameStats() : boolean
+        if (mSurfaceControl == null) {
+            return false;
+        }
+        return mSurfaceControl.clearContentFrameStats();
+!!!12829829.java!!!	getWindowContentFrameStats(inout outStats : WindowContentFrameStats) : boolean
+        if (mSurfaceControl == null) {
+            return false;
+        }
+        return mSurfaceControl.getContentFrameStats(outStats);
+!!!12829957.java!!!	hasSurface() : boolean
+        return mSurfaceControl != null;
+!!!12830085.java!!!	getHandle() : IBinder
+        if (mSurfaceControl == null) {
+            return null;
+        }
+        return mSurfaceControl.getHandle();
+!!!12830213.java!!!	getSurface(inout outSurface : Surface) : void
+        outSurface.copyFrom(mSurfaceControl);
+!!!12830341.java!!!	getLayer() : int
+        return mSurfaceLayer;
+!!!12830469.java!!!	getShown() : boolean
+        return mSurfaceShown;
+!!!12830597.java!!!	setShown(inout surfaceShown : boolean) : void
+        mSurfaceShown = surfaceShown;
+
+        if (mWindowSession != null) {
+            mWindowSession.onWindowSurfaceVisibilityChanged(this, mSurfaceShown, mWindowType);
+        }
+!!!12830725.java!!!	getX() : float
+        return mSurfaceX;
+!!!12830853.java!!!	getY() : float
+        return mSurfaceY;
+!!!12830981.java!!!	getWidth() : float
+        return mSurfaceW;
+!!!12831109.java!!!	getHeight() : float
+        return mSurfaceH;
+!!!12831237.java!!!	dump(inout pw : PrintWriter, in prefix : String, inout dumpAll : boolean) : void
+        if (dumpAll) {
+            pw.print(prefix); pw.print("mSurface="); pw.println(mSurfaceControl);
+        }
+        pw.print(prefix); pw.print("Surface: shown="); pw.print(mSurfaceShown);
+        pw.print(" layer="); pw.print(mSurfaceLayer);
+        pw.print(" alpha="); pw.print(mSurfaceAlpha);
+        pw.print(" rect=("); pw.print(mSurfaceX);
+        pw.print(","); pw.print(mSurfaceY);
+        pw.print(") "); pw.print(mSurfaceW);
+        pw.print(" x "); pw.print(mSurfaceH);
+        pw.print(" transform=("); pw.print(mLastDsdx); pw.print(", ");
+        pw.print(mLastDtdx); pw.print(", "); pw.print(mLastDsdy);
+        pw.print(", "); pw.print(mLastDtdy); pw.println(")");
+!!!12831365.java!!!	toString() : String
+        return mSurfaceControl.toString();

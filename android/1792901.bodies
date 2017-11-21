@@ -1,0 +1,66 @@
+class StoreWriteQueueItem
+!!!12759045.java!!!	StoreWriteQueueItem(in taskId : int, in userId : int, inout snapshot : ActivityManager::TaskSnapshot)
+            mTaskId = taskId;
+            mUserId = userId;
+            mSnapshot = snapshot;
+!!!12759173.java!!!	onQueuedLocked() : void
+            mStoreQueueItems.offer(this);
+!!!12759301.java!!!	onDequeuedLocked() : void
+            mStoreQueueItems.remove(this);
+!!!12759429.java!!!	write() : void
+            if (!createDirectory(mUserId)) {
+                Slog.e(TAG, "Unable to create snapshot directory for user dir="
+                        + getDirectory(mUserId));
+            }
+            boolean failed = false;
+            if (!writeProto()) {
+                failed = true;
+            }
+            if (!writeBuffer()) {
+                writeBuffer();
+                failed = true;
+            }
+            if (failed) {
+                deleteSnapshot(mTaskId, mUserId);
+            }
+!!!12759557.java!!!	writeProto() : boolean
+            final TaskSnapshotProto proto = new TaskSnapshotProto();
+            proto.orientation = mSnapshot.getOrientation();
+            proto.insetLeft = mSnapshot.getContentInsets().left;
+            proto.insetTop = mSnapshot.getContentInsets().top;
+            proto.insetRight = mSnapshot.getContentInsets().right;
+            proto.insetBottom = mSnapshot.getContentInsets().bottom;
+            final byte[] bytes = TaskSnapshotProto.toByteArray(proto);
+            final File file = getProtoFile(mTaskId, mUserId);
+            final AtomicFile atomicFile = new AtomicFile(file);
+            FileOutputStream fos = null;
+            try {
+                fos = atomicFile.startWrite();
+                fos.write(bytes);
+                atomicFile.finishWrite(fos);
+            } catch (IOException e) {
+                atomicFile.failWrite(fos);
+                Slog.e(TAG, "Unable to open " + file + " for persisting. " + e);
+                return false;
+            }
+            return true;
+!!!12759685.java!!!	writeBuffer() : boolean
+            final File file = getBitmapFile(mTaskId, mUserId);
+            final File reducedFile = getReducedResolutionBitmapFile(mTaskId, mUserId);
+            final Bitmap bitmap = Bitmap.createHardwareBitmap(mSnapshot.getSnapshot());
+            final Bitmap swBitmap = bitmap.copy(Config.ARGB_8888, false /* isMutable */);
+            final Bitmap reduced = Bitmap.createScaledBitmap(swBitmap,
+                    (int) (bitmap.getWidth() * REDUCED_SCALE),
+                    (int) (bitmap.getHeight() * REDUCED_SCALE), true /* filter */);
+            try {
+                FileOutputStream fos = new FileOutputStream(file);
+                swBitmap.compress(JPEG, QUALITY, fos);
+                fos.close();
+                FileOutputStream reducedFos = new FileOutputStream(reducedFile);
+                reduced.compress(JPEG, QUALITY, reducedFos);
+                reducedFos.close();
+            } catch (IOException e) {
+                Slog.e(TAG, "Unable to open " + file + " or " + reducedFile +" for persisting.", e);
+                return false;
+            }
+            return true;

@@ -1,0 +1,88 @@
+class PostNotificationRunnable
+!!!11936005.java!!!	PostNotificationRunnable(in key : String)
+            this.key = key;
+!!!11936133.java!!!	run() : void
+            synchronized (mNotificationLock) {
+                try {
+                    NotificationRecord r = null;
+                    int N = mEnqueuedNotifications.size();
+                    for (int i = 0; i < N; i++) {
+                        final NotificationRecord enqueued = mEnqueuedNotifications.get(i);
+                        if (Objects.equals(key, enqueued.getKey())) {
+                            r = enqueued;
+                            break;
+                        }
+                    }
+                    if (r == null) {
+                        Slog.i(TAG, "Cannot find enqueued record for key: " + key);
+                        return;
+                    }
+                    NotificationRecord old = mNotificationsByKey.get(key);
+                    final StatusBarNotification n = r.sbn;
+                    final Notification notification = n.getNotification();
+                    int index = indexOfNotificationLocked(n.getKey());
+                    if (index < 0) {
+                        mNotificationList.add(r);
+                        mUsageStats.registerPostedByApp(r);
+                    } else {
+                        old = mNotificationList.get(index);
+                        mNotificationList.set(index, r);
+                        mUsageStats.registerUpdatedByApp(r, old);
+                        // Make sure we don't lose the foreground service state.
+                        notification.flags |=
+                                old.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE;
+                        r.isUpdate = true;
+                    }
+
+                    mNotificationsByKey.put(n.getKey(), r);
+
+                    // Ensure if this is a foreground service that the proper additional
+                    // flags are set.
+                    if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                        notification.flags |= Notification.FLAG_ONGOING_EVENT
+                                | Notification.FLAG_NO_CLEAR;
+                    }
+
+                    applyZenModeLocked(r);
+                    mRankingHelper.sort(mNotificationList);
+
+                    if (notification.getSmallIcon() != null) {
+                        StatusBarNotification oldSbn = (old != null) ? old.sbn : null;
+                        mListeners.notifyPostedLocked(n, oldSbn);
+                        mHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                mGroupHelper.onNotificationPosted(n);
+                            }
+                        });
+                    } else {
+                        Slog.e(TAG, "Not posting notification without small icon: " + notification);
+                        if (old != null && !old.isCanceled) {
+                            mListeners.notifyRemovedLocked(n,
+                                    NotificationListenerService.REASON_ERROR);
+                            mHandler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    mGroupHelper.onNotificationRemoved(n);
+                                }
+                            });
+                        }
+                        // ATTENTION: in a future release we will bail out here
+                        // so that we do not play sounds, show lights, etc. for invalid
+                        // notifications
+                        Slog.e(TAG, "WARNING: In a future release this will crash the app: "
+                                + n.getPackageName());
+                    }
+
+                    buzzBeepBlinkLocked(r);
+                } finally {
+                    int N = mEnqueuedNotifications.size();
+                    for (int i = 0; i < N; i++) {
+                        final NotificationRecord enqueued = mEnqueuedNotifications.get(i);
+                        if (Objects.equals(key, enqueued.getKey())) {
+                            mEnqueuedNotifications.remove(i);
+                            break;
+                        }
+                    }
+                }
+            }

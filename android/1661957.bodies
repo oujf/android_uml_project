@@ -1,0 +1,57 @@
+class HostClipboardMonitor
+!!!11351173.java!!!	openPipe() : void
+        try {
+            // String.getBytes doesn't include the null terminator,
+            // but the QEMU pipe device requires the pipe service name
+            // to be null-terminated.
+            byte[] b = new byte[PIPE_NAME.length() + 1];
+            b[PIPE_NAME.length()] = 0;
+            System.arraycopy(
+                PIPE_NAME.getBytes(),
+                0,
+                b,
+                0,
+                PIPE_NAME.length());
+            mPipe = new RandomAccessFile(PIPE_DEVICE, "rw");
+            mPipe.write(b);
+        } catch (IOException e) {
+            try {
+                if (mPipe != null) mPipe.close();
+            } catch (IOException ee) {}
+            mPipe = null;
+        }
+!!!11351301.java!!!	HostClipboardMonitor(inout cb : HostClipboardMonitor::HostClipboardCallback)
+        mHostClipboardCallback = cb;
+!!!11351429.java!!!	run() : void
+        while(!Thread.interrupted()) {
+            try {
+                // There's no guarantee that QEMU pipes will be ready at the moment
+                // this method is invoked. We simply try to get the pipe open and
+                // retry on failure indefinitely.
+                while (mPipe == null) {
+                    openPipe();
+                    Thread.sleep(100);
+                }
+                int size = mPipe.readInt();
+                size = Integer.reverseBytes(size);
+                byte[] receivedData = new byte[size];
+                mPipe.readFully(receivedData);
+                mHostClipboardCallback.onHostClipboardUpdated(
+                    new String(receivedData));
+            } catch (IOException e) {
+                try {
+                    mPipe.close();
+                } catch (IOException ee) {}
+                mPipe = null;
+            } catch (InterruptedException e) {}
+        }
+!!!11351557.java!!!	setHostClipboard(in content : String) : void
+        try {
+            if (mPipe != null) {
+                mPipe.writeInt(Integer.reverseBytes(content.getBytes().length));
+                mPipe.write(content.getBytes());
+            }
+        } catch(IOException e) {
+            Slog.e("HostClipboardMonitor",
+                   "Failed to set host clipboard " + e.getMessage());
+        }

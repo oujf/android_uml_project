@@ -1,0 +1,147 @@
+class WebViewZygote
+!!!9221765.java!!!	getProcess() : ZygoteProcess
+        synchronized (sLock) {
+            if (sZygote != null) return sZygote;
+
+            waitForServiceStartAndConnect();
+            return sZygote;
+        }
+!!!9221893.java!!!	getPackageName() : String
+        synchronized (sLock) {
+            return sPackage.packageName;
+        }
+!!!9222021.java!!!	isMultiprocessEnabled() : boolean
+        synchronized (sLock) {
+            return sMultiprocessEnabled && sPackage != null;
+        }
+!!!9222149.java!!!	setMultiprocessEnabled(inout enabled : boolean) : void
+        synchronized (sLock) {
+            sMultiprocessEnabled = enabled;
+
+            // When toggling between multi-process being on/off, start or stop the
+            // service. If it is enabled and the zygote is not yet started, bring up the service.
+            // Otherwise, bring down the service. The name may be null if the package
+            // information has not yet been resolved.
+            final String serviceName = getServiceNameLocked();
+            if (serviceName == null) return;
+
+            if (enabled) {
+                if (!sStartedService) {
+                    SystemService.start(serviceName);
+                    sStartedService = true;
+                }
+            } else {
+                SystemService.stop(serviceName);
+                sStartedService = false;
+                sZygote = null;
+            }
+        }
+!!!9222277.java!!!	onWebViewProviderChanged(inout packageInfo : PackageInfo, in cacheKey : String) : void
+        synchronized (sLock) {
+            sPackage = packageInfo;
+            sPackageCacheKey = cacheKey;
+
+            // If multi-process is not enabled, then do not start the zygote service.
+            if (!sMultiprocessEnabled) {
+                return;
+            }
+
+            final String serviceName = getServiceNameLocked();
+            sZygote = null;
+
+            // The service may enter the RUNNING state before it opens the socket,
+            // so connectToZygoteIfNeededLocked() may still fail.
+            if (SystemService.isStopped(serviceName)) {
+                SystemService.start(serviceName);
+            } else {
+                SystemService.restart(serviceName);
+            }
+            sStartedService = true;
+        }
+!!!9222405.java!!!	waitForServiceStartAndConnect() : void
+        if (!sStartedService) {
+            throw new AndroidRuntimeException("Tried waiting for the WebView Zygote Service to " +
+                    "start running without first starting the service.");
+        }
+
+        String serviceName;
+        synchronized (sLock) {
+            serviceName = getServiceNameLocked();
+        }
+        try {
+            SystemService.waitForState(serviceName, SystemService.State.RUNNING, 5000);
+        } catch (TimeoutException e) {
+            Log.e(LOGTAG, "Timed out waiting for " + serviceName);
+            return;
+        }
+
+        synchronized (sLock) {
+            connectToZygoteIfNeededLocked();
+        }
+!!!9222533.java!!!	getServiceNameLocked() : String
+        if (sPackage == null)
+            return null;
+
+        if (Arrays.asList(Build.SUPPORTED_64_BIT_ABIS).contains(
+                    sPackage.applicationInfo.primaryCpuAbi)) {
+            return WEBVIEW_ZYGOTE_SERVICE_64;
+        }
+
+        return WEBVIEW_ZYGOTE_SERVICE_32;
+!!!9222661.java!!!	connectToZygoteIfNeededLocked() : void
+        if (sZygote != null) {
+            return;
+        }
+
+        if (sPackage == null) {
+            Log.e(LOGTAG, "Cannot connect to zygote, no package specified");
+            return;
+        }
+
+        final String serviceName = getServiceNameLocked();
+        if (!SystemService.isRunning(serviceName)) {
+            Log.e(LOGTAG, serviceName + " is not running");
+            return;
+        }
+
+        try {
+            sZygote = new ZygoteProcess(WEBVIEW_ZYGOTE_SOCKET, null);
+
+            // All the work below is usually done by LoadedApk, but the zygote can't talk to
+            // PackageManager or construct a LoadedApk since it's single-threaded pre-fork, so
+            // doesn't have an ActivityThread and can't use Binder.
+            // Instead, figure out the paths here, in the system server where we have access to
+            // the package manager. Reuse the logic from LoadedApk to determine the correct
+            // paths and pass them to the zygote as strings.
+            final List<String> zipPaths = new ArrayList<>(10);
+            final List<String> libPaths = new ArrayList<>(10);
+            LoadedApk.makePaths(null, false, sPackage.applicationInfo, zipPaths, libPaths);
+            final String librarySearchPath = TextUtils.join(File.pathSeparator, libPaths);
+            final String zip = (zipPaths.size() == 1) ? zipPaths.get(0) :
+                    TextUtils.join(File.pathSeparator, zipPaths);
+
+            waitForZygote();
+
+            Log.d(LOGTAG, "Preloading package " + zip + " " + librarySearchPath);
+            sZygote.preloadPackageForAbi(zip, librarySearchPath, sPackageCacheKey,
+                                         Build.SUPPORTED_ABIS[0]);
+        } catch (Exception e) {
+            Log.e(LOGTAG, "Error connecting to " + serviceName, e);
+            sZygote = null;
+        }
+!!!9222789.java!!!	waitForZygote() : void
+        while (true) {
+            try {
+                final ZygoteProcess.ZygoteState zs =
+                        ZygoteProcess.ZygoteState.connect(WEBVIEW_ZYGOTE_SOCKET);
+                zs.close();
+                break;
+            } catch (IOException ioe) {
+                Log.w(LOGTAG, "Got error connecting to zygote, retrying. msg= " + ioe.getMessage());
+            }
+
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException ie) {
+            }
+        }

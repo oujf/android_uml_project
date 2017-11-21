@@ -1,0 +1,136 @@
+class LinearSmoothScroller
+!!!10419973.java!!!	LinearSmoothScroller(inout context : Context)
+        MILLISECONDS_PER_PX = calculateSpeedPerPixel(context.getResources().getDisplayMetrics());
+!!!10420101.java!!!	onStart() : void
+
+!!!10420229.java!!!	onTargetFound(inout targetView : View, inout state : RecyclerView::State, inout action : Action) : void
+        final int dx = calculateDxToMakeVisible(targetView, getHorizontalSnapPreference());
+        final int dy = calculateDyToMakeVisible(targetView, getVerticalSnapPreference());
+        final int distance = (int) Math.sqrt(dx * dx + dy * dy);
+        final int time = calculateTimeForDeceleration(distance);
+        if (time > 0) {
+            action.update(-dx, -dy, time, mDecelerateInterpolator);
+        }
+!!!10420357.java!!!	onSeekTargetStep(in dx : int, in dy : int, inout state : RecyclerView::State, inout action : Action) : void
+        if (getChildCount() == 0) {
+            stop();
+            return;
+        }
+        //noinspection PointlessBooleanExpression
+        if (DEBUG && mTargetVector != null
+                && ((mTargetVector.x * dx < 0 || mTargetVector.y * dy < 0))) {
+            throw new IllegalStateException("Scroll happened in the opposite direction"
+                    + " of the target. Some calculations are wrong");
+        }
+        mInterimTargetDx = clampApplyScroll(mInterimTargetDx, dx);
+        mInterimTargetDy = clampApplyScroll(mInterimTargetDy, dy);
+
+        if (mInterimTargetDx == 0 && mInterimTargetDy == 0) {
+            updateActionForInterimTarget(action);
+        } // everything is valid, keep going
+
+!!!10420485.java!!!	onStop() : void
+        mInterimTargetDx = mInterimTargetDy = 0;
+        mTargetVector = null;
+!!!10420613.java!!!	calculateSpeedPerPixel(inout displayMetrics : DisplayMetrics) : float
+        return MILLISECONDS_PER_INCH / displayMetrics.densityDpi;
+!!!10420741.java!!!	calculateTimeForDeceleration(in dx : int) : int
+        // we want to cover same area with the linear interpolator for the first 10% of the
+        // interpolation. After that, deceleration will take control.
+        // area under curve (1-(1-x)^2) can be calculated as (1 - x/3) * x * x
+        // which gives 0.100028 when x = .3356
+        // this is why we divide linear scrolling time with .3356
+        return  (int) Math.ceil(calculateTimeForScrolling(dx) / .3356);
+!!!10420869.java!!!	calculateTimeForScrolling(in dx : int) : int
+        // In a case where dx is very small, rounding may return 0 although dx > 0.
+        // To avoid that issue, ceil the result so that if dx > 0, we'll always return positive
+        // time.
+        return (int) Math.ceil(Math.abs(dx) * MILLISECONDS_PER_PX);
+!!!10420997.java!!!	getHorizontalSnapPreference() : int
+        return mTargetVector == null || mTargetVector.x == 0 ? SNAP_TO_ANY :
+                mTargetVector.x > 0 ? SNAP_TO_END : SNAP_TO_START;
+!!!10421125.java!!!	getVerticalSnapPreference() : int
+        return mTargetVector == null || mTargetVector.y == 0 ? SNAP_TO_ANY :
+                mTargetVector.y > 0 ? SNAP_TO_END : SNAP_TO_START;
+!!!10421253.java!!!	updateActionForInterimTarget(inout action : Action) : void
+        // find an interim target position
+        PointF scrollVector = computeScrollVectorForPosition(getTargetPosition());
+        if (scrollVector == null || (scrollVector.x == 0 && scrollVector.y == 0)) {
+            final int target = getTargetPosition();
+            action.jumpTo(target);
+            stop();
+            return;
+        }
+        normalize(scrollVector);
+        mTargetVector = scrollVector;
+
+        mInterimTargetDx = (int) (TARGET_SEEK_SCROLL_DISTANCE_PX * scrollVector.x);
+        mInterimTargetDy = (int) (TARGET_SEEK_SCROLL_DISTANCE_PX * scrollVector.y);
+        final int time = calculateTimeForScrolling(TARGET_SEEK_SCROLL_DISTANCE_PX);
+        // To avoid UI hiccups, trigger a smooth scroll to a distance little further than the
+        // interim target. Since we track the distance travelled in onSeekTargetStep callback, it
+        // won't actually scroll more than what we need.
+        action.update((int) (mInterimTargetDx * TARGET_SEEK_EXTRA_SCROLL_RATIO),
+                (int) (mInterimTargetDy * TARGET_SEEK_EXTRA_SCROLL_RATIO),
+                (int) (time * TARGET_SEEK_EXTRA_SCROLL_RATIO), mLinearInterpolator);
+!!!10421381.java!!!	clampApplyScroll(in tmpDt : int, in dt : int) : int
+        final int before = tmpDt;
+        tmpDt -= dt;
+        if (before * tmpDt <= 0) { // changed sign, reached 0 or was 0, reset
+            return 0;
+        }
+        return tmpDt;
+!!!10421509.java!!!	calculateDtToFit(in viewStart : int, in viewEnd : int, in boxStart : int, in boxEnd : int, in snapPreference : int) : int
+        switch (snapPreference) {
+            case SNAP_TO_START:
+                return boxStart - viewStart;
+            case SNAP_TO_END:
+                return boxEnd - viewEnd;
+            case SNAP_TO_ANY:
+                final int dtStart = boxStart - viewStart;
+                if (dtStart > 0) {
+                    return dtStart;
+                }
+                final int dtEnd = boxEnd - viewEnd;
+                if (dtEnd < 0) {
+                    return dtEnd;
+                }
+                break;
+            default:
+                throw new IllegalArgumentException("snap preference should be one of the"
+                        + " constants defined in SmoothScroller, starting with SNAP_");
+        }
+        return 0;
+!!!10421637.java!!!	calculateDyToMakeVisible(inout view : View, in snapPreference : int) : int
+        final RecyclerView.LayoutManager layoutManager = getLayoutManager();
+        if (layoutManager == null || !layoutManager.canScrollVertically()) {
+            return 0;
+        }
+        final RecyclerView.LayoutParams params = (RecyclerView.LayoutParams)
+                view.getLayoutParams();
+        final int top = layoutManager.getDecoratedTop(view) - params.topMargin;
+        final int bottom = layoutManager.getDecoratedBottom(view) + params.bottomMargin;
+        final int start = layoutManager.getPaddingTop();
+        final int end = layoutManager.getHeight() - layoutManager.getPaddingBottom();
+        return calculateDtToFit(top, bottom, start, end, snapPreference);
+!!!10421765.java!!!	calculateDxToMakeVisible(inout view : View, in snapPreference : int) : int
+        final RecyclerView.LayoutManager layoutManager = getLayoutManager();
+        if (layoutManager == null || !layoutManager.canScrollHorizontally()) {
+            return 0;
+        }
+        final RecyclerView.LayoutParams params = (RecyclerView.LayoutParams)
+                view.getLayoutParams();
+        final int left = layoutManager.getDecoratedLeft(view) - params.leftMargin;
+        final int right = layoutManager.getDecoratedRight(view) + params.rightMargin;
+        final int start = layoutManager.getPaddingLeft();
+        final int end = layoutManager.getWidth() - layoutManager.getPaddingRight();
+        return calculateDtToFit(left, right, start, end, snapPreference);
+!!!10421893.java!!!	computeScrollVectorForPosition(in targetPosition : int) : PointF
+        RecyclerView.LayoutManager layoutManager = getLayoutManager();
+        if (layoutManager instanceof ScrollVectorProvider) {
+            return ((ScrollVectorProvider) layoutManager)
+                    .computeScrollVectorForPosition(targetPosition);
+        }
+        Log.w(TAG, "You should override computeScrollVectorForPosition when the LayoutManager"
+                + " does not implement " + ScrollVectorProvider.class.getCanonicalName());
+        return null;

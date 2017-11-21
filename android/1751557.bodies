@@ -1,0 +1,304 @@
+class UserRestrictionsUtils
+!!!12332549.java!!!	newSetWithUniqueCheck(inout strings : String [[]]) : Set<String>
+        final Set<String> ret = Sets.newArraySet(strings);
+
+        // Make sure there's no overlap.
+        Preconditions.checkState(ret.size() == strings.length);
+        return ret;
+!!!12332677.java!!!	isValidRestriction(in restriction : String) : boolean
+        if (!USER_RESTRICTIONS.contains(restriction)) {
+            Slog.e(TAG, "Unknown restriction: " + restriction);
+            return false;
+        }
+        return true;
+!!!12332805.java!!!	writeRestrictions(inout serializer : XmlSerializer, inout restrictions : Bundle, in tag : String) : void
+        if (restrictions == null) {
+            return;
+        }
+
+        serializer.startTag(null, tag);
+        for (String key : restrictions.keySet()) {
+            if (NON_PERSIST_USER_RESTRICTIONS.contains(key)) {
+                continue; // Don't persist.
+            }
+            if (USER_RESTRICTIONS.contains(key)) {
+                if (restrictions.getBoolean(key)) {
+                    serializer.attribute(null, key, "true");
+                }
+                continue;
+            }
+            Log.w(TAG, "Unknown user restriction detected: " + key);
+        }
+        serializer.endTag(null, tag);
+!!!12332933.java!!!	readRestrictions(inout parser : XmlPullParser, inout restrictions : Bundle) : void
+        restrictions.clear();
+        for (String key : USER_RESTRICTIONS) {
+            final String value = parser.getAttributeValue(null, key);
+            if (value != null) {
+                restrictions.putBoolean(key, Boolean.parseBoolean(value));
+            }
+        }
+!!!12333061.java!!!	readRestrictions(inout parser : XmlPullParser) : Bundle
+        final Bundle result = new Bundle();
+        readRestrictions(parser, result);
+        return result;
+!!!12333189.java!!!	nonNull(inout in : Bundle) : Bundle
+        return in != null ? in : new Bundle();
+!!!12333317.java!!!	isEmpty(inout in : Bundle) : boolean
+        return (in == null) || (in.size() == 0);
+!!!12333445.java!!!	contains(inout in : Bundle, in restriction : String) : boolean
+        return in != null && in.getBoolean(restriction);
+!!!12333573.java!!!	clone(inout in : Bundle) : Bundle
+        return (in != null) ? new Bundle(in) : new Bundle();
+!!!12333701.java!!!	merge(inout dest : Bundle, inout in : Bundle) : void
+        Preconditions.checkNotNull(dest);
+        Preconditions.checkArgument(dest != in);
+        if (in == null) {
+            return;
+        }
+        for (String key : in.keySet()) {
+            if (in.getBoolean(key, false)) {
+                dest.putBoolean(key, true);
+            }
+        }
+!!!12333829.java!!!	mergeAll(inout restrictions : SparseArray) : Bundle
+        if (restrictions.size() == 0) {
+            return null;
+        } else {
+            final Bundle result = new Bundle();
+            for (int i = 0; i < restrictions.size(); i++) {
+                merge(result, restrictions.valueAt(i));
+            }
+            return result;
+        }
+!!!12333957.java!!!	canDeviceOwnerChange(in restriction : String) : boolean
+        return !IMMUTABLE_BY_OWNERS.contains(restriction);
+!!!12334085.java!!!	canProfileOwnerChange(in restriction : String, in userId : int) : boolean
+        return !IMMUTABLE_BY_OWNERS.contains(restriction)
+                && !(userId != UserHandle.USER_SYSTEM
+                    && PRIMARY_USER_ONLY_RESTRICTIONS.contains(restriction));
+!!!12334213.java!!!	getDefaultEnabledForDeviceOwner() : Set<String>
+        return DEFAULT_ENABLED_FOR_DEVICE_OWNERS;
+!!!12334341.java!!!	getDefaultEnabledForManagedProfiles() : Set<String>
+        return DEFAULT_ENABLED_FOR_MANAGED_PROFILES;
+!!!12334469.java!!!	sortToGlobalAndLocal(inout in : Bundle, inout isDeviceOwner : boolean, in cameraRestrictionScope : int, inout global : Bundle, inout local : Bundle) : void
+        // Camera restriction (as well as all others) goes to at most one bundle.
+        if (cameraRestrictionScope == UserManagerInternal.CAMERA_DISABLED_GLOBALLY) {
+            global.putBoolean(UserManager.DISALLOW_CAMERA, true);
+        } else if (cameraRestrictionScope == UserManagerInternal.CAMERA_DISABLED_LOCALLY) {
+            local.putBoolean(UserManager.DISALLOW_CAMERA, true);
+        }
+        if (in == null || in.size() == 0) {
+            return;
+        }
+        for (String key : in.keySet()) {
+            if (!in.getBoolean(key)) {
+                continue;
+            }
+            if (isGlobal(isDeviceOwner, key)) {
+                global.putBoolean(key, true);
+            } else {
+                local.putBoolean(key, true);
+            }
+        }
+!!!12334597.java!!!	isGlobal(inout isDeviceOwner : boolean, in key : String) : boolean
+        return (isDeviceOwner &&
+                (PRIMARY_USER_ONLY_RESTRICTIONS.contains(key)|| GLOBAL_RESTRICTIONS.contains(key)))
+                || PROFILE_GLOBAL_RESTRICTIONS.contains(key);
+!!!12334725.java!!!	areEqual(inout a : Bundle, inout b : Bundle) : boolean
+        if (a == b) {
+            return true;
+        }
+        if (isEmpty(a)) {
+            return isEmpty(b);
+        }
+        if (isEmpty(b)) {
+            return false;
+        }
+        for (String key : a.keySet()) {
+            if (a.getBoolean(key) != b.getBoolean(key)) {
+                return false;
+            }
+        }
+        for (String key : b.keySet()) {
+            if (a.getBoolean(key) != b.getBoolean(key)) {
+                return false;
+            }
+        }
+        return true;
+!!!12334853.java!!!	applyUserRestrictions(inout context : Context, in userId : int, inout newRestrictions : Bundle, inout prevRestrictions : Bundle) : void
+        for (String key : USER_RESTRICTIONS) {
+            final boolean newValue = newRestrictions.getBoolean(key);
+            final boolean prevValue = prevRestrictions.getBoolean(key);
+
+            if (newValue != prevValue) {
+                applyUserRestriction(context, userId, key, newValue);
+            }
+        }
+!!!12334981.java!!!	applyUserRestriction(inout context : Context, in userId : int, in key : String, inout newValue : boolean) : void
+        if (UserManagerService.DBG) {
+            Log.d(TAG, "Applying user restriction: userId=" + userId
+                    + " key=" + key + " value=" + newValue);
+        }
+        // When certain restrictions are cleared, we don't update the system settings,
+        // because these settings are changeable on the Settings UI and we don't know the original
+        // value -- for example LOCATION_MODE might have been off already when the restriction was
+        // set, and in that case even if the restriction is lifted, changing it to ON would be
+        // wrong.  So just don't do anything in such a case.  If the user hopes to enable location
+        // later, they can do it on the Settings UI.
+        // WARNING: Remember that Settings.Global and Settings.Secure are changeable via adb.
+        // To prevent this from happening for a given user restriction, you have to add a check to
+        // SettingsProvider.isGlobalOrSecureSettingRestrictedForUser.
+
+        final ContentResolver cr = context.getContentResolver();
+        final long id = Binder.clearCallingIdentity();
+        try {
+            switch (key) {
+                case UserManager.DISALLOW_DATA_ROAMING:
+                    if (newValue) {
+                        // DISALLOW_DATA_ROAMING user restriction is set.
+
+                        // Multi sim device.
+                        SubscriptionManager subscriptionManager = new SubscriptionManager(context);
+                        final List<SubscriptionInfo> subscriptionInfoList =
+                            subscriptionManager.getActiveSubscriptionInfoList();
+                        if (subscriptionInfoList != null) {
+                            for (SubscriptionInfo subInfo : subscriptionInfoList) {
+                                android.provider.Settings.Global.putStringForUser(cr,
+                                    android.provider.Settings.Global.DATA_ROAMING
+                                    + subInfo.getSubscriptionId(), "0", userId);
+                            }
+                        }
+
+                        // Single sim device.
+                        android.provider.Settings.Global.putStringForUser(cr,
+                            android.provider.Settings.Global.DATA_ROAMING, "0", userId);
+                    }
+                    break;
+                case UserManager.DISALLOW_SHARE_LOCATION:
+                    if (newValue) {
+                        android.provider.Settings.Secure.putIntForUser(cr,
+                                android.provider.Settings.Secure.LOCATION_MODE,
+                                android.provider.Settings.Secure.LOCATION_MODE_OFF,
+                                userId);
+                    }
+                    break;
+                case UserManager.DISALLOW_DEBUGGING_FEATURES:
+                    if (newValue) {
+                        // Only disable adb if changing for system user, since it is global
+                        // TODO: should this be admin user?
+                        if (userId == UserHandle.USER_SYSTEM) {
+                            android.provider.Settings.Global.putStringForUser(cr,
+                                    android.provider.Settings.Global.ADB_ENABLED, "0",
+                                    userId);
+                        }
+                    }
+                    break;
+                case UserManager.ENSURE_VERIFY_APPS:
+                    if (newValue) {
+                        android.provider.Settings.Global.putStringForUser(
+                                context.getContentResolver(),
+                                android.provider.Settings.Global.PACKAGE_VERIFIER_ENABLE, "1",
+                                userId);
+                        android.provider.Settings.Global.putStringForUser(
+                                context.getContentResolver(),
+                                android.provider.Settings.Global.PACKAGE_VERIFIER_INCLUDE_ADB, "1",
+                                userId);
+                    }
+                    break;
+                case UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES:
+                    // Since Android O, the secure setting is not available to be changed by the
+                    // user. Hence, when the restriction is cleared, we need to reset the state of
+                    // the setting to its default value which is now 1.
+                    android.provider.Settings.Secure.putIntForUser(cr,
+                            android.provider.Settings.Secure.INSTALL_NON_MARKET_APPS,
+                            newValue ? 0 : 1, userId);
+                    break;
+                case UserManager.DISALLOW_RUN_IN_BACKGROUND:
+                    if (newValue) {
+                        int currentUser = ActivityManager.getCurrentUser();
+                        if (currentUser != userId && userId != UserHandle.USER_SYSTEM) {
+                            try {
+                                ActivityManager.getService().stopUser(userId, false, null);
+                            } catch (RemoteException e) {
+                                throw e.rethrowAsRuntimeException();
+                            }
+                        }
+                    }
+                    break;
+                case UserManager.DISALLOW_SAFE_BOOT:
+                    // Unlike with the other restrictions, we want to propagate the new value to
+                    // the system settings even if it is false. The other restrictions modify
+                    // settings which could be manually changed by the user from the Settings app
+                    // after the policies enforcing these restrictions have been revoked, so we
+                    // leave re-setting of those settings to the user.
+                    android.provider.Settings.Global.putInt(
+                            context.getContentResolver(),
+                            android.provider.Settings.Global.SAFE_BOOT_DISALLOWED,
+                            newValue ? 1 : 0);
+                    break;
+                case UserManager.DISALLOW_FACTORY_RESET:
+                case UserManager.DISALLOW_OEM_UNLOCK:
+                    if (newValue) {
+                        PersistentDataBlockManager manager = (PersistentDataBlockManager) context
+                                .getSystemService(Context.PERSISTENT_DATA_BLOCK_SERVICE);
+                        if (manager != null
+                                && manager.getOemUnlockEnabled()
+                                && manager.getFlashLockState()
+                                        != PersistentDataBlockManager.FLASH_LOCK_UNLOCKED) {
+                            // Only disable OEM unlock if the bootloader is locked. If it's already
+                            // unlocked, setting the OEM unlock enabled flag to false has no effect
+                            // (the bootloader would remain unlocked).
+                            manager.setOemUnlockEnabled(false);
+                        }
+                    }
+                    break;
+            }
+        } finally {
+            Binder.restoreCallingIdentity(id);
+        }
+!!!12335109.java!!!	dumpRestrictions(inout pw : PrintWriter, in prefix : String, inout restrictions : Bundle) : void
+        boolean noneSet = true;
+        if (restrictions != null) {
+            for (String key : restrictions.keySet()) {
+                if (restrictions.getBoolean(key, false)) {
+                    pw.println(prefix + key);
+                    noneSet = false;
+                }
+            }
+            if (noneSet) {
+                pw.println(prefix + "none");
+            }
+        } else {
+            pw.println(prefix + "null");
+        }
+!!!12335237.java!!!	moveRestriction(in restrictionKey : String, inout srcRestrictions : SparseArray, inout destRestrictions : SparseArray) : void
+        for (int i = 0; i < srcRestrictions.size(); i++) {
+            final int key = srcRestrictions.keyAt(i);
+            final Bundle from = srcRestrictions.valueAt(i);
+            if (contains(from, restrictionKey)) {
+                from.remove(restrictionKey);
+                Bundle to = destRestrictions.get(key);
+                if (to == null) {
+                    to = new Bundle();
+                    destRestrictions.append(key, to);
+                }
+                to.putBoolean(restrictionKey, true);
+                // Don't keep empty bundles.
+                if (from.isEmpty()) {
+                    srcRestrictions.removeAt(i);
+                    i--;
+                }
+            }
+        }
+!!!12335365.java!!!	restrictionsChanged(inout oldRestrictions : Bundle, inout newRestrictions : Bundle, inout  : String...restrictions) : boolean
+        if (restrictions.length == 0) {
+            return areEqual(oldRestrictions, newRestrictions);
+        }
+        for (final String restriction : restrictions) {
+            if (oldRestrictions.getBoolean(restriction, false) !=
+                    newRestrictions.getBoolean(restriction, false)) {
+                return true;
+            }
+        }
+        return false;

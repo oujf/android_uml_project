@@ -1,0 +1,191 @@
+class KeyguardController
+!!!11213829.java!!!	KeyguardController(inout service : ActivityManagerService, inout stackSupervisor : ActivityStackSupervisor)
+        mService = service;
+        mStackSupervisor = stackSupervisor;
+!!!11213957.java!!!	setWindowManager(inout windowManager : WindowManagerService) : void
+        mWindowManager = windowManager;
+!!!11214085.java!!!	isKeyguardShowing() : boolean
+        return mKeyguardShowing && !mKeyguardGoingAway && !mOccluded;
+!!!11214213.java!!!	isKeyguardLocked() : boolean
+        return mKeyguardShowing && !mKeyguardGoingAway;
+!!!11214341.java!!!	setKeyguardShown(inout showing : boolean) : void
+        if (showing == mKeyguardShowing) {
+            return;
+        }
+        mKeyguardShowing = showing;
+        dismissDockedStackIfNeeded();
+        if (showing) {
+            setKeyguardGoingAway(false);
+            mDismissalRequested = false;
+        }
+        mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+        mService.updateSleepIfNeededLocked();
+!!!11214469.java!!!	keyguardGoingAway(in flags : int) : void
+        if (!mKeyguardShowing) {
+            return;
+        }
+        Trace.traceBegin(TRACE_TAG_ACTIVITY_MANAGER, "keyguardGoingAway");
+        mWindowManager.deferSurfaceLayout();
+        try {
+            setKeyguardGoingAway(true);
+            mWindowManager.prepareAppTransition(TRANSIT_KEYGUARD_GOING_AWAY,
+                    false /* alwaysKeepCurrent */, convertTransitFlags(flags),
+                    false /* forceOverride */);
+            mService.updateSleepIfNeededLocked();
+
+            // Some stack visibility might change (e.g. docked stack)
+            mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+            mStackSupervisor.addStartingWindowsForVisibleActivities(true /* taskSwitch */);
+            mWindowManager.executeAppTransition();
+        } finally {
+            Trace.traceBegin(TRACE_TAG_ACTIVITY_MANAGER, "keyguardGoingAway: surfaceLayout");
+            mWindowManager.continueSurfaceLayout();
+            Trace.traceEnd(TRACE_TAG_ACTIVITY_MANAGER);
+
+            Trace.traceEnd(TRACE_TAG_ACTIVITY_MANAGER);
+        }
+!!!11214597.java!!!	dismissKeyguard(inout token : IBinder, inout callback : IKeyguardDismissCallback) : void
+        final ActivityRecord activityRecord = ActivityRecord.forTokenLocked(token);
+        if (activityRecord == null || !activityRecord.visibleIgnoringKeyguard) {
+            failCallback(callback);
+            return;
+        }
+        mWindowManager.dismissKeyguard(callback);
+!!!11214725.java!!!	setKeyguardGoingAway(inout keyguardGoingAway : boolean) : void
+        mKeyguardGoingAway = keyguardGoingAway;
+        mWindowManager.setKeyguardGoingAway(keyguardGoingAway);
+!!!11214853.java!!!	failCallback(inout callback : IKeyguardDismissCallback) : void
+        try {
+            callback.onDismissError();
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to call callback", e);
+        }
+!!!11214981.java!!!	convertTransitFlags(in keyguardGoingAwayFlags : int) : int
+        int result = 0;
+        if ((keyguardGoingAwayFlags & KEYGUARD_GOING_AWAY_FLAG_TO_SHADE) != 0) {
+            result |= TRANSIT_FLAG_KEYGUARD_GOING_AWAY_TO_SHADE;
+        }
+        if ((keyguardGoingAwayFlags & KEYGUARD_GOING_AWAY_FLAG_NO_WINDOW_ANIMATIONS) != 0) {
+            result |= TRANSIT_FLAG_KEYGUARD_GOING_AWAY_NO_ANIMATION;
+        }
+        if ((keyguardGoingAwayFlags & KEYGUARD_GOING_AWAY_FLAG_WITH_WALLPAPER) != 0) {
+            result |= TRANSIT_FLAG_KEYGUARD_GOING_AWAY_WITH_WALLPAPER;
+        }
+        return result;
+!!!11215109.java!!!	beginActivityVisibilityUpdate() : void
+        mVisibilityTransactionDepth++;
+!!!11215237.java!!!	endActivityVisibilityUpdate() : void
+        mVisibilityTransactionDepth--;
+        if (mVisibilityTransactionDepth == 0) {
+            visibilitiesUpdated();
+        }
+!!!11215365.java!!!	canShowActivityWhileKeyguardShowing(inout r : ActivityRecord, inout dismissKeyguard : boolean) : boolean
+
+        // Allow to show it when we are about to dismiss Keyguard. This isn't allowed if r is
+        // already the dismissing activity, in which case we don't allow it to repeatedly dismiss
+        // Keyguard.
+        return dismissKeyguard && canDismissKeyguard() &&
+                (mDismissalRequested || r != mDismissingKeyguardActivity);
+!!!11215493.java!!!	canShowWhileOccluded(inout dismissKeyguard : boolean, inout showWhenLocked : boolean) : boolean
+        return showWhenLocked || dismissKeyguard && !mWindowManager.isKeyguardSecure();
+!!!11215621.java!!!	visibilitiesUpdated() : void
+        final boolean lastOccluded = mOccluded;
+        final ActivityRecord lastDismissingKeyguardActivity = mDismissingKeyguardActivity;
+        mOccluded = false;
+        mDismissingKeyguardActivity = null;
+        final ArrayList<ActivityStack> stacks = mStackSupervisor.getStacksOnDefaultDisplay();
+        for (int stackNdx = stacks.size() - 1; stackNdx >= 0; --stackNdx) {
+            final ActivityStack stack = stacks.get(stackNdx);
+
+            // Only the focused stack top activity may control occluded state
+            if (mStackSupervisor.isFocusedStack(stack)) {
+
+                // A dismissing activity occludes Keyguard in the insecure case for legacy reasons.
+                final ActivityRecord topDismissing = stack.getTopDismissingKeyguardActivity();
+                mOccluded = stack.topActivityOccludesKeyguard()
+                        || (topDismissing != null
+                                && stack.topRunningActivityLocked() == topDismissing
+                                && canShowWhileOccluded(true /* dismissKeyguard */,
+                                        false /* showWhenLocked */));
+            }
+            if (mDismissingKeyguardActivity == null
+                    && stack.getTopDismissingKeyguardActivity() != null) {
+                mDismissingKeyguardActivity = stack.getTopDismissingKeyguardActivity();
+            }
+        }
+        mOccluded |= mWindowManager.isShowingDream();
+        if (mOccluded != lastOccluded) {
+            handleOccludedChanged();
+        }
+        if (mDismissingKeyguardActivity != lastDismissingKeyguardActivity) {
+            handleDismissKeyguard();
+        }
+!!!11215749.java!!!	handleOccludedChanged() : void
+        mWindowManager.onKeyguardOccludedChanged(mOccluded);
+        if (isKeyguardLocked()) {
+            mWindowManager.deferSurfaceLayout();
+            try {
+                mWindowManager.prepareAppTransition(resolveOccludeTransit(),
+                        false /* alwaysKeepCurrent */, 0 /* flags */, true /* forceOverride */);
+                mService.updateSleepIfNeededLocked();
+                mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+                mWindowManager.executeAppTransition();
+            } finally {
+                mWindowManager.continueSurfaceLayout();
+            }
+        }
+        dismissDockedStackIfNeeded();
+!!!11215877.java!!!	handleDismissKeyguard() : void
+        // We only allow dismissing Keyguard via the flag when Keyguard is secure for legacy
+        // reasons, because that's how apps used to dismiss Keyguard in the secure case. In the
+        // insecure case, we actually show it on top of the lockscreen. See #canShowWhileOccluded.
+        if (!mOccluded && mDismissingKeyguardActivity != null
+                && mWindowManager.isKeyguardSecure()) {
+            mWindowManager.dismissKeyguard(null /* callback */);
+            mDismissalRequested = true;
+
+            // If we are about to unocclude the Keyguard, but we can dismiss it without security,
+            // we immediately dismiss the Keyguard so the activity gets shown without a flicker.
+            if (mKeyguardShowing && canDismissKeyguard()
+                    && mWindowManager.getPendingAppTransition() == TRANSIT_KEYGUARD_UNOCCLUDE) {
+                mWindowManager.prepareAppTransition(mBeforeUnoccludeTransit,
+                        false /* alwaysKeepCurrent */, 0 /* flags */, true /* forceOverride */);
+                mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+                mWindowManager.executeAppTransition();
+            }
+        }
+!!!11216005.java!!!	canDismissKeyguard() : boolean
+        return mWindowManager.isKeyguardTrusted() || !mWindowManager.isKeyguardSecure();
+!!!11216133.java!!!	resolveOccludeTransit() : int
+        if (mBeforeUnoccludeTransit != TRANSIT_UNSET
+                && mWindowManager.getPendingAppTransition() == TRANSIT_KEYGUARD_UNOCCLUDE
+                && mOccluded) {
+
+            // Reuse old transit in case we are occluding Keyguard again, meaning that we never
+            // actually occclude/unocclude Keyguard, but just run a normal transition.
+            return mBeforeUnoccludeTransit;
+        } else if (!mOccluded) {
+
+            // Save transit in case we dismiss/occlude Keyguard shortly after.
+            mBeforeUnoccludeTransit = mWindowManager.getPendingAppTransition();
+            return TRANSIT_KEYGUARD_UNOCCLUDE;
+        } else {
+            return TRANSIT_KEYGUARD_OCCLUDE;
+        }
+!!!11216261.java!!!	dismissDockedStackIfNeeded() : void
+        if (mKeyguardShowing && mOccluded) {
+            // The lock screen is currently showing, but is occluded by a window that can
+            // show on top of the lock screen. In this can we want to dismiss the docked
+            // stack since it will be complicated/risky to try to put the activity on top
+            // of the lock screen in the right fullscreen configuration.
+            mStackSupervisor.moveTasksToFullscreenStackLocked(DOCKED_STACK_ID,
+                    mStackSupervisor.mFocusedStack.getStackId() == DOCKED_STACK_ID);
+        }
+!!!11216389.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.println(prefix + "KeyguardController:");
+        pw.println(prefix + "  mKeyguardShowing=" + mKeyguardShowing);
+        pw.println(prefix + "  mKeyguardGoingAway=" + mKeyguardGoingAway);
+        pw.println(prefix + "  mOccluded=" + mOccluded);
+        pw.println(prefix + "  mDismissingKeyguardActivity=" + mDismissingKeyguardActivity);
+        pw.println(prefix + "  mDismissalRequested=" + mDismissalRequested);
+        pw.println(prefix + "  mVisibilityTransactionDepth=" + mVisibilityTransactionDepth);

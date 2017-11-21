@@ -1,0 +1,96 @@
+class ProducerFrameEventHistory
+!!!14276613.cpp!!!	snapToNextTick(in timestamp : nsecs_t, in tickPhase : nsecs_t, in tickInterval : nsecs_t) : nsecs_t
+    nsecs_t tickOffset = (tickPhase - timestamp) % tickInterval;
+    // Integer modulo rounds towards 0 and not -inf before taking the remainder,
+    // so adjust the offset if it is negative.
+    if (tickOffset < 0) {
+        tickOffset += tickInterval;
+    }
+    return timestamp + tickOffset;
+!!!14276741.cpp!!!	getNextCompositeDeadline(in now : nsecs_t) : nsecs_t
+    return snapToNextTick(
+            now, mCompositorTiming.deadline, mCompositorTiming.interval);
+!!!14277125.cpp!!!	updateAcquireFence(in frameNumber : uint64_t, inout acquire : std::shared_ptr<FenceTime>) : void
+    FrameEvents* frame = getFrame(frameNumber, &mAcquireOffset);
+    if (frame == nullptr) {
+        ALOGE("updateAcquireFence: Did not find frame.");
+        return;
+    }
+
+    if (acquire->isValid()) {
+        mAcquireTimeline.push(acquire);
+        frame->acquireFence = std::move(acquire);
+    } else {
+        // If there isn't an acquire fence, assume that buffer was
+        // ready for the consumer when posted.
+        frame->acquireFence = std::make_shared<FenceTime>(frame->postedTime);
+    }
+!!!14277253.cpp!!!	applyDelta(in delta : FrameEventHistoryDelta) : void
+    mCompositorTiming = delta.mCompositorTiming;
+
+    for (auto& d : delta.mDeltas) {
+        // Avoid out-of-bounds access.
+        if (CC_UNLIKELY(d.mIndex >= mFrames.size())) {
+            ALOGE("applyDelta: Bad index.");
+            return;
+        }
+
+        FrameEvents& frame = mFrames[d.mIndex];
+
+        frame.addPostCompositeCalled = d.mAddPostCompositeCalled != 0;
+        frame.addReleaseCalled = d.mAddReleaseCalled != 0;
+
+        frame.postedTime = d.mPostedTime;
+        frame.requestedPresentTime = d.mRequestedPresentTime;
+        frame.latchTime = d.mLatchTime;
+        frame.firstRefreshStartTime = d.mFirstRefreshStartTime;
+        frame.lastRefreshStartTime = d.mLastRefreshStartTime;
+        frame.dequeueReadyTime = d.mDequeueReadyTime;
+
+        if (frame.frameNumber != d.mFrameNumber) {
+            // We got a new frame. Initialize some of the fields.
+            frame.frameNumber = d.mFrameNumber;
+            frame.acquireFence = FenceTime::NO_FENCE;
+            frame.gpuCompositionDoneFence = FenceTime::NO_FENCE;
+            frame.displayPresentFence = FenceTime::NO_FENCE;
+            frame.releaseFence = FenceTime::NO_FENCE;
+            // The consumer only sends valid frames.
+            frame.valid = true;
+        }
+
+        applyFenceDelta(&mGpuCompositionDoneTimeline,
+                &frame.gpuCompositionDoneFence, d.mGpuCompositionDoneFence);
+        applyFenceDelta(&mPresentTimeline,
+                &frame.displayPresentFence, d.mDisplayPresentFence);
+        applyFenceDelta(&mReleaseTimeline,
+                &frame.releaseFence, d.mReleaseFence);
+    }
+!!!14277381.cpp!!!	updateSignalTimes() : void
+    mAcquireTimeline.updateSignalTimes();
+    mGpuCompositionDoneTimeline.updateSignalTimes();
+    mPresentTimeline.updateSignalTimes();
+    mReleaseTimeline.updateSignalTimes();
+!!!14277509.cpp!!!	applyFenceDelta(inout timeline : FenceTimeline, inout dst : std::shared_ptr<FenceTime>, in src : FenceTime::Snapshot) : void
+    if (CC_UNLIKELY(dst == nullptr || dst->get() == nullptr)) {
+        ALOGE("applyFenceDelta: dst is null.");
+        return;
+    }
+
+    switch (src.state) {
+        case FenceTime::Snapshot::State::EMPTY:
+            return;
+        case FenceTime::Snapshot::State::FENCE:
+            ALOGE_IF((*dst)->isValid(), "applyFenceDelta: Unexpected fence.");
+            *dst = createFenceTime(src.fence);
+            timeline->push(*dst);
+            return;
+        case FenceTime::Snapshot::State::SIGNAL_TIME:
+            if ((*dst)->isValid()) {
+                (*dst)->applyTrustedSnapshot(src);
+            } else {
+                *dst = std::make_shared<FenceTime>(src.signalTime);
+            }
+            return;
+    }
+!!!14277637.cpp!!!	createFenceTime(in fence : sp<Fence>) : std::shared_ptr<FenceTime>
+    return std::make_shared<FenceTime>(fence);

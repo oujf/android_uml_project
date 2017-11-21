@@ -1,0 +1,656 @@
+class TypedArray
+!!!6425221.java!!!	obtain(inout res : Resources, in len : int) : TypedArray
+        TypedArray attrs = res.mTypedArrayPool.acquire();
+        if (attrs == null) {
+            attrs = new TypedArray(res);
+        }
+
+        attrs.mRecycled = false;
+        // Reset the assets, which may have changed due to configuration changes
+        // or further resource loading.
+        attrs.mAssets = res.getAssets();
+        attrs.mMetrics = res.getDisplayMetrics();
+        attrs.resize(len);
+        return attrs;
+!!!6425349.java!!!	resize(in len : int) : void
+        mLength = len;
+        final int dataLen = len * AssetManager.STYLE_NUM_ENTRIES;
+        final int indicesLen = len + 1;
+        final VMRuntime runtime = VMRuntime.getRuntime();
+        if (mDataAddress == 0 || mData.length < dataLen) {
+            mData = (int[]) runtime.newNonMovableArray(int.class, dataLen);
+            mDataAddress = runtime.addressOf(mData);
+            mIndices = (int[]) runtime.newNonMovableArray(int.class, indicesLen);
+            mIndicesAddress = runtime.addressOf(mIndices);
+        }
+!!!6425477.java!!!	length() : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return mLength;
+!!!6425605.java!!!	getIndexCount() : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return mIndices[0];
+!!!6425733.java!!!	getIndex(in at : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return mIndices[1+at];
+!!!6425861.java!!!	getResources() : Resources
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return mResources;
+!!!6425989.java!!!	getText(in index : int) : CharSequence
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return null;
+        } else if (type == TypedValue.TYPE_STRING) {
+            return loadStringValueAt(index);
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            return v.coerceToString();
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getText of bad type: 0x" + Integer.toHexString(type));
+!!!6426117.java!!!	getString(in index : int) : String
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return null;
+        } else if (type == TypedValue.TYPE_STRING) {
+            return loadStringValueAt(index).toString();
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            final CharSequence cs = v.coerceToString();
+            return cs != null ? cs.toString() : null;
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getString of bad type: 0x" + Integer.toHexString(type));
+!!!6426245.java!!!	getNonResourceString(in index : int) : String
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_STRING) {
+            final int cookie = data[index+AssetManager.STYLE_ASSET_COOKIE];
+            if (cookie < 0) {
+                return mXml.getPooledString(
+                    data[index+AssetManager.STYLE_DATA]).toString();
+            }
+        }
+        return null;
+!!!6426373.java!!!	getNonConfigurationString(in index : int, in allowedChangingConfigs : int) : String
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        final @Config int changingConfigs = ActivityInfo.activityInfoConfigNativeToJava(
+                data[index + AssetManager.STYLE_CHANGING_CONFIGURATIONS]);
+        if ((changingConfigs & ~allowedChangingConfigs) != 0) {
+            return null;
+        }
+        if (type == TypedValue.TYPE_NULL) {
+            return null;
+        } else if (type == TypedValue.TYPE_STRING) {
+            return loadStringValueAt(index).toString();
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            final CharSequence cs = v.coerceToString();
+            return cs != null ? cs.toString() : null;
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getNonConfigurationString of bad type: 0x"
+                + Integer.toHexString(type));
+!!!6426501.java!!!	getBoolean(in index : int, inout defValue : boolean) : boolean
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA] != 0;
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            StrictMode.noteResourceMismatch(v);
+            return XmlUtils.convertValueToBoolean(v.coerceToString(), defValue);
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getBoolean of bad type: 0x" + Integer.toHexString(type));
+!!!6426629.java!!!	getInt(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            StrictMode.noteResourceMismatch(v);
+            return XmlUtils.convertValueToInt(v.coerceToString(), defValue);
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getInt of bad type: 0x" + Integer.toHexString(type));
+!!!6426757.java!!!	getFloat(in index : int, in defValue : float) : float
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type == TypedValue.TYPE_FLOAT) {
+            return Float.intBitsToFloat(data[index+AssetManager.STYLE_DATA]);
+        } else if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        }
+
+        final TypedValue v = mValue;
+        if (getValueAt(index, v)) {
+            final CharSequence str = v.coerceToString();
+            if (str != null) {
+                StrictMode.noteResourceMismatch(v);
+                return Float.parseFloat(str.toString());
+            }
+        }
+
+        // We already checked for TYPE_NULL. This should never happen.
+        throw new RuntimeException("getFloat of bad type: 0x" + Integer.toHexString(type));
+!!!6426885.java!!!	getColor(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        } else if (type == TypedValue.TYPE_STRING) {
+            final TypedValue value = mValue;
+            if (getValueAt(index, value)) {
+                final ColorStateList csl = mResources.loadColorStateList(
+                        value, value.resourceId, mTheme);
+                return csl.getDefaultColor();
+            }
+            return defValue;
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to color: type=0x" + Integer.toHexString(type));
+!!!6427013.java!!!	getComplexColor(in index : int) : ComplexColor
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+                throw new UnsupportedOperationException(
+                        "Failed to resolve attribute at index " + index + ": " + value);
+            }
+            return mResources.loadComplexColor(value, value.resourceId, mTheme);
+        }
+        return null;
+!!!6427141.java!!!	getColorStateList(in index : int) : ColorStateList
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+                throw new UnsupportedOperationException(
+                        "Failed to resolve attribute at index " + index + ": " + value);
+            }
+            return mResources.loadColorStateList(value, value.resourceId, mTheme);
+        }
+        return null;
+!!!6427269.java!!!	getInteger(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to integer: type=0x" + Integer.toHexString(type));
+!!!6427397.java!!!	getDimension(in index : int, in defValue : float) : float
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type == TypedValue.TYPE_DIMENSION) {
+            return TypedValue.complexToDimension(
+                    data[index + AssetManager.STYLE_DATA], mMetrics);
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to dimension: type=0x" + Integer.toHexString(type));
+!!!6427525.java!!!	getDimensionPixelOffset(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type == TypedValue.TYPE_DIMENSION) {
+            return TypedValue.complexToDimensionPixelOffset(
+                    data[index + AssetManager.STYLE_DATA], mMetrics);
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to dimension: type=0x" + Integer.toHexString(type));
+!!!6427653.java!!!	getDimensionPixelSize(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type == TypedValue.TYPE_DIMENSION) {
+            return TypedValue.complexToDimensionPixelSize(
+                data[index+AssetManager.STYLE_DATA], mMetrics);
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to dimension: type=0x" + Integer.toHexString(type));
+!!!6427781.java!!!	getLayoutDimension(in index : int, in name : String) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        } else if (type == TypedValue.TYPE_DIMENSION) {
+            return TypedValue.complexToDimensionPixelSize(
+                data[index+AssetManager.STYLE_DATA], mMetrics);
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException(getPositionDescription()
+                + ": You must supply a " + name + " attribute.");
+!!!6427909.java!!!	getLayoutDimension(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type >= TypedValue.TYPE_FIRST_INT
+                && type <= TypedValue.TYPE_LAST_INT) {
+            return data[index+AssetManager.STYLE_DATA];
+        } else if (type == TypedValue.TYPE_DIMENSION) {
+            return TypedValue.complexToDimensionPixelSize(
+                    data[index + AssetManager.STYLE_DATA], mMetrics);
+        }
+
+        return defValue;
+!!!6428037.java!!!	getFraction(in index : int, in base : int, in pbase : int, in defValue : float) : float
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final int attrIndex = index;
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return defValue;
+        } else if (type == TypedValue.TYPE_FRACTION) {
+            return TypedValue.complexToFraction(
+                data[index+AssetManager.STYLE_DATA], base, pbase);
+        } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+            final TypedValue value = mValue;
+            getValueAt(index, value);
+            throw new UnsupportedOperationException(
+                    "Failed to resolve attribute at index " + attrIndex + ": " + value);
+        }
+
+        throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+                + " to fraction: type=0x" + Integer.toHexString(type));
+!!!6428165.java!!!	getResourceId(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        if (data[index+AssetManager.STYLE_TYPE] != TypedValue.TYPE_NULL) {
+            final int resid = data[index+AssetManager.STYLE_RESOURCE_ID];
+            if (resid != 0) {
+                return resid;
+            }
+        }
+        return defValue;
+!!!6428293.java!!!	getThemeAttributeId(in index : int, in defValue : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        if (data[index + AssetManager.STYLE_TYPE] == TypedValue.TYPE_ATTRIBUTE) {
+            return data[index + AssetManager.STYLE_DATA];
+        }
+        return defValue;
+!!!6428421.java!!!	getDrawable(in index : int) : Drawable
+        return getDrawableForDensity(index, 0);
+!!!6428549.java!!!	getDrawableForDensity(in index : int, in density : int) : Drawable
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+                throw new UnsupportedOperationException(
+                        "Failed to resolve attribute at index " + index + ": " + value);
+            }
+
+            if (density > 0) {
+                // If the density is overridden, the value in the TypedArray will not reflect this.
+                // Do a separate lookup of the resourceId with the density override.
+                mResources.getValueForDensity(value.resourceId, density, value, true);
+            }
+            return mResources.loadDrawable(value, value.resourceId, density, mTheme);
+        }
+        return null;
+!!!6428677.java!!!	getFont(in index : int) : Typeface
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+                throw new UnsupportedOperationException(
+                        "Failed to resolve attribute at index " + index + ": " + value);
+            }
+            return mResources.getFont(value, value.resourceId);
+        }
+        return null;
+!!!6428805.java!!!	getTextArray(in index : int) : CharSequence
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            return mResources.getTextArray(value.resourceId);
+        }
+        return null;
+!!!6428933.java!!!	getValue(in index : int, inout outValue : TypedValue) : boolean
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, outValue);
+!!!6429061.java!!!	getType(in index : int) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        return mData[index + AssetManager.STYLE_TYPE];
+!!!6429189.java!!!	hasValue(in index : int) : boolean
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        return type != TypedValue.TYPE_NULL;
+!!!6429317.java!!!	hasValueOrEmpty(in index : int) : boolean
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        index *= AssetManager.STYLE_NUM_ENTRIES;
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        return type != TypedValue.TYPE_NULL
+                || data[index+AssetManager.STYLE_DATA] == TypedValue.DATA_NULL_EMPTY;
+!!!6429445.java!!!	peekValue(in index : int) : TypedValue
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        final TypedValue value = mValue;
+        if (getValueAt(index*AssetManager.STYLE_NUM_ENTRIES, value)) {
+            return value;
+        }
+        return null;
+!!!6429573.java!!!	getPositionDescription() : String
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        return mXml != null ? mXml.getPositionDescription() : "<internal>";
+!!!6429701.java!!!	recycle() : void
+        if (mRecycled) {
+            throw new RuntimeException(toString() + " recycled twice!");
+        }
+
+        mRecycled = true;
+
+        // These may have been set by the client.
+        mXml = null;
+        mTheme = null;
+        mAssets = null;
+
+        mResources.mTypedArrayPool.release(this);
+!!!6429829.java!!!	extractThemeAttrs() : int
+        return extractThemeAttrs(null);
+!!!6429957.java!!!	extractThemeAttrs(inout scrap : int [[]]) : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        int[] attrs = null;
+
+        final int[] data = mData;
+        final int N = length();
+        for (int i = 0; i < N; i++) {
+            final int index = i * AssetManager.STYLE_NUM_ENTRIES;
+            if (data[index + AssetManager.STYLE_TYPE] != TypedValue.TYPE_ATTRIBUTE) {
+                // Not an attribute, ignore.
+                continue;
+            }
+
+            // Null the entry so that we can safely call getZzz().
+            data[index + AssetManager.STYLE_TYPE] = TypedValue.TYPE_NULL;
+
+            final int attr = data[index + AssetManager.STYLE_DATA];
+            if (attr == 0) {
+                // Useless data, ignore.
+                continue;
+            }
+
+            // Ensure we have a usable attribute array.
+            if (attrs == null) {
+                if (scrap != null && scrap.length == N) {
+                    attrs = scrap;
+                    Arrays.fill(attrs, 0);
+                } else {
+                    attrs = new int[N];
+                }
+            }
+
+            attrs[i] = attr;
+        }
+
+        return attrs;
+!!!6430085.java!!!	getChangingConfigurations() : int
+        if (mRecycled) {
+            throw new RuntimeException("Cannot make calls to a recycled instance!");
+        }
+
+        @Config int changingConfig = 0;
+
+        final int[] data = mData;
+        final int N = length();
+        for (int i = 0; i < N; i++) {
+            final int index = i * AssetManager.STYLE_NUM_ENTRIES;
+            final int type = data[index + AssetManager.STYLE_TYPE];
+            if (type == TypedValue.TYPE_NULL) {
+                continue;
+            }
+            changingConfig |= ActivityInfo.activityInfoConfigNativeToJava(
+                    data[index + AssetManager.STYLE_CHANGING_CONFIGURATIONS]);
+        }
+        return changingConfig;
+!!!6430213.java!!!	getValueAt(in index : int, inout outValue : TypedValue) : boolean
+        final int[] data = mData;
+        final int type = data[index+AssetManager.STYLE_TYPE];
+        if (type == TypedValue.TYPE_NULL) {
+            return false;
+        }
+        outValue.type = type;
+        outValue.data = data[index+AssetManager.STYLE_DATA];
+        outValue.assetCookie = data[index+AssetManager.STYLE_ASSET_COOKIE];
+        outValue.resourceId = data[index+AssetManager.STYLE_RESOURCE_ID];
+        outValue.changingConfigurations = ActivityInfo.activityInfoConfigNativeToJava(
+                data[index + AssetManager.STYLE_CHANGING_CONFIGURATIONS]);
+        outValue.density = data[index+AssetManager.STYLE_DENSITY];
+        outValue.string = (type == TypedValue.TYPE_STRING) ? loadStringValueAt(index) : null;
+        return true;
+!!!6430341.java!!!	loadStringValueAt(in index : int) : CharSequence
+        final int[] data = mData;
+        final int cookie = data[index+AssetManager.STYLE_ASSET_COOKIE];
+        if (cookie < 0) {
+            if (mXml != null) {
+                return mXml.getPooledString(
+                    data[index+AssetManager.STYLE_DATA]);
+            }
+            return null;
+        }
+        return mAssets.getPooledStringForCookie(cookie, data[index+AssetManager.STYLE_DATA]);
+!!!6430469.java!!!	TypedArray(inout resources : Resources)
+        mResources = resources;
+        mMetrics = mResources.getDisplayMetrics();
+        mAssets = mResources.getAssets();
+!!!6430597.java!!!	toString() : String
+        return Arrays.toString(mData);

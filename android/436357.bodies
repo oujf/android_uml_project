@@ -1,0 +1,98 @@
+class SoftVP9Encoder
+!!!1164805.cpp!!!	internalGetParameter(in index : OMX_INDEXTYPE, in param : OMX_PTR) : OMX_ERRORTYPE
+    // can include extension index OMX_INDEXEXTTYPE
+    const int32_t indexFull = index;
+
+    switch (indexFull) {
+        case OMX_IndexParamVideoVp9:
+            return internalGetVp9Params(
+                    (OMX_VIDEO_PARAM_VP9TYPE *)param);
+
+        default:
+            return SoftVPXEncoder::internalGetParameter(index, param);
+    }
+!!!1164933.cpp!!!	internalSetParameter(in index : OMX_INDEXTYPE, in param : OMX_PTR) : OMX_ERRORTYPE
+    // can include extension index OMX_INDEXEXTTYPE
+    const int32_t indexFull = index;
+
+    switch (indexFull) {
+        case OMX_IndexParamVideoVp9:
+            return internalSetVp9Params(
+                    (const OMX_VIDEO_PARAM_VP9TYPE *)param);
+
+        default:
+            return SoftVPXEncoder::internalSetParameter(index, param);
+    }
+!!!1165061.cpp!!!	setCodecSpecificInterface() : void
+    mCodecInterface = vpx_codec_vp9_cx();
+!!!1165189.cpp!!!	setCodecSpecificConfiguration() : void
+    mCodecConfiguration->g_profile = 0;
+!!!1165317.cpp!!!	setCodecSpecificControls() : vpx_codec_err_t
+    vpx_codec_err_t codecReturn = vpx_codec_control(
+            mCodecContext, VP9E_SET_TILE_COLUMNS, mTileColumns);
+    if (codecReturn != VPX_CODEC_OK) {
+        ALOGE("Error setting VP9E_SET_TILE_COLUMNS to %d. vpx_codec_control() "
+              "returned %d", mTileColumns, codecReturn);
+        return codecReturn;
+    }
+    codecReturn = vpx_codec_control(
+            mCodecContext, VP9E_SET_FRAME_PARALLEL_DECODING,
+            mFrameParallelDecoding);
+    if (codecReturn != VPX_CODEC_OK) {
+        ALOGE("Error setting VP9E_SET_FRAME_PARALLEL_DECODING to %d."
+              "vpx_codec_control() returned %d", mFrameParallelDecoding,
+              codecReturn);
+        return codecReturn;
+    }
+    // For VP9, we always set CPU_USED to 8 (because the realtime default is 0
+    // which is too slow).
+    codecReturn = vpx_codec_control(mCodecContext, VP8E_SET_CPUUSED, 8);
+    if (codecReturn != VPX_CODEC_OK) {
+        ALOGE("Error setting VP8E_SET_CPUUSED to 8. vpx_codec_control() "
+              "returned %d", codecReturn);
+        return codecReturn;
+    }
+    return codecReturn;
+!!!1165445.cpp!!!	internalGetVp9Params(inout vp9Params : OMX_VIDEO_PARAM_VP9TYPE) : OMX_ERRORTYPE
+    if (vp9Params->nPortIndex != kOutputPortIndex) {
+        return OMX_ErrorUnsupportedIndex;
+    }
+
+    vp9Params->eProfile = OMX_VIDEO_VP9Profile0;
+    vp9Params->eLevel = mLevel;
+    vp9Params->bErrorResilientMode = mErrorResilience;
+    vp9Params->nTileColumns = mTileColumns;
+    vp9Params->bEnableFrameParallelDecoding = mFrameParallelDecoding;
+    return OMX_ErrorNone;
+!!!1165573.cpp!!!	internalSetVp9Params(in vp9Params : OMX_VIDEO_PARAM_VP9TYPE) : OMX_ERRORTYPE
+    if (vp9Params->nPortIndex != kOutputPortIndex) {
+        return OMX_ErrorUnsupportedIndex;
+    }
+
+    if (vp9Params->eProfile != OMX_VIDEO_VP9Profile0) {
+        return OMX_ErrorBadParameter;
+    }
+
+    if (vp9Params->eLevel == OMX_VIDEO_VP9Level1 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level11 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level2 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level21 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level3 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level31 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level4 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level41 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level5 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level51 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level52 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level6 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level61 ||
+        vp9Params->eLevel == OMX_VIDEO_VP9Level62) {
+        mLevel = vp9Params->eLevel;
+    } else {
+        return OMX_ErrorBadParameter;
+    }
+
+    mErrorResilience = vp9Params->bErrorResilientMode;
+    mTileColumns = vp9Params->nTileColumns;
+    mFrameParallelDecoding = vp9Params->bEnableFrameParallelDecoding;
+    return OMX_ErrorNone;

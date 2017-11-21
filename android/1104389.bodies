@@ -1,0 +1,151 @@
+class ProxyInfo
+!!!7219973.java!!!	buildDirectProxy(in host : String, in port : int) : ProxyInfo
+        return new ProxyInfo(host, port, null);
+!!!7220101.java!!!	buildDirectProxy(in host : String, in port : int, inout exclList : List<String>) : ProxyInfo
+        String[] array = exclList.toArray(new String[exclList.size()]);
+        return new ProxyInfo(host, port, TextUtils.join(",", array), array);
+!!!7220229.java!!!	buildPacProxy(inout pacUri : Uri) : ProxyInfo
+        return new ProxyInfo(pacUri);
+!!!7220357.java!!!	ProxyInfo(in host : String, in port : int, in exclList : String)
+        mHost = host;
+        mPort = port;
+        setExclusionList(exclList);
+        mPacFileUrl = Uri.EMPTY;
+!!!7220485.java!!!	ProxyInfo(inout pacFileUrl : Uri)
+        mHost = LOCAL_HOST;
+        mPort = LOCAL_PORT;
+        setExclusionList(LOCAL_EXCL_LIST);
+        if (pacFileUrl == null) {
+            throw new NullPointerException();
+        }
+        mPacFileUrl = pacFileUrl;
+!!!7220613.java!!!	ProxyInfo(in pacFileUrl : String)
+        mHost = LOCAL_HOST;
+        mPort = LOCAL_PORT;
+        setExclusionList(LOCAL_EXCL_LIST);
+        mPacFileUrl = Uri.parse(pacFileUrl);
+!!!7220741.java!!!	ProxyInfo(inout pacFileUrl : Uri, in localProxyPort : int)
+        mHost = LOCAL_HOST;
+        mPort = localProxyPort;
+        setExclusionList(LOCAL_EXCL_LIST);
+        if (pacFileUrl == null) {
+            throw new NullPointerException();
+        }
+        mPacFileUrl = pacFileUrl;
+!!!7220869.java!!!	ProxyInfo(in host : String, in port : int, in exclList : String, inout parsedExclList : String [[]])
+        mHost = host;
+        mPort = port;
+        mExclusionList = exclList;
+        mParsedExclusionList = parsedExclList;
+        mPacFileUrl = Uri.EMPTY;
+!!!7220997.java!!!	ProxyInfo(inout source : ProxyInfo)
+        if (source != null) {
+            mHost = source.getHost();
+            mPort = source.getPort();
+            mPacFileUrl = source.mPacFileUrl;
+            mExclusionList = source.getExclusionListAsString();
+            mParsedExclusionList = source.mParsedExclusionList;
+        } else {
+            mPacFileUrl = Uri.EMPTY;
+        }
+!!!7221125.java!!!	getSocketAddress() : InetSocketAddress
+        InetSocketAddress inetSocketAddress = null;
+        try {
+            inetSocketAddress = new InetSocketAddress(mHost, mPort);
+        } catch (IllegalArgumentException e) { }
+        return inetSocketAddress;
+!!!7221253.java!!!	getPacFileUrl() : Uri
+        return mPacFileUrl;
+!!!7221381.java!!!	getHost() : String
+        return mHost;
+!!!7221509.java!!!	getPort() : int
+        return mPort;
+!!!7221637.java!!!	getExclusionList() : String
+        return mParsedExclusionList;
+!!!7221765.java!!!	getExclusionListAsString() : String
+        return mExclusionList;
+!!!7221893.java!!!	setExclusionList(in exclusionList : String) : void
+        mExclusionList = exclusionList;
+        if (mExclusionList == null) {
+            mParsedExclusionList = new String[0];
+        } else {
+            mParsedExclusionList = exclusionList.toLowerCase(Locale.ROOT).split(",");
+        }
+!!!7222021.java!!!	isValid() : boolean
+        if (!Uri.EMPTY.equals(mPacFileUrl)) return true;
+        return Proxy.PROXY_VALID == Proxy.validate(mHost == null ? "" : mHost,
+                                                mPort == 0 ? "" : Integer.toString(mPort),
+                                                mExclusionList == null ? "" : mExclusionList);
+!!!7222149.java!!!	makeProxy() : java.net.Proxy
+        java.net.Proxy proxy = java.net.Proxy.NO_PROXY;
+        if (mHost != null) {
+            try {
+                InetSocketAddress inetSocketAddress = new InetSocketAddress(mHost, mPort);
+                proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, inetSocketAddress);
+            } catch (IllegalArgumentException e) {
+            }
+        }
+        return proxy;
+!!!7222277.java!!!	toString() : String
+        StringBuilder sb = new StringBuilder();
+        if (!Uri.EMPTY.equals(mPacFileUrl)) {
+            sb.append("PAC Script: ");
+            sb.append(mPacFileUrl);
+        }
+        if (mHost != null) {
+            sb.append("[");
+            sb.append(mHost);
+            sb.append("] ");
+            sb.append(Integer.toString(mPort));
+            if (mExclusionList != null) {
+                    sb.append(" xl=").append(mExclusionList);
+            }
+        } else {
+            sb.append("[ProxyProperties.mHost == null]");
+        }
+        return sb.toString();
+!!!7222405.java!!!	equals(inout o : Object) : boolean
+        if (!(o instanceof ProxyInfo)) return false;
+        ProxyInfo p = (ProxyInfo)o;
+        // If PAC URL is present in either then they must be equal.
+        // Other parameters will only be for fall back.
+        if (!Uri.EMPTY.equals(mPacFileUrl)) {
+            return mPacFileUrl.equals(p.getPacFileUrl()) && mPort == p.mPort;
+        }
+        if (!Uri.EMPTY.equals(p.mPacFileUrl)) {
+            return false;
+        }
+        if (mExclusionList != null && !mExclusionList.equals(p.getExclusionListAsString())) {
+            return false;
+        }
+        if (mHost != null && p.getHost() != null && mHost.equals(p.getHost()) == false) {
+            return false;
+        }
+        if (mHost != null && p.mHost == null) return false;
+        if (mHost == null && p.mHost != null) return false;
+        if (mPort != p.mPort) return false;
+        return true;
+!!!7222533.java!!!	describeContents() : int
+        return 0;
+!!!7222661.java!!!	hashCode() : int
+        return ((null == mHost) ? 0 : mHost.hashCode())
+        + ((null == mExclusionList) ? 0 : mExclusionList.hashCode())
+        + mPort;
+!!!7222789.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+        if (!Uri.EMPTY.equals(mPacFileUrl)) {
+            dest.writeByte((byte)1);
+            mPacFileUrl.writeToParcel(dest, 0);
+            dest.writeInt(mPort);
+            return;
+        } else {
+            dest.writeByte((byte)0);
+        }
+        if (mHost != null) {
+            dest.writeByte((byte)1);
+            dest.writeString(mHost);
+            dest.writeInt(mPort);
+        } else {
+            dest.writeByte((byte)0);
+        }
+        dest.writeString(mExclusionList);
+        dest.writeStringArray(mParsedExclusionList);

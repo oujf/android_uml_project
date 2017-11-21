@@ -1,0 +1,60 @@
+class TaskTapPointerEventListener
+!!!12774277.java!!!	TaskTapPointerEventListener(inout service : WindowManagerService, inout displayContent : DisplayContent)
+        mService = service;
+        mDisplayContent = displayContent;
+!!!12774405.java!!!	onPointerEvent(inout motionEvent : MotionEvent) : void
+        final int action = motionEvent.getAction();
+        switch (action & MotionEvent.ACTION_MASK) {
+            case MotionEvent.ACTION_DOWN: {
+                final int x = (int) motionEvent.getX();
+                final int y = (int) motionEvent.getY();
+
+                synchronized (this) {
+                    if (!mTouchExcludeRegion.contains(x, y)) {
+                        mService.mH.obtainMessage(H.TAP_OUTSIDE_TASK,
+                                x, y, mDisplayContent).sendToTarget();
+                    }
+                }
+            }
+            break;
+
+            case MotionEvent.ACTION_HOVER_MOVE: {
+                final int x = (int) motionEvent.getX();
+                final int y = (int) motionEvent.getY();
+                final Task task = mDisplayContent.findTaskForResizePoint(x, y);
+                int iconType = TYPE_NOT_SPECIFIED;
+                if (task != null) {
+                    task.getDimBounds(mTmpRect);
+                    if (!mTmpRect.isEmpty() && !mTmpRect.contains(x, y)) {
+                        if (x < mTmpRect.left) {
+                            iconType =
+                                (y < mTmpRect.top) ? TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW :
+                                (y > mTmpRect.bottom) ? TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW :
+                                TYPE_HORIZONTAL_DOUBLE_ARROW;
+                        } else if (x > mTmpRect.right) {
+                            iconType =
+                                (y < mTmpRect.top) ? TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW :
+                                (y > mTmpRect.bottom) ? TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW :
+                                TYPE_HORIZONTAL_DOUBLE_ARROW;
+                        } else if (y < mTmpRect.top || y > mTmpRect.bottom) {
+                            iconType = TYPE_VERTICAL_DOUBLE_ARROW;
+                        }
+                    }
+                }
+                if (mPointerIconType != iconType) {
+                    mPointerIconType = iconType;
+                    if (mPointerIconType == TYPE_NOT_SPECIFIED) {
+                        // Find the underlying window and ask it restore the pointer icon.
+                        mService.mH.obtainMessage(H.RESTORE_POINTER_ICON,
+                                x, y, mDisplayContent).sendToTarget();
+                    } else {
+                        InputManager.getInstance().setPointerIconType(mPointerIconType);
+                    }
+                }
+            }
+            break;
+        }
+!!!12774533.java!!!	setTouchExcludeRegion(inout newRegion : Region) : void
+        synchronized (this) {
+           mTouchExcludeRegion.set(newRegion);
+        }

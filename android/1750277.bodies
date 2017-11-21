@@ -1,0 +1,213 @@
+class LocalService
+!!!12287365.java!!!	getShortcuts(in launcherUserId : int, in callingPackage : String, in changedSince : long, in packageName : String, inout shortcutIds : List<String>, inout componentName : ComponentName, in queryFlags : int, in userId : int) : ShortcutInfo
+            final ArrayList<ShortcutInfo> ret = new ArrayList<>();
+
+            final boolean cloneKeyFieldOnly =
+                    ((queryFlags & ShortcutQuery.FLAG_GET_KEY_FIELDS_ONLY) != 0);
+            final int cloneFlag = cloneKeyFieldOnly ? ShortcutInfo.CLONE_REMOVE_NON_KEY_INFO
+                    : ShortcutInfo.CLONE_REMOVE_FOR_LAUNCHER;
+            if (packageName == null) {
+                shortcutIds = null; // LauncherAppsService already threw for it though.
+            }
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                getLauncherShortcutsLocked(callingPackage, userId, launcherUserId)
+                        .attemptToRestoreIfNeededAndSave();
+
+                if (packageName != null) {
+                    getShortcutsInnerLocked(launcherUserId,
+                            callingPackage, packageName, shortcutIds, changedSince,
+                            componentName, queryFlags, userId, ret, cloneFlag);
+                } else {
+                    final List<String> shortcutIdsF = shortcutIds;
+                    getUserShortcutsLocked(userId).forAllPackages(p -> {
+                        getShortcutsInnerLocked(launcherUserId,
+                                callingPackage, p.getPackageName(), shortcutIdsF, changedSince,
+                                componentName, queryFlags, userId, ret, cloneFlag);
+                    });
+                }
+            }
+            return setReturnedByServer(ret);
+!!!12287493.java!!!	getShortcutsInnerLocked(in launcherUserId : int, in callingPackage : String, in packageName : String, inout shortcutIds : List<String>, in changedSince : long, inout componentName : ComponentName, in queryFlags : int, in userId : int, inout ret : ArrayList<ShortcutInfo>, in cloneFlag : int) : void
+            final ArraySet<String> ids = shortcutIds == null ? null
+                    : new ArraySet<>(shortcutIds);
+
+            final ShortcutPackage p = getUserShortcutsLocked(userId)
+                    .getPackageShortcutsIfExists(packageName);
+            if (p == null) {
+                return; // No need to instantiate ShortcutPackage.
+            }
+
+            p.findAll(ret,
+                    (ShortcutInfo si) -> {
+                        if (si.getLastChangedTimestamp() < changedSince) {
+                            return false;
+                        }
+                        if (ids != null && !ids.contains(si.getId())) {
+                            return false;
+                        }
+                        if (componentName != null) {
+                            if (si.getActivity() != null
+                                    && !si.getActivity().equals(componentName)) {
+                                return false;
+                            }
+                        }
+                        if (((queryFlags & ShortcutQuery.FLAG_GET_DYNAMIC) != 0)
+                                && si.isDynamic()) {
+                            return true;
+                        }
+                        if (((queryFlags & ShortcutQuery.FLAG_GET_PINNED) != 0)
+                                && si.isPinned()) {
+                            return true;
+                        }
+                        if (((queryFlags & ShortcutQuery.FLAG_GET_MANIFEST) != 0)
+                                && si.isManifestShortcut()) {
+                            return true;
+                        }
+                        return false;
+                    }, cloneFlag, callingPackage, launcherUserId);
+!!!12287621.java!!!	isPinnedByCaller(in launcherUserId : int, in callingPackage : String, in packageName : String, in shortcutId : String, in userId : int) : boolean
+            Preconditions.checkStringNotEmpty(packageName, "packageName");
+            Preconditions.checkStringNotEmpty(shortcutId, "shortcutId");
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                getLauncherShortcutsLocked(callingPackage, userId, launcherUserId)
+                        .attemptToRestoreIfNeededAndSave();
+
+                final ShortcutInfo si = getShortcutInfoLocked(
+                        launcherUserId, callingPackage, packageName, shortcutId, userId);
+                return si != null && si.isPinned();
+            }
+!!!12287749.java!!!	getShortcutInfoLocked(in launcherUserId : int, in callingPackage : String, in packageName : String, in shortcutId : String, in userId : int) : ShortcutInfo
+            Preconditions.checkStringNotEmpty(packageName, "packageName");
+            Preconditions.checkStringNotEmpty(shortcutId, "shortcutId");
+
+            throwIfUserLockedL(userId);
+            throwIfUserLockedL(launcherUserId);
+
+            final ShortcutPackage p = getUserShortcutsLocked(userId)
+                    .getPackageShortcutsIfExists(packageName);
+            if (p == null) {
+                return null;
+            }
+
+            final ArrayList<ShortcutInfo> list = new ArrayList<>(1);
+            p.findAll(list,
+                    (ShortcutInfo si) -> shortcutId.equals(si.getId()),
+                    /* clone flags=*/ 0, callingPackage, launcherUserId);
+            return list.size() == 0 ? null : list.get(0);
+!!!12287877.java!!!	pinShortcuts(in launcherUserId : int, in callingPackage : String, in packageName : String, inout shortcutIds : List<String>, in userId : int) : void
+            // Calling permission must be checked by LauncherAppsImpl.
+            Preconditions.checkStringNotEmpty(packageName, "packageName");
+            Preconditions.checkNotNull(shortcutIds, "shortcutIds");
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                final ShortcutLauncher launcher =
+                        getLauncherShortcutsLocked(callingPackage, userId, launcherUserId);
+                launcher.attemptToRestoreIfNeededAndSave();
+
+                launcher.pinShortcuts(userId, packageName, shortcutIds);
+            }
+            packageShortcutsChanged(packageName, userId);
+
+            verifyStates();
+!!!12288005.java!!!	createShortcutIntents(in launcherUserId : int, in callingPackage : String, in packageName : String, in shortcutId : String, in userId : int) : Intent
+            // Calling permission must be checked by LauncherAppsImpl.
+            Preconditions.checkStringNotEmpty(packageName, "packageName can't be empty");
+            Preconditions.checkStringNotEmpty(shortcutId, "shortcutId can't be empty");
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                getLauncherShortcutsLocked(callingPackage, userId, launcherUserId)
+                        .attemptToRestoreIfNeededAndSave();
+
+                // Make sure the shortcut is actually visible to the launcher.
+                final ShortcutInfo si = getShortcutInfoLocked(
+                        launcherUserId, callingPackage, packageName, shortcutId, userId);
+                // "si == null" should suffice here, but check the flags too just to make sure.
+                if (si == null || !si.isEnabled() || !si.isAlive()) {
+                    Log.e(TAG, "Shortcut " + shortcutId + " does not exist or disabled");
+                    return null;
+                }
+                return si.getIntents();
+            }
+!!!12288133.java!!!	addListener(inout listener : ShortcutServiceInternal::ShortcutChangeListener) : void
+            synchronized (mLock) {
+                mListeners.add(Preconditions.checkNotNull(listener));
+            }
+!!!12288261.java!!!	getShortcutIconResId(in launcherUserId : int, in callingPackage : String, in packageName : String, in shortcutId : String, in userId : int) : int
+            Preconditions.checkNotNull(callingPackage, "callingPackage");
+            Preconditions.checkNotNull(packageName, "packageName");
+            Preconditions.checkNotNull(shortcutId, "shortcutId");
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                getLauncherShortcutsLocked(callingPackage, userId, launcherUserId)
+                        .attemptToRestoreIfNeededAndSave();
+
+                final ShortcutPackage p = getUserShortcutsLocked(userId)
+                        .getPackageShortcutsIfExists(packageName);
+                if (p == null) {
+                    return 0;
+                }
+
+                final ShortcutInfo shortcutInfo = p.findShortcutById(shortcutId);
+                return (shortcutInfo != null && shortcutInfo.hasIconResource())
+                        ? shortcutInfo.getIconResourceId() : 0;
+            }
+!!!12288389.java!!!	getShortcutIconFd(in launcherUserId : int, in callingPackage : String, in packageName : String, in shortcutId : String, in userId : int) : ParcelFileDescriptor
+            Preconditions.checkNotNull(callingPackage, "callingPackage");
+            Preconditions.checkNotNull(packageName, "packageName");
+            Preconditions.checkNotNull(shortcutId, "shortcutId");
+
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+                throwIfUserLockedL(launcherUserId);
+
+                getLauncherShortcutsLocked(callingPackage, userId, launcherUserId)
+                        .attemptToRestoreIfNeededAndSave();
+
+                final ShortcutPackage p = getUserShortcutsLocked(userId)
+                        .getPackageShortcutsIfExists(packageName);
+                if (p == null) {
+                    return null;
+                }
+
+                final ShortcutInfo shortcutInfo = p.findShortcutById(shortcutId);
+                if (shortcutInfo == null || !shortcutInfo.hasIconFile()) {
+                    return null;
+                }
+                final String path = mShortcutBitmapSaver.getBitmapPathMayWaitLocked(shortcutInfo);
+                if (path == null) {
+                    Slog.w(TAG, "null bitmap detected in getShortcutIconFd()");
+                    return null;
+                }
+                try {
+                    return ParcelFileDescriptor.open(
+                            new File(path),
+                            ParcelFileDescriptor.MODE_READ_ONLY);
+                } catch (FileNotFoundException e) {
+                    Slog.e(TAG, "Icon file not found: " + path);
+                    return null;
+                }
+            }
+!!!12288517.java!!!	hasShortcutHostPermission(in launcherUserId : int, in callingPackage : String) : boolean
+            return ShortcutService.this.hasShortcutHostPermission(callingPackage, launcherUserId);
+!!!12288645.java!!!	requestPinAppWidget(in callingPackage : String, inout appWidget : AppWidgetProviderInfo, inout extras : Bundle, inout resultIntent : IntentSender, in userId : int) : boolean
+            Preconditions.checkNotNull(appWidget);
+            return requestPinItem(callingPackage, userId, null, appWidget, extras, resultIntent);
+!!!12288773.java!!!	isRequestPinItemSupported(in callingUserId : int, in requestType : int) : boolean
+            return ShortcutService.this.isRequestPinItemSupported(callingUserId, requestType);

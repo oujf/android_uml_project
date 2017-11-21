@@ -1,0 +1,239 @@
+class CameraManager
+!!!6644101.java!!!	CameraManager(inout context : Context)
+        synchronized(mLock) {
+            mContext = context;
+        }
+!!!6644229.java!!!	getCameraIdList() : String
+        return CameraManagerGlobal.get().getCameraIdList();
+!!!6644357.java!!!	registerAvailabilityCallback(inout callback : CameraManager::AvailabilityCallback, inout handler : Handler) : void
+        if (handler == null) {
+            Looper looper = Looper.myLooper();
+            if (looper == null) {
+                throw new IllegalArgumentException(
+                        "No handler given, and current thread has no looper!");
+            }
+            handler = new Handler(looper);
+        }
+
+        CameraManagerGlobal.get().registerAvailabilityCallback(callback, handler);
+!!!6644485.java!!!	unregisterAvailabilityCallback(inout callback : CameraManager::AvailabilityCallback) : void
+        CameraManagerGlobal.get().unregisterAvailabilityCallback(callback);
+!!!6644613.java!!!	registerTorchCallback(inout callback : CameraManager::TorchCallback, inout handler : Handler) : void
+        if (handler == null) {
+            Looper looper = Looper.myLooper();
+            if (looper == null) {
+                throw new IllegalArgumentException(
+                        "No handler given, and current thread has no looper!");
+            }
+            handler = new Handler(looper);
+        }
+        CameraManagerGlobal.get().registerTorchCallback(callback, handler);
+!!!6644741.java!!!	unregisterTorchCallback(inout callback : CameraManager::TorchCallback) : void
+        CameraManagerGlobal.get().unregisterTorchCallback(callback);
+!!!6644869.java!!!	getCameraCharacteristics(in cameraId : String) : CameraCharacteristics
+        CameraCharacteristics characteristics = null;
+
+        synchronized (mLock) {
+            /*
+             * Get the camera characteristics from the camera service directly if it supports it,
+             * otherwise get them from the legacy shim instead.
+             */
+            ICameraService cameraService = CameraManagerGlobal.get().getCameraService();
+            if (cameraService == null) {
+                throw new CameraAccessException(CameraAccessException.CAMERA_DISCONNECTED,
+                        "Camera service is currently unavailable");
+            }
+            try {
+                if (!supportsCamera2ApiLocked(cameraId)) {
+                    // Legacy backwards compatibility path; build static info from the camera
+                    // parameters
+                    int id = Integer.parseInt(cameraId);
+
+                    String parameters = cameraService.getLegacyParameters(id);
+
+                    CameraInfo info = cameraService.getCameraInfo(id);
+
+                    characteristics = LegacyMetadataMapper.createCharacteristics(parameters, info);
+                } else {
+                    // Normal path: Get the camera characteristics directly from the camera service
+                    CameraMetadataNative info = cameraService.getCameraCharacteristics(cameraId);
+
+                    characteristics = new CameraCharacteristics(info);
+                }
+            } catch (ServiceSpecificException e) {
+                throwAsPublicException(e);
+            } catch (RemoteException e) {
+                // Camera service died - act as if the camera was disconnected
+                throw new CameraAccessException(CameraAccessException.CAMERA_DISCONNECTED,
+                        "Camera service is currently unavailable", e);
+            }
+        }
+        return characteristics;
+!!!6644997.java!!!	openCameraDeviceUserAsync(in cameraId : String, inout callback : CameraDevice::StateCallback, inout handler : Handler, in uid : int) : CameraDevice
+        CameraCharacteristics characteristics = getCameraCharacteristics(cameraId);
+        CameraDevice device = null;
+
+        synchronized (mLock) {
+
+            ICameraDeviceUser cameraUser = null;
+
+            android.hardware.camera2.impl.CameraDeviceImpl deviceImpl =
+                    new android.hardware.camera2.impl.CameraDeviceImpl(
+                        cameraId,
+                        callback,
+                        handler,
+                        characteristics,
+                        mContext.getApplicationInfo().targetSdkVersion);
+
+            ICameraDeviceCallbacks callbacks = deviceImpl.getCallbacks();
+
+            try {
+                if (supportsCamera2ApiLocked(cameraId)) {
+                    // Use cameraservice's cameradeviceclient implementation for HAL3.2+ devices
+                    ICameraService cameraService = CameraManagerGlobal.get().getCameraService();
+                    if (cameraService == null) {
+                        throw new ServiceSpecificException(
+                            ICameraService.ERROR_DISCONNECTED,
+                            "Camera service is currently unavailable");
+                    }
+                    cameraUser = cameraService.connectDevice(callbacks, cameraId,
+                            mContext.getOpPackageName(), uid);
+                } else {
+                    // Use legacy camera implementation for HAL1 devices
+                    int id;
+                    try {
+                        id = Integer.parseInt(cameraId);
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException("Expected cameraId to be numeric, but it was: "
+                                + cameraId);
+                    }
+
+                    Log.i(TAG, "Using legacy camera HAL.");
+                    cameraUser = CameraDeviceUserShim.connectBinderShim(callbacks, id);
+                }
+            } catch (ServiceSpecificException e) {
+                if (e.errorCode == ICameraService.ERROR_DEPRECATED_HAL) {
+                    throw new AssertionError("Should've gone down the shim path");
+                } else if (e.errorCode == ICameraService.ERROR_CAMERA_IN_USE ||
+                        e.errorCode == ICameraService.ERROR_MAX_CAMERAS_IN_USE ||
+                        e.errorCode == ICameraService.ERROR_DISABLED ||
+                        e.errorCode == ICameraService.ERROR_DISCONNECTED ||
+                        e.errorCode == ICameraService.ERROR_INVALID_OPERATION) {
+                    // Received one of the known connection errors
+                    // The remote camera device cannot be connected to, so
+                    // set the local camera to the startup error state
+                    deviceImpl.setRemoteFailure(e);
+
+                    if (e.errorCode == ICameraService.ERROR_DISABLED ||
+                            e.errorCode == ICameraService.ERROR_DISCONNECTED ||
+                            e.errorCode == ICameraService.ERROR_CAMERA_IN_USE) {
+                        // Per API docs, these failures call onError and throw
+                        throwAsPublicException(e);
+                    }
+                } else {
+                    // Unexpected failure - rethrow
+                    throwAsPublicException(e);
+                }
+            } catch (RemoteException e) {
+                // Camera service died - act as if it's a CAMERA_DISCONNECTED case
+                ServiceSpecificException sse = new ServiceSpecificException(
+                    ICameraService.ERROR_DISCONNECTED,
+                    "Camera service is currently unavailable");
+                deviceImpl.setRemoteFailure(sse);
+                throwAsPublicException(sse);
+            }
+
+            // TODO: factor out callback to be non-nested, then move setter to constructor
+            // For now, calling setRemoteDevice will fire initial
+            // onOpened/onUnconfigured callbacks.
+            // This function call may post onDisconnected and throw CAMERA_DISCONNECTED if
+            // cameraUser dies during setup.
+            deviceImpl.setRemoteDevice(cameraUser);
+            device = deviceImpl;
+        }
+
+        return device;
+!!!6645125.java!!!	openCamera(in cameraId : String, in callback : CameraDevice::StateCallback, inout handler : Handler) : void
+
+        openCameraForUid(cameraId, callback, handler, USE_CALLING_UID);
+!!!6645253.java!!!	openCameraForUid(in cameraId : String, in callback : CameraDevice::StateCallback, inout handler : Handler, in clientUid : int) : void
+
+        if (cameraId == null) {
+            throw new IllegalArgumentException("cameraId was null");
+        } else if (callback == null) {
+            throw new IllegalArgumentException("callback was null");
+        } else if (handler == null) {
+            if (Looper.myLooper() != null) {
+                handler = new Handler();
+            } else {
+                throw new IllegalArgumentException(
+                        "Handler argument is null, but no looper exists in the calling thread");
+            }
+        }
+
+        openCameraDeviceUserAsync(cameraId, callback, handler, clientUid);
+!!!6645381.java!!!	setTorchMode(in cameraId : String, inout enabled : boolean) : void
+        CameraManagerGlobal.get().setTorchMode(cameraId, enabled);
+!!!6646021.java!!!	throwAsPublicException(inout t : Throwable) : void
+        if (t instanceof ServiceSpecificException) {
+            ServiceSpecificException e = (ServiceSpecificException) t;
+            int reason = CameraAccessException.CAMERA_ERROR;
+            switch(e.errorCode) {
+                case ICameraService.ERROR_DISCONNECTED:
+                    reason = CameraAccessException.CAMERA_DISCONNECTED;
+                    break;
+                case ICameraService.ERROR_DISABLED:
+                    reason = CameraAccessException.CAMERA_DISABLED;
+                    break;
+                case ICameraService.ERROR_CAMERA_IN_USE:
+                    reason = CameraAccessException.CAMERA_IN_USE;
+                    break;
+                case ICameraService.ERROR_MAX_CAMERAS_IN_USE:
+                    reason = CameraAccessException.MAX_CAMERAS_IN_USE;
+                    break;
+                case ICameraService.ERROR_DEPRECATED_HAL:
+                    reason = CameraAccessException.CAMERA_DEPRECATED_HAL;
+                    break;
+                case ICameraService.ERROR_ILLEGAL_ARGUMENT:
+                case ICameraService.ERROR_ALREADY_EXISTS:
+                    throw new IllegalArgumentException(e.getMessage(), e);
+                case ICameraService.ERROR_PERMISSION_DENIED:
+                    throw new SecurityException(e.getMessage(), e);
+                case ICameraService.ERROR_TIMED_OUT:
+                case ICameraService.ERROR_INVALID_OPERATION:
+                default:
+                    reason = CameraAccessException.CAMERA_ERROR;
+            }
+            throw new CameraAccessException(reason, e.getMessage(), e);
+        } else if (t instanceof DeadObjectException) {
+            throw new CameraAccessException(CameraAccessException.CAMERA_DISCONNECTED,
+                    "Camera service has died unexpectedly",
+                    t);
+        } else if (t instanceof RemoteException) {
+            throw new UnsupportedOperationException("An unknown RemoteException was thrown" +
+                    " which should never happen.", t);
+        } else if (t instanceof RuntimeException) {
+            RuntimeException e = (RuntimeException) t;
+            throw e;
+        }
+!!!6646149.java!!!	supportsCamera2ApiLocked(in cameraId : String) : boolean
+        return supportsCameraApiLocked(cameraId, API_VERSION_2);
+!!!6646277.java!!!	supportsCameraApiLocked(in cameraId : String, in apiVersion : int) : boolean
+        /*
+         * Possible return values:
+         * - NO_ERROR => CameraX API is supported
+         * - CAMERA_DEPRECATED_HAL => CameraX API is *not* supported (thrown as an exception)
+         * - Remote exception => If the camera service died
+         *
+         * Anything else is an unexpected error we don't want to recover from.
+         */
+        try {
+            ICameraService cameraService = CameraManagerGlobal.get().getCameraService();
+            // If no camera service, no support
+            if (cameraService == null) return false;
+
+            return cameraService.supportsCameraApi(cameraId, apiVersion);
+        } catch (RemoteException e) {
+            // Camera service is now down, no support for any API level
+        }
+        return false;

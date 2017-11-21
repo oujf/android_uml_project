@@ -1,0 +1,99 @@
+class AudioPlaybackMonitor
+!!!11797253.java!!!	AudioPlaybackMonitor(inout context : Context, inout audioService : IAudioService, inout listener : AudioPlaybackMonitor::OnAudioPlaybackStartedListener)
+        mContext = context;
+        mListener = listener;
+        try {
+            audioService.registerPlaybackCallback(this);
+        } catch (RemoteException e) {
+            Log.wtf(TAG, "Failed to register playback callback", e);
+        }
+!!!11797381.java!!!	dispatchPlaybackConfigChange(inout configs : List<AudioPlaybackConfiguration>) : void
+        final long token = Binder.clearCallingIdentity();
+        try {
+            Set<Integer> newActiveAudioPlaybackPlayerInterfaceIds = new HashSet<>();
+            List<Integer> newActiveAudioPlaybackClientUids = new ArrayList<>();
+            synchronized (mLock) {
+                mActiveAudioPlaybackClientUids.clear();
+                for (AudioPlaybackConfiguration config : configs) {
+                    // Ignore inactive (i.e. not playing) or PLAYER_TYPE_JAM_SOUNDPOOL
+                    // (i.e. playback from the SoundPool class which is only for sound effects)
+                    // playback.
+                    // Note that we shouldn't ignore PLAYER_TYPE_UNKNOWN because it might be OEM
+                    // specific audio/video players.
+                    if (!config.isActive()
+                            || config.getPlayerType()
+                            == AudioPlaybackConfiguration.PLAYER_TYPE_JAM_SOUNDPOOL) {
+                        continue;
+                    }
+                    mActiveAudioPlaybackClientUids.add(config.getClientUid());
+
+                    newActiveAudioPlaybackPlayerInterfaceIds.add(config.getPlayerInterfaceId());
+                    if (!mActiveAudioPlaybackPlayerInterfaceIds.contains(
+                            config.getPlayerInterfaceId())) {
+                        if (DEBUG) {
+                            Log.d(TAG, "Found a new active media playback. " +
+                                    AudioPlaybackConfiguration.toLogFriendlyString(config));
+                        }
+                        // New active audio playback.
+                        newActiveAudioPlaybackClientUids.add(config.getClientUid());
+                        int index = mSortedAudioPlaybackClientUids.indexOf(config.getClientUid());
+                        if (index == 0) {
+                            // It's the lastly played music app already. Skip updating.
+                            continue;
+                        } else if (index > 0) {
+                            mSortedAudioPlaybackClientUids.remove(index);
+                        }
+                        mSortedAudioPlaybackClientUids.add(0, config.getClientUid());
+                    }
+                }
+                mActiveAudioPlaybackPlayerInterfaceIds.clear();
+                mActiveAudioPlaybackPlayerInterfaceIds = newActiveAudioPlaybackPlayerInterfaceIds;
+            }
+            for (int uid : newActiveAudioPlaybackClientUids) {
+                mListener.onAudioPlaybackStarted(uid);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+!!!11797509.java!!!	getSortedAudioPlaybackClientUids() : IntArray
+        IntArray sortedAudioPlaybackClientUids = new IntArray();
+        synchronized (mLock) {
+            sortedAudioPlaybackClientUids.addAll(mSortedAudioPlaybackClientUids);
+        }
+        return sortedAudioPlaybackClientUids;
+!!!11797637.java!!!	isPlaybackActive(in uid : int) : boolean
+        synchronized (mLock) {
+            return mActiveAudioPlaybackClientUids.contains(uid);
+        }
+!!!11797765.java!!!	cleanUpAudioPlaybackUids(in mediaButtonSessionUid : int) : void
+        synchronized (mLock) {
+            int userId = UserHandle.getUserId(mediaButtonSessionUid);
+            for (int i = mSortedAudioPlaybackClientUids.size() - 1; i >= 0; i--) {
+                if (mSortedAudioPlaybackClientUids.get(i) == mediaButtonSessionUid) {
+                    break;
+                }
+                if (userId == UserHandle.getUserId(mSortedAudioPlaybackClientUids.get(i))) {
+                    // Clean up unnecessary UIDs.
+                    // It doesn't need to be managed profile aware because it's just to prevent
+                    // the list from increasing indefinitely. The media button session updating
+                    // shouldn't be affected by cleaning up.
+                    mSortedAudioPlaybackClientUids.remove(i);
+                }
+            }
+        }
+!!!11797893.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        synchronized (mLock) {
+            pw.println(prefix + "Audio playback (lastly played comes first)");
+            String indent = prefix + "  ";
+            for (int i = 0; i < mSortedAudioPlaybackClientUids.size(); i++) {
+                int uid = mSortedAudioPlaybackClientUids.get(i);
+                pw.print(indent + "uid=" + uid + " packages=");
+                String[] packages = mContext.getPackageManager().getPackagesForUid(uid);
+                if (packages != null && packages.length > 0) {
+                    for (int j = 0; j < packages.length; j++) {
+                        pw.print(packages[j] + " ");
+                    }
+                }
+                pw.println();
+            }
+        }

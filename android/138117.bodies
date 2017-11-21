@@ -1,0 +1,24 @@
+class MediaLogNotifier
+!!!148357.cpp!!!	requestMerge() : void
+    AutoMutex _l(mMutex);
+    mPendingRequests = true;
+    mCond.signal();
+!!!148485.cpp!!!	threadLoop() : bool
+    // Should already have been checked, but just in case
+    if (sMediaLogService == 0) {
+        return false;
+    }
+    // Wait until there are pending requests
+    {
+        AutoMutex _l(mMutex);
+        mPendingRequests = false; // to ignore past requests
+        while (!mPendingRequests) {
+            mCond.wait(mMutex);
+            // TODO may also need an exitPending check
+        }
+        mPendingRequests = false;
+    }
+    // Execute the actual MediaLogService binder call and ignore extra requests for a while
+    sMediaLogService->requestMergeWakeup();
+    usleep(kPostTriggerSleepPeriod);
+    return true;

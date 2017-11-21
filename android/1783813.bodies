@@ -1,0 +1,70 @@
+class UnknownAppVisibilityController
+!!!12776965.java!!!	UnknownAppVisibilityController(inout service : WindowManagerService)
+        mService = service;
+!!!12777093.java!!!	allResolved() : boolean
+        return mUnknownApps.isEmpty();
+!!!12777221.java!!!	clear() : void
+        mUnknownApps.clear();
+!!!12777349.java!!!	getDebugMessage() : String
+        final StringBuilder builder = new StringBuilder();
+        for (int i = mUnknownApps.size() - 1; i >= 0; i--) {
+            builder.append("app=").append(mUnknownApps.keyAt(i))
+                    .append(" state=").append(mUnknownApps.valueAt(i));
+            if (i != 0) {
+                builder.append(' ');
+            }
+        }
+        return builder.toString();
+!!!12777477.java!!!	appRemovedOrHidden(inout appWindow : AppWindowToken) : void
+        if (DEBUG_UNKNOWN_APP_VISIBILITY) {
+            Slog.d(TAG, "App removed or hidden appWindow=" + appWindow);
+        }
+        mUnknownApps.remove(appWindow);
+!!!12777605.java!!!	notifyLaunched(inout appWindow : AppWindowToken) : void
+        if (DEBUG_UNKNOWN_APP_VISIBILITY) {
+            Slog.d(TAG, "App launched appWindow=" + appWindow);
+        }
+        mUnknownApps.put(appWindow, UNKNOWN_STATE_WAITING_RESUME);
+!!!12777733.java!!!	notifyAppResumedFinished(inout appWindow : AppWindowToken) : void
+        if (mUnknownApps.containsKey(appWindow)
+                && mUnknownApps.get(appWindow) == UNKNOWN_STATE_WAITING_RESUME) {
+            if (DEBUG_UNKNOWN_APP_VISIBILITY) {
+                Slog.d(TAG, "App resume finished appWindow=" + appWindow);
+            }
+            mUnknownApps.put(appWindow, UNKNOWN_STATE_WAITING_RELAYOUT);
+        }
+!!!12777861.java!!!	notifyRelayouted(inout appWindow : AppWindowToken) : void
+        if (!mUnknownApps.containsKey(appWindow)) {
+            return;
+        }
+        if (DEBUG_UNKNOWN_APP_VISIBILITY) {
+            Slog.d(TAG, "App relayouted appWindow=" + appWindow);
+        }
+        int state = mUnknownApps.get(appWindow);
+        if (state == UNKNOWN_STATE_WAITING_RELAYOUT) {
+            mUnknownApps.put(appWindow, UNKNOWN_STATE_WAITING_VISIBILITY_UPDATE);
+            mService.notifyKeyguardFlagsChanged(this::notifyVisibilitiesUpdated);
+        }
+!!!12777989.java!!!	notifyVisibilitiesUpdated() : void
+        if (DEBUG_UNKNOWN_APP_VISIBILITY) {
+            Slog.d(TAG, "Visibility updated DONE");
+        }
+        boolean changed = false;
+        for (int i = mUnknownApps.size() - 1; i >= 0; i--) {
+            if (mUnknownApps.valueAt(i) == UNKNOWN_STATE_WAITING_VISIBILITY_UPDATE) {
+                mUnknownApps.removeAt(i);
+                changed = true;
+            }
+        }
+        if (changed) {
+            mService.mWindowPlacerLocked.performSurfacePlacement();
+        }
+!!!12778117.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        if (mUnknownApps.isEmpty()) {
+            return;
+        }
+        pw.println(prefix + "Unknown visibilities:");
+        for (int i = mUnknownApps.size() - 1; i >= 0; i--) {
+            pw.println(prefix + "  app=" + mUnknownApps.keyAt(i)
+                    + " state=" + mUnknownApps.valueAt(i));
+        }

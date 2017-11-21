@@ -1,0 +1,244 @@
+class ZygoteProcess
+!!!7654789.java!!!	ZygoteProcess(in primarySocket : String, in secondarySocket : String)
+        mSocket = primarySocket;
+        mSecondarySocket = secondarySocket;
+!!!7655557.java!!!	start(in processClass : String, in niceName : String, in uid : int, in gid : int, inout gids : int [[]], in debugFlags : int, in mountExternal : int, in targetSdkVersion : int, in seInfo : String, in abi : String, in instructionSet : String, in appDataDir : String, in invokeWith : String, inout zygoteArgs : String [[]]) : Process::ProcessStartResult
+        try {
+            return startViaZygote(processClass, niceName, uid, gid, gids,
+                    debugFlags, mountExternal, targetSdkVersion, seInfo,
+                    abi, instructionSet, appDataDir, invokeWith, zygoteArgs);
+        } catch (ZygoteStartFailedEx ex) {
+            Log.e(LOG_TAG,
+                    "Starting VM process through Zygote failed");
+            throw new RuntimeException(
+                    "Starting VM process through Zygote failed", ex);
+        }
+!!!7655685.java!!!	getAbiList(inout writer : BufferedWriter, inout inputStream : DataInputStream) : String
+        // Each query starts with the argument count (1 in this case)
+        writer.write("1");
+        // ... followed by a new-line.
+        writer.newLine();
+        // ... followed by our only argument.
+        writer.write("--query-abi-list");
+        writer.newLine();
+        writer.flush();
+
+        // The response is a length prefixed stream of ASCII bytes.
+        int numBytes = inputStream.readInt();
+        byte[] bytes = new byte[numBytes];
+        inputStream.readFully(bytes);
+
+        return new String(bytes, StandardCharsets.US_ASCII);
+!!!7655813.java!!!	zygoteSendArgsAndGetResult(inout zygoteState : ZygoteProcess::ZygoteState, inout args : ArrayList<String>) : Process::ProcessStartResult
+        try {
+            // Throw early if any of the arguments are malformed. This means we can
+            // avoid writing a partial response to the zygote.
+            int sz = args.size();
+            for (int i = 0; i < sz; i++) {
+                if (args.get(i).indexOf('\n') >= 0) {
+                    throw new ZygoteStartFailedEx("embedded newlines not allowed");
+                }
+            }
+
+            /**
+             * See com.android.internal.os.SystemZygoteInit.readArgumentList()
+             * Presently the wire format to the zygote process is:
+             * a) a count of arguments (argc, in essence)
+             * b) a number of newline-separated argument strings equal to count
+             *
+             * After the zygote process reads these it will write the pid of
+             * the child or -1 on failure, followed by boolean to
+             * indicate whether a wrapper process was used.
+             */
+            final BufferedWriter writer = zygoteState.writer;
+            final DataInputStream inputStream = zygoteState.inputStream;
+
+            writer.write(Integer.toString(args.size()));
+            writer.newLine();
+
+            for (int i = 0; i < sz; i++) {
+                String arg = args.get(i);
+                writer.write(arg);
+                writer.newLine();
+            }
+
+            writer.flush();
+
+            // Should there be a timeout on this?
+            Process.ProcessStartResult result = new Process.ProcessStartResult();
+
+            // Always read the entire result from the input stream to avoid leaving
+            // bytes in the stream for future process starts to accidentally stumble
+            // upon.
+            result.pid = inputStream.readInt();
+            result.usingWrapper = inputStream.readBoolean();
+
+            if (result.pid < 0) {
+                throw new ZygoteStartFailedEx("fork() failed");
+            }
+            return result;
+        } catch (IOException ex) {
+            zygoteState.close();
+            throw new ZygoteStartFailedEx(ex);
+        }
+!!!7655941.java!!!	startViaZygote(in processClass : String, in niceName : String, in uid : int, in gid : int, in gids : int [[]], in debugFlags : int, in mountExternal : int, in targetSdkVersion : int, in seInfo : String, in abi : String, in instructionSet : String, in appDataDir : String, in invokeWith : String, inout extraArgs : String [[]]) : Process::ProcessStartResult
+        ArrayList<String> argsForZygote = new ArrayList<String>();
+
+        // --runtime-args, --setuid=, --setgid=,
+        // and --setgroups= must go first
+        argsForZygote.add("--runtime-args");
+        argsForZygote.add("--setuid=" + uid);
+        argsForZygote.add("--setgid=" + gid);
+        if ((debugFlags & Zygote.DEBUG_ENABLE_JNI_LOGGING) != 0) {
+            argsForZygote.add("--enable-jni-logging");
+        }
+        if ((debugFlags & Zygote.DEBUG_ENABLE_SAFEMODE) != 0) {
+            argsForZygote.add("--enable-safemode");
+        }
+        if ((debugFlags & Zygote.DEBUG_ENABLE_JDWP) != 0) {
+            argsForZygote.add("--enable-jdwp");
+        }
+        if ((debugFlags & Zygote.DEBUG_ENABLE_CHECKJNI) != 0) {
+            argsForZygote.add("--enable-checkjni");
+        }
+        if ((debugFlags & Zygote.DEBUG_GENERATE_DEBUG_INFO) != 0) {
+            argsForZygote.add("--generate-debug-info");
+        }
+        if ((debugFlags & Zygote.DEBUG_ALWAYS_JIT) != 0) {
+            argsForZygote.add("--always-jit");
+        }
+        if ((debugFlags & Zygote.DEBUG_NATIVE_DEBUGGABLE) != 0) {
+            argsForZygote.add("--native-debuggable");
+        }
+        if ((debugFlags & Zygote.DEBUG_JAVA_DEBUGGABLE) != 0) {
+            argsForZygote.add("--java-debuggable");
+        }
+        if ((debugFlags & Zygote.DEBUG_ENABLE_ASSERT) != 0) {
+            argsForZygote.add("--enable-assert");
+        }
+        if (mountExternal == Zygote.MOUNT_EXTERNAL_DEFAULT) {
+            argsForZygote.add("--mount-external-default");
+        } else if (mountExternal == Zygote.MOUNT_EXTERNAL_READ) {
+            argsForZygote.add("--mount-external-read");
+        } else if (mountExternal == Zygote.MOUNT_EXTERNAL_WRITE) {
+            argsForZygote.add("--mount-external-write");
+        }
+        argsForZygote.add("--target-sdk-version=" + targetSdkVersion);
+
+        // --setgroups is a comma-separated list
+        if (gids != null && gids.length > 0) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("--setgroups=");
+
+            int sz = gids.length;
+            for (int i = 0; i < sz; i++) {
+                if (i != 0) {
+                    sb.append(',');
+                }
+                sb.append(gids[i]);
+            }
+
+            argsForZygote.add(sb.toString());
+        }
+
+        if (niceName != null) {
+            argsForZygote.add("--nice-name=" + niceName);
+        }
+
+        if (seInfo != null) {
+            argsForZygote.add("--seinfo=" + seInfo);
+        }
+
+        if (instructionSet != null) {
+            argsForZygote.add("--instruction-set=" + instructionSet);
+        }
+
+        if (appDataDir != null) {
+            argsForZygote.add("--app-data-dir=" + appDataDir);
+        }
+
+        if (invokeWith != null) {
+            argsForZygote.add("--invoke-with");
+            argsForZygote.add(invokeWith);
+        }
+
+        argsForZygote.add(processClass);
+
+        if (extraArgs != null) {
+            for (String arg : extraArgs) {
+                argsForZygote.add(arg);
+            }
+        }
+
+        synchronized(mLock) {
+            return zygoteSendArgsAndGetResult(openZygoteSocketIfNeeded(abi), argsForZygote);
+        }
+!!!7656069.java!!!	establishZygoteConnectionForAbi(in abi : String) : void
+        try {
+            synchronized(mLock) {
+                openZygoteSocketIfNeeded(abi);
+            }
+        } catch (ZygoteStartFailedEx ex) {
+            throw new RuntimeException("Unable to connect to zygote for abi: " + abi, ex);
+        }
+!!!7656197.java!!!	openZygoteSocketIfNeeded(in abi : String) : ZygoteProcess::ZygoteState
+        Preconditions.checkState(Thread.holdsLock(mLock), "ZygoteProcess lock not held");
+
+        if (primaryZygoteState == null || primaryZygoteState.isClosed()) {
+            try {
+                primaryZygoteState = ZygoteState.connect(mSocket);
+            } catch (IOException ioe) {
+                throw new ZygoteStartFailedEx("Error connecting to primary zygote", ioe);
+            }
+        }
+
+        if (primaryZygoteState.matches(abi)) {
+            return primaryZygoteState;
+        }
+
+        // The primary zygote didn't match. Try the secondary.
+        if (secondaryZygoteState == null || secondaryZygoteState.isClosed()) {
+            try {
+                secondaryZygoteState = ZygoteState.connect(mSecondarySocket);
+            } catch (IOException ioe) {
+                throw new ZygoteStartFailedEx("Error connecting to secondary zygote", ioe);
+            }
+        }
+
+        if (secondaryZygoteState.matches(abi)) {
+            return secondaryZygoteState;
+        }
+
+        throw new ZygoteStartFailedEx("Unsupported zygote ABI: " + abi);
+!!!7656325.java!!!	preloadPackageForAbi(in packagePath : String, in libsPath : String, in cacheKey : String, in abi : String) : void
+        synchronized(mLock) {
+            ZygoteState state = openZygoteSocketIfNeeded(abi);
+            state.writer.write("4");
+            state.writer.newLine();
+
+            state.writer.write("--preload-package");
+            state.writer.newLine();
+
+            state.writer.write(packagePath);
+            state.writer.newLine();
+
+            state.writer.write(libsPath);
+            state.writer.newLine();
+
+            state.writer.write(cacheKey);
+            state.writer.newLine();
+
+            state.writer.flush();
+        }
+!!!7656453.java!!!	preloadDefault(in abi : String) : boolean
+        synchronized (mLock) {
+            ZygoteState state = openZygoteSocketIfNeeded(abi);
+            // Each query starts with the argument count (1 in this case)
+            state.writer.write("1");
+            state.writer.newLine();
+            state.writer.write("--preload-default");
+            state.writer.newLine();
+            state.writer.flush();
+
+            return (state.inputStream.readInt() == 0);
+        }

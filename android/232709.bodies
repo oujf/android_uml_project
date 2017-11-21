@@ -1,0 +1,149 @@
+class StreamInHalHidl
+!!!609413.cpp!!!	getFrameSize(inout size : size_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("getFrameSize", mStream->getFrameSize(), size);
+!!!609541.cpp!!!	setGain(in gain : float) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("setGain", mStream->setGain(gain));
+!!!609669.cpp!!!	read(inout buffer : void, in bytes : size_t, inout read : size_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    *read = 0;
+
+    if (bytes == 0 && !mDataMQ) {
+        // Can't determine the size for the MQ buffer. Wait for a non-empty read request.
+        return OK;
+    }
+
+    status_t status;
+    if (!mDataMQ && (status = prepareForReading(bytes)) != OK) {
+        return status;
+    }
+
+    ReadParameters params;
+    params.command = ReadCommand::READ;
+    params.params.read = bytes;
+    return callReaderThread(params, "read",
+            [&](const ReadStatus& readStatus) {
+                const size_t availToRead = mDataMQ->availableToRead();
+                if (!mDataMQ->read(static_cast<uint8_t*>(buffer), std::min(bytes, availToRead))) {
+                    ALOGE("data message queue read failed for \"read\"");
+                }
+                ALOGW_IF(availToRead != readStatus.reply.read,
+                        "HAL read report inconsistent: mq = %d, status = %d",
+                        (int32_t)availToRead, (int32_t)readStatus.reply.read);
+                *read = readStatus.reply.read;
+            });
+!!!609797.cpp!!!	getInputFramesLost(inout framesLost : uint32_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    return processReturn("getInputFramesLost", mStream->getInputFramesLost(), framesLost);
+!!!609925.cpp!!!	getCapturePosition(inout frames : int64_t, inout time : int64_t) : status_t
+    if (mStream == 0) return NO_INIT;
+    if (mReaderClient == gettid() && mCommandMQ) {
+        ReadParameters params;
+        params.command = ReadCommand::GET_CAPTURE_POSITION;
+        return callReaderThread(params, "getCapturePosition",
+                [&](const ReadStatus& readStatus) {
+                    *frames = readStatus.reply.capturePosition.frames;
+                    *time = readStatus.reply.capturePosition.time;
+                });
+    } else {
+        Result retval;
+        Return<void> ret = mStream->getCapturePosition(
+                [&](Result r, uint64_t hidlFrames, uint64_t hidlTime) {
+                    retval = r;
+                    if (retval == Result::OK) {
+                        *frames = hidlFrames;
+                        *time = hidlTime;
+                    }
+                });
+        return processReturn("getCapturePosition", ret, retval);
+    }
+!!!610181.cpp!!!	~StreamInHalHidl()
+    if (mStream != 0) {
+        processReturn("close", mStream->close());
+        mStream.clear();
+        hardware::IPCThreadState::self()->flushCommands();
+    }
+    if (mEfGroup) {
+        EventFlag::deleteEventFlag(&mEfGroup);
+    }
+!!!610309.cpp!!!	callReaderThread(in params : ReadParameters, in cmdName : char, in callback : StreamInHalHidl::ReaderCallback) : status_t
+    if (!mCommandMQ->write(&params)) {
+        ALOGW("command message queue write failed");
+        return -EAGAIN;
+    }
+    mEfGroup->wake(static_cast<uint32_t>(MessageQueueFlagBits::NOT_FULL));
+
+    // TODO: Remove manual event flag handling once blocking MQ is implemented. b/33815422
+    uint32_t efState = 0;
+retry:
+    status_t ret = mEfGroup->wait(static_cast<uint32_t>(MessageQueueFlagBits::NOT_EMPTY), &efState);
+    if (efState & static_cast<uint32_t>(MessageQueueFlagBits::NOT_EMPTY)) {
+        ReadStatus readStatus;
+        readStatus.retval = Result::NOT_INITIALIZED;
+        if (!mStatusMQ->read(&readStatus)) {
+            ALOGE("status message read failed for \"%s\"", cmdName);
+        }
+         if (readStatus.retval == Result::OK) {
+            ret = OK;
+            callback(readStatus);
+        } else {
+            ret = processReturn(cmdName, readStatus.retval);
+        }
+        return ret;
+    }
+    if (ret == -EAGAIN || ret == -EINTR) {
+        // Spurious wakeup. This normally retries no more than once.
+        goto retry;
+    }
+    return ret;
+!!!610437.cpp!!!	prepareForReading(in bufferSize : size_t) : status_t
+    std::unique_ptr<CommandMQ> tempCommandMQ;
+    std::unique_ptr<DataMQ> tempDataMQ;
+    std::unique_ptr<StatusMQ> tempStatusMQ;
+    Result retval;
+    pid_t halThreadPid, halThreadTid;
+    Return<void> ret = mStream->prepareForReading(
+            1, bufferSize,
+            [&](Result r,
+                    const CommandMQ::Descriptor& commandMQ,
+                    const DataMQ::Descriptor& dataMQ,
+                    const StatusMQ::Descriptor& statusMQ,
+                    const ThreadInfo& halThreadInfo) {
+                retval = r;
+                if (retval == Result::OK) {
+                    tempCommandMQ.reset(new CommandMQ(commandMQ));
+                    tempDataMQ.reset(new DataMQ(dataMQ));
+                    tempStatusMQ.reset(new StatusMQ(statusMQ));
+                    if (tempDataMQ->isValid() && tempDataMQ->getEventFlagWord()) {
+                        EventFlag::createEventFlag(tempDataMQ->getEventFlagWord(), &mEfGroup);
+                    }
+                    halThreadPid = halThreadInfo.pid;
+                    halThreadTid = halThreadInfo.tid;
+                }
+            });
+    if (!ret.isOk() || retval != Result::OK) {
+        return processReturn("prepareForReading", ret, retval);
+    }
+    if (!tempCommandMQ || !tempCommandMQ->isValid() ||
+            !tempDataMQ || !tempDataMQ->isValid() ||
+            !tempStatusMQ || !tempStatusMQ->isValid() ||
+            !mEfGroup) {
+        ALOGE_IF(!tempCommandMQ, "Failed to obtain command message queue for writing");
+        ALOGE_IF(tempCommandMQ && !tempCommandMQ->isValid(),
+                "Command message queue for writing is invalid");
+        ALOGE_IF(!tempDataMQ, "Failed to obtain data message queue for reading");
+        ALOGE_IF(tempDataMQ && !tempDataMQ->isValid(), "Data message queue for reading is invalid");
+        ALOGE_IF(!tempStatusMQ, "Failed to obtain status message queue for reading");
+        ALOGE_IF(tempStatusMQ && !tempStatusMQ->isValid(),
+                "Status message queue for reading is invalid");
+        ALOGE_IF(!mEfGroup, "Event flag creation for reading failed");
+        return NO_INIT;
+    }
+    requestHalThreadPriority(halThreadPid, halThreadTid);
+
+    mCommandMQ = std::move(tempCommandMQ);
+    mDataMQ = std::move(tempDataMQ);
+    mStatusMQ = std::move(tempStatusMQ);
+    mReaderClient = gettid();
+    return OK;

@@ -1,0 +1,96 @@
+class FullUserRecord
+!!!11839237.java!!!	FullUserRecord(in fullUserId : int)
+            mFullUserId = fullUserId;
+            mPriorityStack = new MediaSessionStack(mAudioPlaybackMonitor, this);
+            // Restore the remembered media button receiver before the boot.
+            String mediaButtonReceiver = Settings.Secure.getStringForUser(mContentResolver,
+                    Settings.System.MEDIA_BUTTON_RECEIVER, mFullUserId);
+            if (mediaButtonReceiver == null) {
+                return;
+            }
+            String[] tokens = mediaButtonReceiver.split(COMPONENT_NAME_USER_ID_DELIM);
+            if (tokens == null || tokens.length != 2) {
+                return;
+            }
+            mRestoredMediaButtonReceiver = ComponentName.unflattenFromString(tokens[0]);
+            mRestoredMediaButtonReceiverUserId = Integer.parseInt(tokens[1]);
+!!!11839365.java!!!	destroySessionsForUserLocked(in userId : int) : void
+            List<MediaSessionRecord> sessions = mPriorityStack.getPriorityList(false, userId);
+            for (MediaSessionRecord session : sessions) {
+                MediaSessionService.this.destroySessionLocked(session);
+            }
+!!!11839493.java!!!	dumpLocked(inout pw : PrintWriter, in prefix : String) : void
+            pw.print(prefix + "Record for full_user=" + mFullUserId);
+            // Dump managed profile user ids associated with this user.
+            int size = mFullUserIds.size();
+            for (int i = 0; i < size; i++) {
+                if (mFullUserIds.keyAt(i) != mFullUserIds.valueAt(i)
+                        && mFullUserIds.valueAt(i) == mFullUserId) {
+                    pw.print(", profile_user=" + mFullUserIds.keyAt(i));
+                }
+            }
+            pw.println();
+            String indent = prefix + "  ";
+            pw.println(indent + "Volume key long-press listener: " + mOnVolumeKeyLongPressListener);
+            pw.println(indent + "Volume key long-press listener package: " +
+                    getCallingPackageName(mOnVolumeKeyLongPressListenerUid));
+            pw.println(indent + "Media key listener: " + mOnMediaKeyListener);
+            pw.println(indent + "Media key listener package: " +
+                    getCallingPackageName(mOnMediaKeyListenerUid));
+            pw.println(indent + "Callback: " + mCallback);
+            pw.println(indent + "Last MediaButtonReceiver: " + mLastMediaButtonReceiver);
+            pw.println(indent + "Restored MediaButtonReceiver: " + mRestoredMediaButtonReceiver);
+            mPriorityStack.dump(pw, indent);
+!!!11839621.java!!!	onMediaButtonSessionChanged(inout oldMediaButtonSession : MediaSessionRecord, inout newMediaButtonSession : MediaSessionRecord) : void
+            if (DEBUG_KEY_EVENT) {
+                Log.d(TAG, "Media button session is changed to " + newMediaButtonSession);
+            }
+            synchronized (mLock) {
+                if (oldMediaButtonSession != null) {
+                    mHandler.postSessionsChanged(oldMediaButtonSession.getUserId());
+                }
+                if (newMediaButtonSession != null) {
+                    rememberMediaButtonReceiverLocked(newMediaButtonSession);
+                    mHandler.postSessionsChanged(newMediaButtonSession.getUserId());
+                }
+                pushAddressedPlayerChangedLocked();
+            }
+!!!11839749.java!!!	rememberMediaButtonReceiverLocked(inout record : MediaSessionRecord) : void
+            PendingIntent receiver = record.getMediaButtonReceiver();
+            mLastMediaButtonReceiver = receiver;
+            mRestoredMediaButtonReceiver = null;
+            String componentName = "";
+            if (receiver != null) {
+                ComponentName component = receiver.getIntent().getComponent();
+                if (component != null
+                        && record.getPackageName().equals(component.getPackageName())) {
+                    componentName = component.flattenToString();
+                }
+            }
+            Settings.Secure.putStringForUser(mContentResolver,
+                    Settings.System.MEDIA_BUTTON_RECEIVER,
+                    componentName + COMPONENT_NAME_USER_ID_DELIM + record.getUserId(),
+                    mFullUserId);
+!!!11839877.java!!!	pushAddressedPlayerChangedLocked() : void
+            if (mCallback == null) {
+                return;
+            }
+            try {
+                MediaSessionRecord mediaButtonSession = getMediaButtonSessionLocked();
+                if (mediaButtonSession != null) {
+                    mCallback.onAddressedPlayerChangedToMediaSession(
+                            new MediaSession.Token(mediaButtonSession.getControllerBinder()));
+                } else if (mCurrentFullUserRecord.mLastMediaButtonReceiver != null) {
+                    mCallback.onAddressedPlayerChangedToMediaButtonReceiver(
+                            mCurrentFullUserRecord.mLastMediaButtonReceiver
+                                    .getIntent().getComponent());
+                } else if (mCurrentFullUserRecord.mRestoredMediaButtonReceiver != null) {
+                    mCallback.onAddressedPlayerChangedToMediaButtonReceiver(
+                            mCurrentFullUserRecord.mRestoredMediaButtonReceiver);
+                }
+            } catch (RemoteException e) {
+                Log.w(TAG, "Failed to pushAddressedPlayerChangedLocked", e);
+            }
+!!!11840005.java!!!	getMediaButtonSessionLocked() : MediaSessionRecord
+            return isGlobalPriorityActiveLocked()
+                    ? mGlobalPrioritySession : mPriorityStack.getMediaButtonSession();

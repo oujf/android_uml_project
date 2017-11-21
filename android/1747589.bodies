@@ -1,0 +1,2186 @@
+class ShortcutService
+!!!12271109.java!!!	ShortcutService(inout context : Context)
+        this(context, BackgroundThread.get().getLooper(), /*onyForPackgeManagerApis*/ false);
+!!!12271237.java!!!	ShortcutService(inout context : Context, inout looper : Looper, inout onlyForPackageManagerApis : boolean)
+        mContext = Preconditions.checkNotNull(context);
+        LocalServices.addService(ShortcutServiceInternal.class, new LocalService());
+        mHandler = new Handler(looper);
+        mIPackageManager = AppGlobals.getPackageManager();
+        mPackageManagerInternal = Preconditions.checkNotNull(
+                LocalServices.getService(PackageManagerInternal.class));
+        mUserManager = Preconditions.checkNotNull(context.getSystemService(UserManager.class));
+        mUsageStatsManagerInternal = Preconditions.checkNotNull(
+                LocalServices.getService(UsageStatsManagerInternal.class));
+        mActivityManagerInternal = Preconditions.checkNotNull(
+                LocalServices.getService(ActivityManagerInternal.class));
+
+        mShortcutRequestPinProcessor = new ShortcutRequestPinProcessor(this, mLock);
+        mShortcutBitmapSaver = new ShortcutBitmapSaver(this);
+
+        if (onlyForPackageManagerApis) {
+            return; // Don't do anything further.  For unit tests only.
+        }
+
+        // Register receivers.
+
+        // We need to set a priority, so let's just not use PackageMonitor for now.
+        // TODO Refactor PackageMonitor to support priorities.
+        final IntentFilter packageFilter = new IntentFilter();
+        packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        packageFilter.addAction(Intent.ACTION_PACKAGE_DATA_CLEARED);
+        packageFilter.addDataScheme("package");
+        packageFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+        mContext.registerReceiverAsUser(mPackageMonitor, UserHandle.ALL,
+                packageFilter, null, mHandler);
+
+        final IntentFilter preferedActivityFilter = new IntentFilter();
+        preferedActivityFilter.addAction(Intent.ACTION_PREFERRED_ACTIVITY_CHANGED);
+        preferedActivityFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+        mContext.registerReceiverAsUser(mPackageMonitor, UserHandle.ALL,
+                preferedActivityFilter, null, mHandler);
+
+        final IntentFilter localeFilter = new IntentFilter();
+        localeFilter.addAction(Intent.ACTION_LOCALE_CHANGED);
+        localeFilter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+        mContext.registerReceiverAsUser(mReceiver, UserHandle.ALL,
+                localeFilter, null, mHandler);
+
+        injectRegisterUidObserver(mUidObserver, ActivityManager.UID_OBSERVER_PROCSTATE
+                | ActivityManager.UID_OBSERVER_GONE);
+!!!12271365.java!!!	logDurationStat(in statId : int, in start : long) : void
+        synchronized (mStatLock) {
+            mCountStats[statId]++;
+            mDurationStats[statId] += (injectElapsedRealtime() - start);
+        }
+!!!12271493.java!!!	injectGetLocaleTagsForUser(in userId : int) : String
+        // TODO This should get the per-user locale.  b/30123329 b/30119489
+        return LocaleList.getDefault().toLanguageTags();
+!!!12271621.java!!!	handleOnUidStateChanged(in uid : int, in procState : int) : void
+        if (DEBUG_PROCSTATE) {
+            Slog.d(TAG, "onUidStateChanged: uid=" + uid + " state=" + procState);
+        }
+        synchronized (mLock) {
+            mUidState.put(uid, procState);
+
+            // We need to keep track of last time an app comes to foreground.
+            // See ShortcutPackage.getApiCallCount() for how it's used.
+            // It doesn't have to be persisted, but it needs to be the elapsed time.
+            if (isProcessStateForeground(procState)) {
+                mUidLastForegroundElapsedTime.put(uid, injectElapsedRealtime());
+            }
+        }
+!!!12271749.java!!!	isProcessStateForeground(in processState : int) : boolean
+        return processState <= PROCESS_STATE_FOREGROUND_THRESHOLD;
+!!!12271877.java!!!	isUidForegroundLocked(in uid : int) : boolean
+        if (uid == Process.SYSTEM_UID) {
+            // IUidObserver doesn't report the state of SYSTEM, but it always has bound services,
+            // so it's foreground anyway.
+            return true;
+        }
+        // First, check with the local cache.
+        if (isProcessStateForeground(mUidState.get(uid, ActivityManager.MAX_PROCESS_STATE))) {
+            return true;
+        }
+        // If the cache says background, reach out to AM.  Since it'll internally need to hold
+        // the AM lock, we use it as a last resort.
+        return isProcessStateForeground(mActivityManagerInternal.getUidProcessState(uid));
+!!!12272005.java!!!	getUidLastForegroundElapsedTimeLocked(in uid : int) : long
+        return mUidLastForegroundElapsedTime.get(uid);
+!!!12272773.java!!!	onBootPhase(in phase : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "onBootPhase: " + phase);
+        }
+        switch (phase) {
+            case SystemService.PHASE_LOCK_SETTINGS_READY:
+                initialize();
+                break;
+            case SystemService.PHASE_BOOT_COMPLETED:
+                mBootCompleted.set(true);
+                break;
+        }
+!!!12272901.java!!!	handleUnlockUser(in userId : int) : void
+        if (DEBUG) {
+        Slog.d(TAG, "handleUnlockUser: user=" + userId);
+        }
+        synchronized (mLock) {
+            mUnlockedUsers.put(userId, true);
+        }
+
+        // Preload the user data.
+        // Note, we don't use mHandler here but instead just start a new thread.
+        // This is because mHandler (which uses com.android.internal.os.BackgroundThread) is very
+        // busy at this point and this could take hundreds of milliseconds, which would be too
+        // late since the launcher would already have started.
+        // So we just create a new thread.  This code runs rarely, so we don't use a thread pool
+        // or anything.
+        final long start = injectElapsedRealtime();
+        injectRunOnNewThread(() -> {
+            synchronized (mLock) {
+                logDurationStat(Stats.ASYNC_PRELOAD_USER_DELAY, start);
+                getUserShortcutsLocked(userId);
+            }
+        });
+!!!12273029.java!!!	handleStopUser(in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "handleStopUser: user=" + userId);
+        }
+        synchronized (mLock) {
+            unloadUserLocked(userId);
+
+            mUnlockedUsers.put(userId, false);
+        }
+!!!12273157.java!!!	unloadUserLocked(in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "unloadUserLocked: user=" + userId);
+        }
+        // Save all dirty information.
+        saveDirtyInfo();
+
+        // Unload
+        mUsers.delete(userId);
+!!!12273285.java!!!	getBaseStateFile() : AtomicFile
+        final File path = new File(injectSystemDataPath(), FILENAME_BASE_STATE);
+        path.mkdirs();
+        return new AtomicFile(path);
+!!!12273413.java!!!	initialize() : void
+        synchronized (mLock) {
+            loadConfigurationLocked();
+            loadBaseStateLocked();
+        }
+!!!12273541.java!!!	loadConfigurationLocked() : void
+        updateConfigurationLocked(injectShortcutManagerConstants());
+!!!12273669.java!!!	updateConfigurationLocked(in config : String) : boolean
+        boolean result = true;
+
+        final KeyValueListParser parser = new KeyValueListParser(',');
+        try {
+            parser.setString(config);
+        } catch (IllegalArgumentException e) {
+            // Failed to parse the settings string, log this and move on
+            // with defaults.
+            Slog.e(TAG, "Bad shortcut manager settings", e);
+            result = false;
+        }
+
+        mSaveDelayMillis = Math.max(0, (int) parser.getLong(ConfigConstants.KEY_SAVE_DELAY_MILLIS,
+                DEFAULT_SAVE_DELAY_MS));
+
+        mResetInterval = Math.max(1, parser.getLong(
+                ConfigConstants.KEY_RESET_INTERVAL_SEC, DEFAULT_RESET_INTERVAL_SEC)
+                * 1000L);
+
+        mMaxUpdatesPerInterval = Math.max(0, (int) parser.getLong(
+                ConfigConstants.KEY_MAX_UPDATES_PER_INTERVAL, DEFAULT_MAX_UPDATES_PER_INTERVAL));
+
+        mMaxShortcuts = Math.max(0, (int) parser.getLong(
+                ConfigConstants.KEY_MAX_SHORTCUTS, DEFAULT_MAX_SHORTCUTS_PER_APP));
+
+        final int iconDimensionDp = Math.max(1, injectIsLowRamDevice()
+                ? (int) parser.getLong(
+                ConfigConstants.KEY_MAX_ICON_DIMENSION_DP_LOWRAM,
+                DEFAULT_MAX_ICON_DIMENSION_LOWRAM_DP)
+                : (int) parser.getLong(
+                ConfigConstants.KEY_MAX_ICON_DIMENSION_DP,
+                DEFAULT_MAX_ICON_DIMENSION_DP));
+
+        mMaxIconDimension = injectDipToPixel(iconDimensionDp);
+
+        mIconPersistFormat = CompressFormat.valueOf(
+                parser.getString(ConfigConstants.KEY_ICON_FORMAT, DEFAULT_ICON_PERSIST_FORMAT));
+
+        mIconPersistQuality = (int) parser.getLong(
+                ConfigConstants.KEY_ICON_QUALITY,
+                DEFAULT_ICON_PERSIST_QUALITY);
+
+        return result;
+!!!12273797.java!!!	injectShortcutManagerConstants() : String
+        return android.provider.Settings.Global.getString(
+                mContext.getContentResolver(),
+                android.provider.Settings.Global.SHORTCUT_MANAGER_CONSTANTS);
+!!!12273925.java!!!	injectDipToPixel(in dip : int) : int
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dip,
+                mContext.getResources().getDisplayMetrics());
+!!!12274053.java!!!	parseStringAttribute(inout parser : XmlPullParser, in attribute : String) : String
+        return parser.getAttributeValue(null, attribute);
+!!!12274181.java!!!	parseBooleanAttribute(inout parser : XmlPullParser, in attribute : String) : boolean
+        return parseLongAttribute(parser, attribute) == 1;
+!!!12274309.java!!!	parseIntAttribute(inout parser : XmlPullParser, in attribute : String) : int
+        return (int) parseLongAttribute(parser, attribute);
+!!!12274437.java!!!	parseIntAttribute(inout parser : XmlPullParser, in attribute : String, in def : int) : int
+        return (int) parseLongAttribute(parser, attribute, def);
+!!!12274565.java!!!	parseLongAttribute(inout parser : XmlPullParser, in attribute : String) : long
+        return parseLongAttribute(parser, attribute, 0);
+!!!12274693.java!!!	parseLongAttribute(inout parser : XmlPullParser, in attribute : String, in def : long) : long
+        final String value = parseStringAttribute(parser, attribute);
+        if (TextUtils.isEmpty(value)) {
+            return def;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            Slog.e(TAG, "Error parsing long " + value);
+            return def;
+        }
+!!!12274821.java!!!	parseComponentNameAttribute(inout parser : XmlPullParser, in attribute : String) : ComponentName
+        final String value = parseStringAttribute(parser, attribute);
+        if (TextUtils.isEmpty(value)) {
+            return null;
+        }
+        return ComponentName.unflattenFromString(value);
+!!!12274949.java!!!	parseIntentAttributeNoDefault(inout parser : XmlPullParser, in attribute : String) : Intent
+        final String value = parseStringAttribute(parser, attribute);
+        Intent parsed = null;
+        if (!TextUtils.isEmpty(value)) {
+            try {
+                parsed = Intent.parseUri(value, /* flags =*/ 0);
+            } catch (URISyntaxException e) {
+                Slog.e(TAG, "Error parsing intent", e);
+            }
+        }
+        return parsed;
+!!!12275077.java!!!	parseIntentAttribute(inout parser : XmlPullParser, in attribute : String) : Intent
+        Intent parsed = parseIntentAttributeNoDefault(parser, attribute);
+        if (parsed == null) {
+            // Default intent.
+            parsed = new Intent(Intent.ACTION_VIEW);
+        }
+        return parsed;
+!!!12275205.java!!!	writeTagValue(inout out : XmlSerializer, in tag : String, in value : String) : void
+        if (TextUtils.isEmpty(value)) return;
+
+        out.startTag(null, tag);
+        out.attribute(null, ATTR_VALUE, value);
+        out.endTag(null, tag);
+!!!12275333.java!!!	writeTagValue(inout out : XmlSerializer, in tag : String, in value : long) : void
+        writeTagValue(out, tag, Long.toString(value));
+!!!12275461.java!!!	writeTagValue(inout out : XmlSerializer, in tag : String, inout name : ComponentName) : void
+        if (name == null) return;
+        writeTagValue(out, tag, name.flattenToString());
+!!!12275589.java!!!	writeTagExtra(inout out : XmlSerializer, in tag : String, inout bundle : PersistableBundle) : void
+        if (bundle == null) return;
+
+        out.startTag(null, tag);
+        bundle.saveToXml(out);
+        out.endTag(null, tag);
+!!!12275717.java!!!	writeAttr(inout out : XmlSerializer, in name : String, inout value : CharSequence) : void
+        if (TextUtils.isEmpty(value)) return;
+
+        out.attribute(null, name, value.toString());
+!!!12275845.java!!!	writeAttr(inout out : XmlSerializer, in name : String, in value : long) : void
+        writeAttr(out, name, String.valueOf(value));
+!!!12275973.java!!!	writeAttr(inout out : XmlSerializer, in name : String, inout value : boolean) : void
+        if (value) {
+            writeAttr(out, name, "1");
+        }
+!!!12276101.java!!!	writeAttr(inout out : XmlSerializer, in name : String, inout comp : ComponentName) : void
+        if (comp == null) return;
+        writeAttr(out, name, comp.flattenToString());
+!!!12276229.java!!!	writeAttr(inout out : XmlSerializer, in name : String, inout intent : Intent) : void
+        if (intent == null) return;
+
+        writeAttr(out, name, intent.toUri(/* flags =*/ 0));
+!!!12276357.java!!!	saveBaseStateLocked() : void
+        final AtomicFile file = getBaseStateFile();
+        if (DEBUG) {
+            Slog.d(TAG, "Saving to " + file.getBaseFile());
+        }
+
+        FileOutputStream outs = null;
+        try {
+            outs = file.startWrite();
+
+            // Write to XML
+            XmlSerializer out = new FastXmlSerializer();
+            out.setOutput(outs, StandardCharsets.UTF_8.name());
+            out.startDocument(null, true);
+            out.startTag(null, TAG_ROOT);
+
+            // Body.
+            writeTagValue(out, TAG_LAST_RESET_TIME, mRawLastResetTime);
+
+            // Epilogue.
+            out.endTag(null, TAG_ROOT);
+            out.endDocument();
+
+            // Close.
+            file.finishWrite(outs);
+        } catch (IOException e) {
+            Slog.e(TAG, "Failed to write to file " + file.getBaseFile(), e);
+            file.failWrite(outs);
+        }
+!!!12276485.java!!!	loadBaseStateLocked() : void
+        mRawLastResetTime = 0;
+
+        final AtomicFile file = getBaseStateFile();
+        if (DEBUG) {
+            Slog.d(TAG, "Loading from " + file.getBaseFile());
+        }
+        try (FileInputStream in = file.openRead()) {
+            XmlPullParser parser = Xml.newPullParser();
+            parser.setInput(in, StandardCharsets.UTF_8.name());
+
+            int type;
+            while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                if (type != XmlPullParser.START_TAG) {
+                    continue;
+                }
+                final int depth = parser.getDepth();
+                // Check the root tag
+                final String tag = parser.getName();
+                if (depth == 1) {
+                    if (!TAG_ROOT.equals(tag)) {
+                        Slog.e(TAG, "Invalid root tag: " + tag);
+                        return;
+                    }
+                    continue;
+                }
+                // Assume depth == 2
+                switch (tag) {
+                    case TAG_LAST_RESET_TIME:
+                        mRawLastResetTime = parseLongAttribute(parser, ATTR_VALUE);
+                        break;
+                    default:
+                        Slog.e(TAG, "Invalid tag: " + tag);
+                        break;
+                }
+            }
+        } catch (FileNotFoundException e) {
+            // Use the default
+        } catch (IOException | XmlPullParserException e) {
+            Slog.e(TAG, "Failed to read file " + file.getBaseFile(), e);
+
+            mRawLastResetTime = 0;
+        }
+        // Adjust the last reset time.
+        getLastResetTimeLocked();
+!!!12276613.java!!!	getUserFile(in userId : int) : File
+        return new File(injectUserDataPath(userId), FILENAME_USER_PACKAGES);
+!!!12276741.java!!!	saveUserLocked(in userId : int) : void
+        final File path = getUserFile(userId);
+        if (DEBUG) {
+            Slog.d(TAG, "Saving to " + path);
+        }
+
+        mShortcutBitmapSaver.waitForAllSavesLocked();
+
+        path.getParentFile().mkdirs();
+        final AtomicFile file = new AtomicFile(path);
+        FileOutputStream os = null;
+        try {
+            os = file.startWrite();
+
+            saveUserInternalLocked(userId, os, /* forBackup= */ false);
+
+            file.finishWrite(os);
+
+            // Remove all dangling bitmap files.
+            cleanupDanglingBitmapDirectoriesLocked(userId);
+        } catch (XmlPullParserException | IOException e) {
+            Slog.e(TAG, "Failed to write to file " + file.getBaseFile(), e);
+            file.failWrite(os);
+        }
+!!!12276869.java!!!	saveUserInternalLocked(in userId : int, inout os : OutputStream, inout forBackup : boolean) : void
+
+        final BufferedOutputStream bos = new BufferedOutputStream(os);
+
+        // Write to XML
+        XmlSerializer out = new FastXmlSerializer();
+        out.setOutput(bos, StandardCharsets.UTF_8.name());
+        out.startDocument(null, true);
+
+        getUserShortcutsLocked(userId).saveToXml(out, forBackup);
+
+        out.endDocument();
+
+        bos.flush();
+        os.flush();
+!!!12276997.java!!!	throwForInvalidTag(in depth : int, in tag : String) : IOException
+        throw new IOException(String.format("Invalid tag '%s' found at depth %d", tag, depth));
+!!!12277125.java!!!	warnForInvalidTag(in depth : int, in tag : String) : void
+        Slog.w(TAG, String.format("Invalid tag '%s' found at depth %d", tag, depth));
+!!!12277253.java!!!	loadUserLocked(in userId : int) : ShortcutUser
+        final File path = getUserFile(userId);
+        if (DEBUG) {
+            Slog.d(TAG, "Loading from " + path);
+        }
+        final AtomicFile file = new AtomicFile(path);
+
+        final FileInputStream in;
+        try {
+            in = file.openRead();
+        } catch (FileNotFoundException e) {
+            if (DEBUG) {
+                Slog.d(TAG, "Not found " + path);
+            }
+            return null;
+        }
+        try {
+            final ShortcutUser ret = loadUserInternal(userId, in, /* forBackup= */ false);
+            return ret;
+        } catch (IOException | XmlPullParserException | InvalidFileFormatException e) {
+            Slog.e(TAG, "Failed to read file " + file.getBaseFile(), e);
+            return null;
+        } finally {
+            IoUtils.closeQuietly(in);
+        }
+!!!12277381.java!!!	loadUserInternal(in userId : int, inout is : InputStream, inout fromBackup : boolean) : ShortcutUser
+
+        final BufferedInputStream bis = new BufferedInputStream(is);
+
+        ShortcutUser ret = null;
+        XmlPullParser parser = Xml.newPullParser();
+        parser.setInput(bis, StandardCharsets.UTF_8.name());
+
+        int type;
+        while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
+            if (type != XmlPullParser.START_TAG) {
+                continue;
+            }
+            final int depth = parser.getDepth();
+
+            final String tag = parser.getName();
+            if (DEBUG_LOAD) {
+                Slog.d(TAG, String.format("depth=%d type=%d name=%s",
+                        depth, type, tag));
+            }
+            if ((depth == 1) && ShortcutUser.TAG_ROOT.equals(tag)) {
+                ret = ShortcutUser.loadFromXml(this, parser, userId, fromBackup);
+                continue;
+            }
+            throwForInvalidTag(depth, tag);
+        }
+        return ret;
+!!!12277509.java!!!	scheduleSaveBaseState() : void
+        scheduleSaveInner(UserHandle.USER_NULL); // Special case -- use USER_NULL for base state.
+!!!12277637.java!!!	scheduleSaveUser(in userId : int) : void
+        scheduleSaveInner(userId);
+!!!12277765.java!!!	scheduleSaveInner(in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "Scheduling to save for " + userId);
+        }
+        synchronized (mLock) {
+            if (!mDirtyUserIds.contains(userId)) {
+                mDirtyUserIds.add(userId);
+            }
+        }
+        // If already scheduled, remove that and re-schedule in N seconds.
+        mHandler.removeCallbacks(mSaveDirtyInfoRunner);
+        mHandler.postDelayed(mSaveDirtyInfoRunner, mSaveDelayMillis);
+!!!12277893.java!!!	saveDirtyInfo() : void
+        if (DEBUG) {
+            Slog.d(TAG, "saveDirtyInfo");
+        }
+        try {
+            synchronized (mLock) {
+                for (int i = mDirtyUserIds.size() - 1; i >= 0; i--) {
+                    final int userId = mDirtyUserIds.get(i);
+                    if (userId == UserHandle.USER_NULL) { // USER_NULL for base state.
+                        saveBaseStateLocked();
+                    } else {
+                        saveUserLocked(userId);
+                    }
+                }
+                mDirtyUserIds.clear();
+            }
+        } catch (Exception e) {
+            wtf("Exception in saveDirtyInfo", e);
+        }
+!!!12278021.java!!!	getLastResetTimeLocked() : long
+        updateTimesLocked();
+        return mRawLastResetTime;
+!!!12278149.java!!!	getNextResetTimeLocked() : long
+        updateTimesLocked();
+        return mRawLastResetTime + mResetInterval;
+!!!12278277.java!!!	isClockValid(in time : long) : boolean
+        return time >= 1420070400; // Thu, 01 Jan 2015 00:00:00 GMT
+!!!12278405.java!!!	updateTimesLocked() : void
+
+        final long now = injectCurrentTimeMillis();
+
+        final long prevLastResetTime = mRawLastResetTime;
+
+        if (mRawLastResetTime == 0) { // first launch.
+            // TODO Randomize??
+            mRawLastResetTime = now;
+        } else if (now < mRawLastResetTime) {
+            // Clock rewound.
+            if (isClockValid(now)) {
+                Slog.w(TAG, "Clock rewound");
+                // TODO Randomize??
+                mRawLastResetTime = now;
+            }
+        } else {
+            if ((mRawLastResetTime + mResetInterval) <= now) {
+                final long offset = mRawLastResetTime % mResetInterval;
+                mRawLastResetTime = ((now / mResetInterval) * mResetInterval) + offset;
+            }
+        }
+        if (prevLastResetTime != mRawLastResetTime) {
+            scheduleSaveBaseState();
+        }
+!!!12278533.java!!!	isUserUnlockedL(in userId : int) : boolean
+        // First, check the local copy.
+        if (mUnlockedUsers.get(userId)) {
+            return true;
+        }
+        // If the local copy says the user is locked, check with AM for the actual state, since
+        // the user might just have been unlocked.
+        // Note we just don't use isUserUnlockingOrUnlocked() here, because it'll return false
+        // when the user is STOPPING, which we still want to consider as "unlocked".
+        final long token = injectClearCallingIdentity();
+        try {
+            return mUserManager.isUserUnlockingOrUnlocked(userId);
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12278661.java!!!	throwIfUserLockedL(in userId : int) : void
+        if (!isUserUnlockedL(userId)) {
+            throw new IllegalStateException("User " + userId + " is locked or not running");
+        }
+!!!12278789.java!!!	isUserLoadedLocked(in userId : int) : boolean
+        return mUsers.get(userId) != null;
+!!!12278917.java!!!	getUserShortcutsLocked(in userId : int) : ShortcutUser
+        if (!isUserUnlockedL(userId)) {
+            wtf("User still locked");
+        }
+
+        ShortcutUser userPackages = mUsers.get(userId);
+        if (userPackages == null) {
+            userPackages = loadUserLocked(userId);
+            if (userPackages == null) {
+                userPackages = new ShortcutUser(this, userId);
+            }
+            mUsers.put(userId, userPackages);
+
+            // Also when a user's data is first accessed, scan all packages.
+            checkPackageChanges(userId);
+        }
+        return userPackages;
+!!!12279045.java!!!	forEachLoadedUserLocked(inout c : Consumer<ShortcutUser>) : void
+        for (int i = mUsers.size() - 1; i >= 0; i--) {
+            c.accept(mUsers.valueAt(i));
+        }
+!!!12279173.java!!!	getPackageShortcutsLocked(in packageName : String, in userId : int) : ShortcutPackage
+        return getUserShortcutsLocked(userId).getPackageShortcuts(packageName);
+!!!12279301.java!!!	getPackageShortcutsForPublisherLocked(in packageName : String, in userId : int) : ShortcutPackage
+        final ShortcutPackage ret = getUserShortcutsLocked(userId).getPackageShortcuts(packageName);
+        ret.getUser().onCalledByPublisher(packageName);
+        return ret;
+!!!12279429.java!!!	getLauncherShortcutsLocked(in packageName : String, in ownerUserId : int, in launcherUserId : int) : ShortcutLauncher
+        return getUserShortcutsLocked(ownerUserId)
+                .getLauncherShortcuts(packageName, launcherUserId);
+!!!12279557.java!!!	removeIconLocked(inout shortcut : ShortcutInfo) : void
+        mShortcutBitmapSaver.removeIcon(shortcut);
+!!!12279685.java!!!	cleanupBitmapsForPackage(in userId : int, in packageName : String) : void
+        final File packagePath = new File(getUserBitmapFilePath(userId), packageName);
+        if (!packagePath.isDirectory()) {
+            return;
+        }
+        if (!(FileUtils.deleteContents(packagePath) && packagePath.delete())) {
+            Slog.w(TAG, "Unable to remove directory " + packagePath);
+        }
+!!!12279813.java!!!	cleanupDanglingBitmapDirectoriesLocked(in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "cleanupDanglingBitmaps: userId=" + userId);
+        }
+        final long start = injectElapsedRealtime();
+
+        final ShortcutUser user = getUserShortcutsLocked(userId);
+
+        final File bitmapDir = getUserBitmapFilePath(userId);
+        final File[] children = bitmapDir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (!child.isDirectory()) {
+                continue;
+            }
+            final String packageName = child.getName();
+            if (DEBUG) {
+                Slog.d(TAG, "cleanupDanglingBitmaps: Found directory=" + packageName);
+            }
+            if (!user.hasPackage(packageName)) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Removing dangling bitmap directory: " + packageName);
+                }
+                cleanupBitmapsForPackage(userId, packageName);
+            } else {
+                cleanupDanglingBitmapFilesLocked(userId, user, packageName, child);
+            }
+        }
+        logDurationStat(Stats.CLEANUP_DANGLING_BITMAPS, start);
+!!!12279941.java!!!	cleanupDanglingBitmapFilesLocked(in userId : int, inout user : ShortcutUser, in packageName : String, inout path : File) : void
+        final ArraySet<String> usedFiles =
+                user.getPackageShortcuts(packageName).getUsedBitmapFiles();
+
+        for (File child : path.listFiles()) {
+            if (!child.isFile()) {
+                continue;
+            }
+            final String name = child.getName();
+            if (!usedFiles.contains(name)) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Removing dangling bitmap file: " + child.getAbsolutePath());
+                }
+                child.delete();
+            }
+        }
+!!!12280325.java!!!	openIconFileForWrite(in userId : int, inout shortcut : ShortcutInfo) : ShortcutService::FileOutputStreamWithPath
+        final File packagePath = new File(getUserBitmapFilePath(userId),
+                shortcut.getPackage());
+        if (!packagePath.isDirectory()) {
+            packagePath.mkdirs();
+            if (!packagePath.isDirectory()) {
+                throw new IOException("Unable to create directory " + packagePath);
+            }
+            SELinux.restorecon(packagePath);
+        }
+
+        final String baseName = String.valueOf(injectCurrentTimeMillis());
+        for (int suffix = 0; ; suffix++) {
+            final String filename = (suffix == 0 ? baseName : baseName + "_" + suffix) + ".png";
+            final File file = new File(packagePath, filename);
+            if (!file.exists()) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Saving icon to " + file.getAbsolutePath());
+                }
+                return new FileOutputStreamWithPath(file);
+            }
+        }
+!!!12280453.java!!!	saveIconAndFixUpShortcutLocked(inout shortcut : ShortcutInfo) : void
+        if (shortcut.hasIconFile() || shortcut.hasIconResource()) {
+            return;
+        }
+
+        final long token = injectClearCallingIdentity();
+        try {
+            // Clear icon info on the shortcut.
+            removeIconLocked(shortcut);
+
+            final Icon icon = shortcut.getIcon();
+            if (icon == null) {
+                return; // has no icon
+            }
+            int maxIconDimension = mMaxIconDimension;
+            Bitmap bitmap;
+            try {
+                switch (icon.getType()) {
+                    case Icon.TYPE_RESOURCE: {
+                        injectValidateIconResPackage(shortcut, icon);
+
+                        shortcut.setIconResourceId(icon.getResId());
+                        shortcut.addFlags(ShortcutInfo.FLAG_HAS_ICON_RES);
+                        return;
+                    }
+                    case Icon.TYPE_BITMAP:
+                        bitmap = icon.getBitmap(); // Don't recycle in this case.
+                        break;
+                    case Icon.TYPE_ADAPTIVE_BITMAP: {
+                        bitmap = icon.getBitmap(); // Don't recycle in this case.
+                        maxIconDimension *= (1 + 2 * AdaptiveIconDrawable.getExtraInsetFraction());
+                        break;
+                    }
+                    default:
+                        // This shouldn't happen because we've already validated the icon, but
+                        // just in case.
+                        throw ShortcutInfo.getInvalidIconException();
+                }
+                mShortcutBitmapSaver.saveBitmapLocked(shortcut,
+                        maxIconDimension, mIconPersistFormat, mIconPersistQuality);
+            } finally {
+                // Once saved, we won't use the original icon information, so null it out.
+                shortcut.clearIcon();
+            }
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12280581.java!!!	injectValidateIconResPackage(inout shortcut : ShortcutInfo, inout icon : Icon) : void
+        if (!shortcut.getPackage().equals(icon.getResPackage())) {
+            throw new IllegalArgumentException(
+                    "Icon resource must reside in shortcut owner package");
+        }
+!!!12280709.java!!!	shrinkBitmap(inout in : Bitmap, in maxSize : int) : Bitmap
+        // Original width/height.
+        final int ow = in.getWidth();
+        final int oh = in.getHeight();
+        if ((ow <= maxSize) && (oh <= maxSize)) {
+            if (DEBUG) {
+                Slog.d(TAG, String.format("Icon size %dx%d, no need to shrink", ow, oh));
+            }
+            return in;
+        }
+        final int longerDimension = Math.max(ow, oh);
+
+        // New width and height.
+        final int nw = ow * maxSize / longerDimension;
+        final int nh = oh * maxSize / longerDimension;
+        if (DEBUG) {
+            Slog.d(TAG, String.format("Icon size %dx%d, shrinking to %dx%d",
+                    ow, oh, nw, nh));
+        }
+
+        final Bitmap scaledBitmap = Bitmap.createBitmap(nw, nh, Bitmap.Config.ARGB_8888);
+        final Canvas c = new Canvas(scaledBitmap);
+
+        final RectF dst = new RectF(0, 0, nw, nh);
+
+        c.drawBitmap(in, /*src=*/ null, dst, /* paint =*/ null);
+
+        return scaledBitmap;
+!!!12280837.java!!!	fixUpShortcutResourceNamesAndValues(inout si : ShortcutInfo) : void
+        final Resources publisherRes = injectGetResourcesForApplicationAsUser(
+                si.getPackage(), si.getUserId());
+        if (publisherRes != null) {
+            final long start = injectElapsedRealtime();
+            try {
+                si.lookupAndFillInResourceNames(publisherRes);
+            } finally {
+                logDurationStat(Stats.RESOURCE_NAME_LOOKUP, start);
+            }
+            si.resolveResourceStrings(publisherRes);
+        }
+!!!12280965.java!!!	isCallerSystem() : boolean
+        final int callingUid = injectBinderCallingUid();
+        return UserHandle.isSameApp(callingUid, Process.SYSTEM_UID);
+!!!12281093.java!!!	isCallerShell() : boolean
+        final int callingUid = injectBinderCallingUid();
+        return callingUid == Process.SHELL_UID || callingUid == Process.ROOT_UID;
+!!!12281221.java!!!	enforceSystemOrShell() : void
+        if (!(isCallerSystem() || isCallerShell())) {
+            throw new SecurityException("Caller must be system or shell");
+        }
+!!!12281349.java!!!	enforceShell() : void
+        if (!isCallerShell()) {
+            throw new SecurityException("Caller must be shell");
+        }
+!!!12281477.java!!!	enforceSystem() : void
+        if (!isCallerSystem()) {
+            throw new SecurityException("Caller must be system");
+        }
+!!!12281605.java!!!	enforceResetThrottlingPermission() : void
+        if (isCallerSystem()) {
+            return;
+        }
+        enforceCallingOrSelfPermission(
+                android.Manifest.permission.RESET_SHORTCUT_MANAGER_THROTTLING, null);
+!!!12281733.java!!!	enforceCallingOrSelfPermission(in permission : String, in message : String) : void
+        if (isCallerSystem()) {
+            return;
+        }
+        injectEnforceCallingPermission(permission, message);
+!!!12281861.java!!!	injectEnforceCallingPermission(in permission : String, in message : String) : void
+        mContext.enforceCallingPermission(permission, message);
+!!!12281989.java!!!	verifyCaller(in packageName : String, in userId : int) : void
+        Preconditions.checkStringNotEmpty(packageName, "packageName");
+
+        if (isCallerSystem()) {
+            return; // no check
+        }
+
+        final int callingUid = injectBinderCallingUid();
+
+        // Otherwise, make sure the arguments are valid.
+        if (UserHandle.getUserId(callingUid) != userId) {
+            throw new SecurityException("Invalid user-ID");
+        }
+        if (injectGetPackageUid(packageName, userId) != callingUid) {
+            throw new SecurityException("Calling package name mismatch");
+        }
+        Preconditions.checkState(!isEphemeralApp(packageName, userId),
+                "Ephemeral apps can't use ShortcutManager");
+!!!12282117.java!!!	injectPostToHandler(inout r : Runnable) : void
+        mHandler.post(r);
+!!!12282245.java!!!	injectRunOnNewThread(inout r : Runnable) : void
+        new Thread(r).start();
+!!!12282373.java!!!	enforceMaxActivityShortcuts(in numShortcuts : int) : void
+        if (numShortcuts > mMaxShortcuts) {
+            throw new IllegalArgumentException("Max number of dynamic shortcuts exceeded");
+        }
+!!!12282501.java!!!	getMaxActivityShortcuts() : int
+        return mMaxShortcuts;
+!!!12282629.java!!!	packageShortcutsChanged(in packageName : String, in userId : int) : void
+        notifyListeners(packageName, userId);
+        scheduleSaveUser(userId);
+!!!12282757.java!!!	notifyListeners(in packageName : String, in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, String.format(
+                    "Shortcut changes: package=%s, user=%d", packageName, userId));
+        }
+        injectPostToHandler(() -> {
+            try {
+                final ArrayList<ShortcutChangeListener> copy;
+                synchronized (mLock) {
+                    if (!isUserUnlockedL(userId)) {
+                        return;
+                    }
+
+                    copy = new ArrayList<>(mListeners);
+                }
+                // Note onShortcutChanged() needs to be called with the system service permissions.
+                for (int i = copy.size() - 1; i >= 0; i--) {
+                    copy.get(i).onShortcutChanged(packageName, userId);
+                }
+            } catch (Exception ignore) {
+            }
+        });
+!!!12282885.java!!!	fixUpIncomingShortcutInfo(inout shortcut : ShortcutInfo, inout forUpdate : boolean, inout forPinRequest : boolean) : void
+        if (shortcut.isReturnedByServer()) {
+            Log.w(TAG,
+                    "Re-publishing ShortcutInfo returned by server is not supported."
+                    + " Some information such as icon may lost from shortcut.");
+        }
+        Preconditions.checkNotNull(shortcut, "Null shortcut detected");
+        if (shortcut.getActivity() != null) {
+            Preconditions.checkState(
+                    shortcut.getPackage().equals(shortcut.getActivity().getPackageName()),
+                    "Cannot publish shortcut: activity " + shortcut.getActivity() + " does not"
+                    + " belong to package " + shortcut.getPackage());
+            Preconditions.checkState(
+                    injectIsMainActivity(shortcut.getActivity(), shortcut.getUserId()),
+                    "Cannot publish shortcut: activity " + shortcut.getActivity() + " is not"
+                            + " main activity");
+        }
+
+        if (!forUpdate) {
+            shortcut.enforceMandatoryFields(/* forPinned= */ forPinRequest);
+            if (!forPinRequest) {
+                Preconditions.checkState(shortcut.getActivity() != null,
+                        "Cannot publish shortcut: target activity is not set");
+            }
+        }
+        if (shortcut.getIcon() != null) {
+            ShortcutInfo.validateIcon(shortcut.getIcon());
+        }
+
+        shortcut.replaceFlags(0);
+!!!12283013.java!!!	fixUpIncomingShortcutInfo(inout shortcut : ShortcutInfo, inout forUpdate : boolean) : void
+        fixUpIncomingShortcutInfo(shortcut, forUpdate, /*forPinRequest=*/ false);
+!!!12283141.java!!!	validateShortcutForPinRequest(inout shortcut : ShortcutInfo) : void
+        fixUpIncomingShortcutInfo(shortcut, /* forUpdate= */ false, /*forPinRequest=*/ true);
+!!!12283269.java!!!	fillInDefaultActivity(inout shortcuts : List<ShortcutInfo>) : void
+        ComponentName defaultActivity = null;
+        for (int i = shortcuts.size() - 1; i >= 0; i--) {
+            final ShortcutInfo si = shortcuts.get(i);
+            if (si.getActivity() == null) {
+                if (defaultActivity == null) {
+                    defaultActivity = injectGetDefaultMainActivity(
+                            si.getPackage(), si.getUserId());
+                    Preconditions.checkState(defaultActivity != null,
+                            "Launcher activity not found for package " + si.getPackage());
+                }
+                si.setActivity(defaultActivity);
+            }
+        }
+!!!12283397.java!!!	assignImplicitRanks(inout shortcuts : List<ShortcutInfo>) : void
+        for (int i = shortcuts.size() - 1; i >= 0; i--) {
+            shortcuts.get(i).setImplicitRank(i);
+        }
+!!!12283525.java!!!	setReturnedByServer(inout shortcuts : List<ShortcutInfo>) : ShortcutInfo
+        for (int i = shortcuts.size() - 1; i >= 0; i--) {
+            shortcuts.get(i).setReturnedByServer();
+        }
+        return shortcuts;
+!!!12283653.java!!!	setDynamicShortcuts(in packageName : String, inout shortcutInfoList : ParceledListSlice, in userId : int) : boolean
+        verifyCaller(packageName, userId);
+
+        final List<ShortcutInfo> newShortcuts = (List<ShortcutInfo>) shortcutInfoList.getList();
+        final int size = newShortcuts.size();
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncluded(newShortcuts);
+
+            fillInDefaultActivity(newShortcuts);
+
+            ps.enforceShortcutCountsBeforeOperation(newShortcuts, OPERATION_SET);
+
+            // Throttling.
+            if (!ps.tryApiCall()) {
+                return false;
+            }
+
+            // Initialize the implicit ranks for ShortcutPackage.adjustRanks().
+            ps.clearAllImplicitRanks();
+            assignImplicitRanks(newShortcuts);
+
+            for (int i = 0; i < size; i++) {
+                fixUpIncomingShortcutInfo(newShortcuts.get(i), /* forUpdate= */ false);
+            }
+
+            // First, remove all un-pinned; dynamic shortcuts
+            ps.deleteAllDynamicShortcuts();
+
+            // Then, add/update all.  We need to make sure to take over "pinned" flag.
+            for (int i = 0; i < size; i++) {
+                final ShortcutInfo newShortcut = newShortcuts.get(i);
+                ps.addOrUpdateDynamicShortcut(newShortcut);
+            }
+
+            // Lastly, adjust the ranks.
+            ps.adjustRanks();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+
+        return true;
+!!!12283781.java!!!	updateShortcuts(in packageName : String, inout shortcutInfoList : ParceledListSlice, in userId : int) : boolean
+        verifyCaller(packageName, userId);
+
+        final List<ShortcutInfo> newShortcuts = (List<ShortcutInfo>) shortcutInfoList.getList();
+        final int size = newShortcuts.size();
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncluded(newShortcuts);
+
+            // For update, don't fill in the default activity.  Having null activity means
+            // "don't update the activity" here.
+
+            ps.enforceShortcutCountsBeforeOperation(newShortcuts, OPERATION_UPDATE);
+
+            // Throttling.
+            if (!ps.tryApiCall()) {
+                return false;
+            }
+
+            // Initialize the implicit ranks for ShortcutPackage.adjustRanks().
+            ps.clearAllImplicitRanks();
+            assignImplicitRanks(newShortcuts);
+
+            for (int i = 0; i < size; i++) {
+                final ShortcutInfo source = newShortcuts.get(i);
+                fixUpIncomingShortcutInfo(source, /* forUpdate= */ true);
+
+                final ShortcutInfo target = ps.findShortcutById(source.getId());
+                if (target == null) {
+                    continue;
+                }
+
+                if (target.isEnabled() != source.isEnabled()) {
+                    Slog.w(TAG,
+                            "ShortcutInfo.enabled cannot be changed with updateShortcuts()");
+                }
+
+                // When updating the rank, we need to insert between existing ranks, so set
+                // this setRankChanged, and also copy the implicit rank fo adjustRanks().
+                if (source.hasRank()) {
+                    target.setRankChanged();
+                    target.setImplicitRank(source.getImplicitRank());
+                }
+
+                final boolean replacingIcon = (source.getIcon() != null);
+                if (replacingIcon) {
+                    removeIconLocked(target);
+                }
+
+                // Note copyNonNullFieldsFrom() does the "updatable with?" check too.
+                target.copyNonNullFieldsFrom(source);
+                target.setTimestamp(injectCurrentTimeMillis());
+
+                if (replacingIcon) {
+                    saveIconAndFixUpShortcutLocked(target);
+                }
+
+                // When we're updating any resource related fields, re-extract the res names and
+                // the values.
+                if (replacingIcon || source.hasStringResources()) {
+                    fixUpShortcutResourceNamesAndValues(target);
+                }
+            }
+
+            // Lastly, adjust the ranks.
+            ps.adjustRanks();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+
+        return true;
+!!!12283909.java!!!	addDynamicShortcuts(in packageName : String, inout shortcutInfoList : ParceledListSlice, in userId : int) : boolean
+        verifyCaller(packageName, userId);
+
+        final List<ShortcutInfo> newShortcuts = (List<ShortcutInfo>) shortcutInfoList.getList();
+        final int size = newShortcuts.size();
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncluded(newShortcuts);
+
+            fillInDefaultActivity(newShortcuts);
+
+            ps.enforceShortcutCountsBeforeOperation(newShortcuts, OPERATION_ADD);
+
+            // Initialize the implicit ranks for ShortcutPackage.adjustRanks().
+            ps.clearAllImplicitRanks();
+            assignImplicitRanks(newShortcuts);
+
+            // Throttling.
+            if (!ps.tryApiCall()) {
+                return false;
+            }
+            for (int i = 0; i < size; i++) {
+                final ShortcutInfo newShortcut = newShortcuts.get(i);
+
+                // Validate the shortcut.
+                fixUpIncomingShortcutInfo(newShortcut, /* forUpdate= */ false);
+
+                // When ranks are changing, we need to insert between ranks, so set the
+                // "rank changed" flag.
+                newShortcut.setRankChanged();
+
+                // Add it.
+                ps.addOrUpdateDynamicShortcut(newShortcut);
+            }
+
+            // Lastly, adjust the ranks.
+            ps.adjustRanks();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+
+        return true;
+!!!12284037.java!!!	requestPinShortcut(in packageName : String, inout shortcut : ShortcutInfo, inout resultIntent : IntentSender, in userId : int) : boolean
+        Preconditions.checkNotNull(shortcut);
+        Preconditions.checkArgument(shortcut.isEnabled(), "Shortcut must be enabled");
+        return requestPinItem(packageName, userId, shortcut, null, null, resultIntent);
+!!!12284165.java!!!	createShortcutResultIntent(in packageName : String, inout shortcut : ShortcutInfo, in userId : int) : Intent
+        Preconditions.checkNotNull(shortcut);
+        Preconditions.checkArgument(shortcut.isEnabled(), "Shortcut must be enabled");
+        verifyCaller(packageName, userId);
+
+        final Intent ret;
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            // Send request to the launcher, if supported.
+            ret = mShortcutRequestPinProcessor.createShortcutResultIntent(shortcut, userId);
+        }
+
+        verifyStates();
+        return ret;
+!!!12284293.java!!!	requestPinItem(in packageName : String, in userId : int, inout shortcut : ShortcutInfo, inout appWidget : AppWidgetProviderInfo, inout extras : Bundle, inout resultIntent : IntentSender) : boolean
+        verifyCaller(packageName, userId);
+
+        final boolean ret;
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            Preconditions.checkState(isUidForegroundLocked(injectBinderCallingUid()),
+                    "Calling application must have a foreground activity or a foreground service");
+
+            // Send request to the launcher, if supported.
+            ret = mShortcutRequestPinProcessor.requestPinItemLocked(shortcut, appWidget, extras,
+                    userId, resultIntent);
+        }
+
+        verifyStates();
+
+        return ret;
+!!!12284421.java!!!	disableShortcuts(in packageName : String, inout shortcutIds : List, inout disabledMessage : CharSequence, in disabledMessageResId : int, in userId : int) : void
+        verifyCaller(packageName, userId);
+        Preconditions.checkNotNull(shortcutIds, "shortcutIds must be provided");
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncludedWithIds((List<String>) shortcutIds);
+
+            final String disabledMessageString =
+                    (disabledMessage == null) ? null : disabledMessage.toString();
+
+            for (int i = shortcutIds.size() - 1; i >= 0; i--) {
+                ps.disableWithId(Preconditions.checkStringNotEmpty((String) shortcutIds.get(i)),
+                        disabledMessageString, disabledMessageResId,
+                        /* overrideImmutable=*/ false);
+            }
+
+            // We may have removed dynamic shortcuts which may have left a gap, so adjust the ranks.
+            ps.adjustRanks();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+!!!12284549.java!!!	enableShortcuts(in packageName : String, inout shortcutIds : List, in userId : int) : void
+        verifyCaller(packageName, userId);
+        Preconditions.checkNotNull(shortcutIds, "shortcutIds must be provided");
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncludedWithIds((List<String>) shortcutIds);
+
+            for (int i = shortcutIds.size() - 1; i >= 0; i--) {
+                ps.enableWithId((String) shortcutIds.get(i));
+            }
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+!!!12284677.java!!!	removeDynamicShortcuts(in packageName : String, inout shortcutIds : List, in userId : int) : void
+        verifyCaller(packageName, userId);
+        Preconditions.checkNotNull(shortcutIds, "shortcutIds must be provided");
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            ps.ensureImmutableShortcutsNotIncludedWithIds((List<String>) shortcutIds);
+
+            for (int i = shortcutIds.size() - 1; i >= 0; i--) {
+                ps.deleteDynamicWithId(
+                        Preconditions.checkStringNotEmpty((String) shortcutIds.get(i)));
+            }
+
+            // We may have removed dynamic shortcuts which may have left a gap, so adjust the ranks.
+            ps.adjustRanks();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+!!!12284805.java!!!	removeAllDynamicShortcuts(in packageName : String, in userId : int) : void
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+            ps.deleteAllDynamicShortcuts();
+        }
+        packageShortcutsChanged(packageName, userId);
+
+        verifyStates();
+!!!12284933.java!!!	getDynamicShortcuts(in packageName : String, in userId : int) : ParceledListSlice
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            return getShortcutsWithQueryLocked(
+                    packageName, userId, ShortcutInfo.CLONE_REMOVE_FOR_CREATOR,
+                    ShortcutInfo::isDynamic);
+        }
+!!!12285061.java!!!	getManifestShortcuts(in packageName : String, in userId : int) : ParceledListSlice
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            return getShortcutsWithQueryLocked(
+                    packageName, userId, ShortcutInfo.CLONE_REMOVE_FOR_CREATOR,
+                    ShortcutInfo::isManifestShortcut);
+        }
+!!!12285189.java!!!	getPinnedShortcuts(in packageName : String, in userId : int) : ParceledListSlice
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            return getShortcutsWithQueryLocked(
+                    packageName, userId, ShortcutInfo.CLONE_REMOVE_FOR_CREATOR,
+                    ShortcutInfo::isPinned);
+        }
+!!!12285317.java!!!	getShortcutsWithQueryLocked(in packageName : String, in userId : int, in cloneFlags : int, inout query : Predicate<ShortcutInfo>) : ParceledListSlice
+
+        final ArrayList<ShortcutInfo> ret = new ArrayList<>();
+
+        final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+        ps.findAll(ret, query, cloneFlags);
+
+        return new ParceledListSlice<>(setReturnedByServer(ret));
+!!!12285445.java!!!	getMaxShortcutCountPerActivity(in packageName : String, in userId : int) : int
+        verifyCaller(packageName, userId);
+
+        return mMaxShortcuts;
+!!!12285573.java!!!	getRemainingCallCount(in packageName : String, in userId : int) : int
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+            return mMaxUpdatesPerInterval - ps.getApiCallCount();
+        }
+!!!12285701.java!!!	getRateLimitResetTime(in packageName : String, in userId : int) : long
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            return getNextResetTimeLocked();
+        }
+!!!12285829.java!!!	getIconMaxDimensions(in packageName : String, in userId : int) : int
+        verifyCaller(packageName, userId);
+
+        synchronized (mLock) {
+            return mMaxIconDimension;
+        }
+!!!12285957.java!!!	reportShortcutUsed(in packageName : String, in shortcutId : String, in userId : int) : void
+        verifyCaller(packageName, userId);
+
+        Preconditions.checkNotNull(shortcutId);
+
+        if (DEBUG) {
+            Slog.d(TAG, String.format("reportShortcutUsed: Shortcut %s package %s used on user %d",
+                    shortcutId, packageName, userId));
+        }
+
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutPackage ps = getPackageShortcutsForPublisherLocked(packageName, userId);
+
+            if (ps.findShortcutById(shortcutId) == null) {
+                Log.w(TAG, String.format("reportShortcutUsed: package %s doesn't have shortcut %s",
+                        packageName, shortcutId));
+                return;
+            }
+        }
+
+        final long token = injectClearCallingIdentity();
+        try {
+            mUsageStatsManagerInternal.reportShortcutUsage(packageName, shortcutId, userId);
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12286085.java!!!	isRequestPinItemSupported(in callingUserId : int, in requestType : int) : boolean
+        final long token = injectClearCallingIdentity();
+        try {
+            return mShortcutRequestPinProcessor
+                    .isRequestPinItemSupported(callingUserId, requestType);
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12286213.java!!!	resetThrottling() : void
+        enforceSystemOrShell();
+
+        resetThrottlingInner(getCallingUserId());
+!!!12286341.java!!!	resetThrottlingInner(in userId : int) : void
+        synchronized (mLock) {
+            if (!isUserUnlockedL(userId)) {
+                Log.w(TAG, "User " + userId + " is locked or not running");
+                return;
+            }
+
+            getUserShortcutsLocked(userId).resetThrottling();
+        }
+        scheduleSaveUser(userId);
+        Slog.i(TAG, "ShortcutManager: throttling counter reset for user " + userId);
+!!!12286469.java!!!	resetAllThrottlingInner() : void
+        synchronized (mLock) {
+            mRawLastResetTime = injectCurrentTimeMillis();
+        }
+        scheduleSaveBaseState();
+        Slog.i(TAG, "ShortcutManager: throttling counter reset for all users");
+!!!12286597.java!!!	onApplicationActive(in packageName : String, in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "onApplicationActive: package=" + packageName + "  userid=" + userId);
+        }
+        enforceResetThrottlingPermission();
+
+        synchronized (mLock) {
+            if (!isUserUnlockedL(userId)) {
+                // This is called by system UI, so no need to throw.  Just ignore.
+                return;
+            }
+
+            getPackageShortcutsLocked(packageName, userId)
+                    .resetRateLimitingForCommandLineNoSaving();
+            saveUserLocked(userId);
+        }
+!!!12286725.java!!!	hasShortcutHostPermission(in callingPackage : String, in userId : int) : boolean
+        final long start = injectElapsedRealtime();
+        try {
+            return hasShortcutHostPermissionInner(callingPackage, userId);
+        } finally {
+            logDurationStat(Stats.LAUNCHER_PERMISSION_CHECK, start);
+        }
+!!!12286853.java!!!	hasShortcutHostPermissionInner(in packageName : String, in userId : int) : boolean
+        synchronized (mLock) {
+            throwIfUserLockedL(userId);
+
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+
+            // Always trust the cached component.
+            final ComponentName cached = user.getCachedLauncher();
+            if (cached != null) {
+                if (cached.getPackageName().equals(packageName)) {
+                    return true;
+                }
+            }
+            // If the cached one doesn't match, then go ahead
+
+            final ComponentName detected = getDefaultLauncher(userId);
+
+            // Update the cache.
+            user.setLauncher(detected);
+            if (detected != null) {
+                if (DEBUG) {
+                    Slog.v(TAG, "Detected launcher: " + detected);
+                }
+                return detected.getPackageName().equals(packageName);
+            } else {
+                // Default launcher not found.
+                return false;
+            }
+        }
+!!!12286981.java!!!	getDefaultLauncher(in userId : int) : ComponentName
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            synchronized (mLock) {
+                throwIfUserLockedL(userId);
+
+                final ShortcutUser user = getUserShortcutsLocked(userId);
+
+                final List<ResolveInfo> allHomeCandidates = new ArrayList<>();
+
+                // Default launcher from package manager.
+                final long startGetHomeActivitiesAsUser = injectElapsedRealtime();
+                final ComponentName defaultLauncher = mPackageManagerInternal
+                        .getHomeActivitiesAsUser(allHomeCandidates, userId);
+                logDurationStat(Stats.GET_DEFAULT_HOME, startGetHomeActivitiesAsUser);
+
+                ComponentName detected = null;
+                if (defaultLauncher != null) {
+                    detected = defaultLauncher;
+                    if (DEBUG) {
+                        Slog.v(TAG, "Default launcher from PM: " + detected);
+                    }
+                } else {
+                    detected = user.getLastKnownLauncher();
+
+                    if (detected != null) {
+                        if (injectIsActivityEnabledAndExported(detected, userId)) {
+                            if (DEBUG) {
+                                Slog.v(TAG, "Cached launcher: " + detected);
+                            }
+                        } else {
+                            Slog.w(TAG, "Cached launcher " + detected + " no longer exists");
+                            detected = null;
+                            user.clearLauncher();
+                        }
+                    }
+                }
+
+                if (detected == null) {
+                    // If we reach here, that means it's the first check since the user was created,
+                    // and there's already multiple launchers and there's no default set.
+                    // Find the system one with the highest priority.
+                    // (We need to check the priority too because of FallbackHome in Settings.)
+                    // If there's no system launcher yet, then no one can access shortcuts, until
+                    // the user explicitly
+                    final int size = allHomeCandidates.size();
+
+                    int lastPriority = Integer.MIN_VALUE;
+                    for (int i = 0; i < size; i++) {
+                        final ResolveInfo ri = allHomeCandidates.get(i);
+                        if (!ri.activityInfo.applicationInfo.isSystemApp()) {
+                            continue;
+                        }
+                        if (DEBUG) {
+                            Slog.d(TAG, String.format("hasShortcutPermissionInner: pkg=%s prio=%d",
+                                    ri.activityInfo.getComponentName(), ri.priority));
+                        }
+                        if (ri.priority < lastPriority) {
+                            continue;
+                        }
+                        detected = ri.activityInfo.getComponentName();
+                        lastPriority = ri.priority;
+                    }
+                }
+                return detected;
+            }
+        } finally {
+            injectRestoreCallingIdentity(token);
+            logDurationStat(Stats.GET_DEFAULT_LAUNCHER, start);
+        }
+!!!12287109.java!!!	cleanUpPackageForAllLoadedUsers(in packageName : String, in packageUserId : int, inout appStillExists : boolean) : void
+        synchronized (mLock) {
+            forEachLoadedUserLocked(user ->
+                    cleanUpPackageLocked(packageName, user.getUserId(), packageUserId,
+                            appStillExists));
+        }
+!!!12287237.java!!!	cleanUpPackageLocked(in packageName : String, in owningUserId : int, in packageUserId : int, inout appStillExists : boolean) : void
+        final boolean wasUserLoaded = isUserLoadedLocked(owningUserId);
+
+        final ShortcutUser user = getUserShortcutsLocked(owningUserId);
+        boolean doNotify = false;
+
+        // First, remove the package from the package list (if the package is a publisher).
+        if (packageUserId == owningUserId) {
+            if (user.removePackage(packageName) != null) {
+                doNotify = true;
+            }
+        }
+
+        // Also remove from the launcher list (if the package is a launcher).
+        user.removeLauncher(packageUserId, packageName);
+
+        // Then remove pinned shortcuts from all launchers.
+        user.forAllLaunchers(l -> l.cleanUpPackage(packageName, packageUserId));
+
+        // Now there may be orphan shortcuts because we removed pinned shortcuts at the previous
+        // step.  Remove them too.
+        user.forAllPackages(p -> p.refreshPinnedFlags());
+
+        scheduleSaveUser(owningUserId);
+
+        if (doNotify) {
+            notifyListeners(packageName, owningUserId);
+        }
+
+        // If the app still exists (i.e. data cleared), we need to re-publish manifest shortcuts.
+        if (appStillExists && (packageUserId == owningUserId)) {
+            // This will do the notification and save when needed, so do it after the above
+            // notifyListeners.
+            user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+        }
+
+        if (!wasUserLoaded) {
+            // Note this will execute the scheduled save.
+            unloadUserLocked(owningUserId);
+        }
+!!!12288901.java!!!	handleLocaleChanged() : void
+        if (DEBUG) {
+            Slog.d(TAG, "handleLocaleChanged");
+        }
+        scheduleSaveBaseState();
+
+        synchronized (mLock) {
+            final long token = injectClearCallingIdentity();
+            try {
+                forEachLoadedUserLocked(user -> user.detectLocaleChange());
+            } finally {
+                injectRestoreCallingIdentity(token);
+            }
+        }
+!!!12289029.java!!!	checkPackageChanges(in ownerUserId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, "checkPackageChanges() ownerUserId=" + ownerUserId);
+        }
+        if (injectIsSafeModeEnabled()) {
+            Slog.i(TAG, "Safe mode, skipping checkPackageChanges()");
+            return;
+        }
+
+        final long start = injectElapsedRealtime();
+        try {
+            final ArrayList<PackageWithUser> gonePackages = new ArrayList<>();
+
+            synchronized (mLock) {
+                final ShortcutUser user = getUserShortcutsLocked(ownerUserId);
+
+                // Find packages that have been uninstalled.
+                user.forAllPackageItems(spi -> {
+                    if (spi.getPackageInfo().isShadow()) {
+                        return; // Don't delete shadow information.
+                    }
+                    if (!isPackageInstalled(spi.getPackageName(), spi.getPackageUserId())) {
+                        if (DEBUG) {
+                            Slog.d(TAG, "Uninstalled: " + spi.getPackageName()
+                                    + " user " + spi.getPackageUserId());
+                        }
+                        gonePackages.add(PackageWithUser.of(spi));
+                    }
+                });
+                if (gonePackages.size() > 0) {
+                    for (int i = gonePackages.size() - 1; i >= 0; i--) {
+                        final PackageWithUser pu = gonePackages.get(i);
+                        cleanUpPackageLocked(pu.packageName, ownerUserId, pu.userId,
+                                /* appStillExists = */ false);
+                    }
+                }
+
+                rescanUpdatedPackagesLocked(ownerUserId, user.getLastAppScanTime());
+            }
+        } finally {
+            logDurationStat(Stats.CHECK_PACKAGE_CHANGES, start);
+        }
+        verifyStates();
+!!!12289157.java!!!	rescanUpdatedPackagesLocked(in userId : int, in lastScanTime : long) : void
+        final ShortcutUser user = getUserShortcutsLocked(userId);
+
+        // Note after each OTA, we'll need to rescan all system apps, as their lastUpdateTime
+        // is not reliable.
+        final long now = injectCurrentTimeMillis();
+        final boolean afterOta =
+                !injectBuildFingerprint().equals(user.getLastAppScanOsFingerprint());
+
+        // Then for each installed app, publish manifest shortcuts when needed.
+        forUpdatedPackages(userId, lastScanTime, afterOta, ai -> {
+            user.attemptToRestoreIfNeededAndSave(this, ai.packageName, userId);
+
+            user.rescanPackageIfNeeded(ai.packageName, /* forceRescan= */ true);
+        });
+
+        // Write the time just before the scan, because there may be apps that have just
+        // been updated, and we want to catch them in the next time.
+        user.setLastAppScanTime(now);
+        user.setLastAppScanOsFingerprint(injectBuildFingerprint());
+        scheduleSaveUser(userId);
+!!!12289285.java!!!	handlePackageAdded(in packageName : String, in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, String.format("handlePackageAdded: %s user=%d", packageName, userId));
+        }
+        synchronized (mLock) {
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+            user.attemptToRestoreIfNeededAndSave(this, packageName, userId);
+            user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+        }
+        verifyStates();
+!!!12289413.java!!!	handlePackageUpdateFinished(in packageName : String, in userId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, String.format("handlePackageUpdateFinished: %s user=%d",
+                    packageName, userId));
+        }
+        synchronized (mLock) {
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+            user.attemptToRestoreIfNeededAndSave(this, packageName, userId);
+
+            if (isPackageInstalled(packageName, userId)) {
+                user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+            }
+        }
+        verifyStates();
+!!!12289541.java!!!	handlePackageRemoved(in packageName : String, in packageUserId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, String.format("handlePackageRemoved: %s user=%d", packageName,
+                    packageUserId));
+        }
+        cleanUpPackageForAllLoadedUsers(packageName, packageUserId, /* appStillExists = */ false);
+
+        verifyStates();
+!!!12289669.java!!!	handlePackageDataCleared(in packageName : String, in packageUserId : int) : void
+        if (DEBUG) {
+            Slog.d(TAG, String.format("handlePackageDataCleared: %s user=%d", packageName,
+                    packageUserId));
+        }
+        cleanUpPackageForAllLoadedUsers(packageName, packageUserId, /* appStillExists = */ true);
+
+        verifyStates();
+!!!12289797.java!!!	handlePackageChanged(in packageName : String, in packageUserId : int) : void
+        if (!isPackageInstalled(packageName, packageUserId)) {
+            // Probably disabled, which is the same thing as uninstalled.
+            handlePackageRemoved(packageName, packageUserId);
+            return;
+        }
+        if (DEBUG) {
+            Slog.d(TAG, String.format("handlePackageChanged: %s user=%d", packageName,
+                    packageUserId));
+        }
+
+        // Activities may be disabled or enabled.  Just rescan the package.
+        synchronized (mLock) {
+            final ShortcutUser user = getUserShortcutsLocked(packageUserId);
+
+            user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+        }
+
+        verifyStates();
+!!!12289925.java!!!	getPackageInfoWithSignatures(in packageName : String, in userId : int) : PackageInfo
+        return getPackageInfo(packageName, userId, true);
+!!!12290053.java!!!	getPackageInfo(in packageName : String, in userId : int) : PackageInfo
+        return getPackageInfo(packageName, userId, false);
+!!!12290181.java!!!	injectGetPackageUid(in packageName : String, in userId : int) : int
+        final long token = injectClearCallingIdentity();
+        try {
+            return mIPackageManager.getPackageUid(packageName, PACKAGE_MATCH_FLAGS, userId);
+        } catch (RemoteException e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "RemoteException", e);
+            return -1;
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12290309.java!!!	getPackageInfo(in packageName : String, in userId : int, inout getSignatures : boolean) : PackageInfo
+        return isInstalledOrNull(injectPackageInfoWithUninstalled(
+                packageName, userId, getSignatures));
+!!!12290437.java!!!	injectPackageInfoWithUninstalled(in packageName : String, in userId : int, inout getSignatures : boolean) : PackageInfo
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            return mIPackageManager.getPackageInfo(
+                    packageName, PACKAGE_MATCH_FLAGS
+                            | (getSignatures ? PackageManager.GET_SIGNATURES : 0), userId);
+        } catch (RemoteException e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "RemoteException", e);
+            return null;
+        } finally {
+            injectRestoreCallingIdentity(token);
+
+            logDurationStat(
+                    (getSignatures ? Stats.GET_PACKAGE_INFO_WITH_SIG : Stats.GET_PACKAGE_INFO),
+                    start);
+        }
+!!!12290565.java!!!	getApplicationInfo(in packageName : String, in userId : int) : ApplicationInfo
+        return isInstalledOrNull(injectApplicationInfoWithUninstalled(packageName, userId));
+!!!12290693.java!!!	injectApplicationInfoWithUninstalled(in packageName : String, in userId : int) : ApplicationInfo
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            return mIPackageManager.getApplicationInfo(packageName, PACKAGE_MATCH_FLAGS, userId);
+        } catch (RemoteException e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "RemoteException", e);
+            return null;
+        } finally {
+            injectRestoreCallingIdentity(token);
+
+            logDurationStat(Stats.GET_APPLICATION_INFO, start);
+        }
+!!!12290821.java!!!	getActivityInfoWithMetadata(inout activity : ComponentName, in userId : int) : ActivityInfo
+        return isInstalledOrNull(injectGetActivityInfoWithMetadataWithUninstalled(
+                activity, userId));
+!!!12290949.java!!!	injectGetActivityInfoWithMetadataWithUninstalled(inout activity : ComponentName, in userId : int) : ActivityInfo
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            return mIPackageManager.getActivityInfo(activity,
+                    (PACKAGE_MATCH_FLAGS | PackageManager.GET_META_DATA), userId);
+        } catch (RemoteException e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "RemoteException", e);
+            return null;
+        } finally {
+            injectRestoreCallingIdentity(token);
+
+            logDurationStat(Stats.GET_ACTIVITY_WITH_METADATA, start);
+        }
+!!!12291077.java!!!	getInstalledPackages(in userId : int) : PackageInfo
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            final List<PackageInfo> all = injectGetPackagesWithUninstalled(userId);
+
+            all.removeIf(PACKAGE_NOT_INSTALLED);
+
+            return all;
+        } catch (RemoteException e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "RemoteException", e);
+            return null;
+        } finally {
+            injectRestoreCallingIdentity(token);
+
+            logDurationStat(Stats.GET_INSTALLED_PACKAGES, start);
+        }
+!!!12291205.java!!!	injectGetPackagesWithUninstalled(in userId : int) : PackageInfo
+        final ParceledListSlice<PackageInfo> parceledList =
+                mIPackageManager.getInstalledPackages(PACKAGE_MATCH_FLAGS, userId);
+        if (parceledList == null) {
+            return Collections.emptyList();
+        }
+        return parceledList.getList();
+!!!12291333.java!!!	forUpdatedPackages(in userId : int, in lastScanTime : long, inout afterOta : boolean, inout callback : Consumer<ApplicationInfo>) : void
+        if (DEBUG) {
+            Slog.d(TAG, "forUpdatedPackages for user " + userId + ", lastScanTime=" + lastScanTime
+                    + " afterOta=" + afterOta);
+        }
+        final List<PackageInfo> list = getInstalledPackages(userId);
+        for (int i = list.size() - 1; i >= 0; i--) {
+            final PackageInfo pi = list.get(i);
+
+            // If the package has been updated since the last scan time, then scan it.
+            // Also if it's right after an OTA, always re-scan all apps anyway, since the
+            // shortcut parser might have changed.
+            if (afterOta || (pi.lastUpdateTime >= lastScanTime)) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Found updated package " + pi.packageName
+                            + " updateTime=" + pi.lastUpdateTime);
+                }
+                callback.accept(pi.applicationInfo);
+            }
+        }
+!!!12291461.java!!!	isApplicationFlagSet(in packageName : String, in userId : int, in flags : int) : boolean
+        final ApplicationInfo ai = injectApplicationInfoWithUninstalled(packageName, userId);
+        return (ai != null) && ((ai.flags & flags) == flags);
+!!!12291589.java!!!	isInstalled(inout ai : ApplicationInfo) : boolean
+        return (ai != null) && ai.enabled && (ai.flags & ApplicationInfo.FLAG_INSTALLED) != 0;
+!!!12291717.java!!!	isEphemeralApp(inout ai : ApplicationInfo) : boolean
+        return (ai != null) && ai.isInstantApp();
+!!!12291845.java!!!	isInstalled(inout pi : PackageInfo) : boolean
+        return (pi != null) && isInstalled(pi.applicationInfo);
+!!!12291973.java!!!	isInstalled(inout ai : ActivityInfo) : boolean
+        return (ai != null) && isInstalled(ai.applicationInfo);
+!!!12292101.java!!!	isInstalledOrNull(inout ai : ApplicationInfo) : ApplicationInfo
+        return isInstalled(ai) ? ai : null;
+!!!12292229.java!!!	isInstalledOrNull(inout pi : PackageInfo) : PackageInfo
+        return isInstalled(pi) ? pi : null;
+!!!12292357.java!!!	isInstalledOrNull(inout ai : ActivityInfo) : ActivityInfo
+        return isInstalled(ai) ? ai : null;
+!!!12292485.java!!!	isPackageInstalled(in packageName : String, in userId : int) : boolean
+        return getApplicationInfo(packageName, userId) != null;
+!!!12292613.java!!!	isEphemeralApp(in packageName : String, in userId : int) : boolean
+        return isEphemeralApp(getApplicationInfo(packageName, userId));
+!!!12292741.java!!!	injectXmlMetaData(inout activityInfo : ActivityInfo, in key : String) : XmlResourceParser
+        return activityInfo.loadXmlMetaData(mContext.getPackageManager(), key);
+!!!12292869.java!!!	injectGetResourcesForApplicationAsUser(in packageName : String, in userId : int) : Resources
+        final long start = injectElapsedRealtime();
+        final long token = injectClearCallingIdentity();
+        try {
+            return mContext.getPackageManager().getResourcesForApplicationAsUser(
+                    packageName, userId);
+        } catch (NameNotFoundException e) {
+            Slog.e(TAG, "Resources for package " + packageName + " not found");
+            return null;
+        } finally {
+            injectRestoreCallingIdentity(token);
+
+            logDurationStat(Stats.GET_APPLICATION_RESOURCES, start);
+        }
+!!!12292997.java!!!	getMainActivityIntent() : Intent
+        final Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.addCategory(LAUNCHER_INTENT_CATEGORY);
+        return intent;
+!!!12293125.java!!!	queryActivities(inout baseIntent : Intent, in packageName : String, inout activity : ComponentName, in userId : int) : ResolveInfo
+
+        baseIntent.setPackage(Preconditions.checkNotNull(packageName));
+        if (activity != null) {
+            baseIntent.setComponent(activity);
+        }
+        return queryActivities(baseIntent, userId, /* exportedOnly =*/ true);
+!!!12293253.java!!!	queryActivities(inout intent : Intent, in userId : int, inout exportedOnly : boolean) : ResolveInfo
+        final List<ResolveInfo> resolved;
+        final long token = injectClearCallingIdentity();
+        try {
+            resolved =
+                    mContext.getPackageManager().queryIntentActivitiesAsUser(
+                            intent, PACKAGE_MATCH_FLAGS, userId);
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+        if (resolved == null || resolved.size() == 0) {
+            return EMPTY_RESOLVE_INFO;
+        }
+        // Make sure the package is installed.
+        if (!isInstalled(resolved.get(0).activityInfo)) {
+            return EMPTY_RESOLVE_INFO;
+        }
+        if (exportedOnly) {
+            resolved.removeIf(ACTIVITY_NOT_EXPORTED);
+        }
+        return resolved;
+!!!12293381.java!!!	injectGetDefaultMainActivity(in packageName : String, in userId : int) : ComponentName
+        final long start = injectElapsedRealtime();
+        try {
+            final List<ResolveInfo> resolved =
+                    queryActivities(getMainActivityIntent(), packageName, null, userId);
+            return resolved.size() == 0 ? null : resolved.get(0).activityInfo.getComponentName();
+        } finally {
+            logDurationStat(Stats.GET_LAUNCHER_ACTIVITY, start);
+        }
+!!!12293509.java!!!	injectIsMainActivity(inout activity : ComponentName, in userId : int) : boolean
+        final long start = injectElapsedRealtime();
+        try {
+            if (activity == null) {
+                wtf("null activity detected");
+                return false;
+            }
+            if (DUMMY_MAIN_ACTIVITY.equals(activity.getClassName())) {
+                return true;
+            }
+            final List<ResolveInfo> resolved = queryActivities(
+                    getMainActivityIntent(), activity.getPackageName(), activity, userId);
+            return resolved.size() > 0;
+        } finally {
+            logDurationStat(Stats.CHECK_LAUNCHER_ACTIVITY, start);
+        }
+!!!12293637.java!!!	getDummyMainActivity(in packageName : String) : ComponentName
+        return new ComponentName(packageName, DUMMY_MAIN_ACTIVITY);
+!!!12293765.java!!!	isDummyMainActivity(inout name : ComponentName) : boolean
+        return name != null && DUMMY_MAIN_ACTIVITY.equals(name.getClassName());
+!!!12293893.java!!!	injectGetMainActivities(in packageName : String, in userId : int) : ResolveInfo
+        final long start = injectElapsedRealtime();
+        try {
+            return queryActivities(getMainActivityIntent(), packageName, null, userId);
+        } finally {
+            logDurationStat(Stats.CHECK_LAUNCHER_ACTIVITY, start);
+        }
+!!!12294021.java!!!	injectIsActivityEnabledAndExported(inout activity : ComponentName, in userId : int) : boolean
+        final long start = injectElapsedRealtime();
+        try {
+            return queryActivities(new Intent(), activity.getPackageName(), activity, userId)
+                    .size() > 0;
+        } finally {
+            logDurationStat(Stats.IS_ACTIVITY_ENABLED, start);
+        }
+!!!12294149.java!!!	injectGetPinConfirmationActivity(in launcherPackageName : String, in launcherUserId : int, in requestType : int) : ComponentName
+        Preconditions.checkNotNull(launcherPackageName);
+        String action = requestType == LauncherApps.PinItemRequest.REQUEST_TYPE_SHORTCUT ?
+                LauncherApps.ACTION_CONFIRM_PIN_SHORTCUT :
+                LauncherApps.ACTION_CONFIRM_PIN_APPWIDGET;
+
+        final Intent confirmIntent = new Intent(action).setPackage(launcherPackageName);
+        final List<ResolveInfo> candidates = queryActivities(
+                confirmIntent, launcherUserId, /* exportedOnly =*/ false);
+        for (ResolveInfo ri : candidates) {
+            return ri.activityInfo.getComponentName();
+        }
+        return null;
+!!!12294277.java!!!	injectIsSafeModeEnabled() : boolean
+        final long token = injectClearCallingIdentity();
+        try {
+            return IWindowManager.Stub
+                    .asInterface(ServiceManager.getService(Context.WINDOW_SERVICE))
+                    .isSafeModeEnabled();
+        } catch (RemoteException e) {
+            return false; // Shouldn't happen though.
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12294405.java!!!	getParentOrSelfUserId(in userId : int) : int
+        final long token = injectClearCallingIdentity();
+        try {
+            final UserInfo parent = mUserManager.getProfileParent(userId);
+            return (parent != null) ? parent.id : userId;
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12294533.java!!!	injectSendIntentSender(inout intentSender : IntentSender, inout extras : Intent) : void
+        if (intentSender == null) {
+            return;
+        }
+        try {
+            intentSender.sendIntent(mContext, /* code= */ 0, extras,
+                    /* onFinished=*/ null, /* handler= */ null);
+        } catch (SendIntentException e) {
+            Slog.w(TAG, "sendIntent failed().", e);
+        }
+!!!12294661.java!!!	shouldBackupApp(in packageName : String, in userId : int) : boolean
+        return isApplicationFlagSet(packageName, userId, ApplicationInfo.FLAG_ALLOW_BACKUP);
+!!!12294789.java!!!	shouldBackupApp(inout pi : PackageInfo) : boolean
+        return (pi.applicationInfo.flags & ApplicationInfo.FLAG_ALLOW_BACKUP) != 0;
+!!!12294917.java!!!	getBackupPayload(in userId : int) : byte
+        enforceSystem();
+        if (DEBUG) {
+            Slog.d(TAG, "Backing up user " + userId);
+        }
+        synchronized (mLock) {
+            if (!isUserUnlockedL(userId)) {
+                wtf("Can't backup: user " + userId + " is locked or not running");
+                return null;
+            }
+
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+            if (user == null) {
+                wtf("Can't backup: user not found: id=" + userId);
+                return null;
+            }
+
+            // Update the signatures for all packages.
+            user.forAllPackageItems(spi -> spi.refreshPackageSignatureAndSave());
+
+            // Set the version code for the launchers.
+            // We shouldn't do this for publisher packages, because we don't want to update the
+            // version code without rescanning the manifest.
+            user.forAllLaunchers(launcher -> launcher.ensureVersionInfo());
+
+            // Save to the filesystem.
+            scheduleSaveUser(userId);
+            saveDirtyInfo();
+
+            // Note, in case of backup, we don't have to wait on bitmap saving, because we don't
+            // back up bitmaps anyway.
+
+            // Then create the backup payload.
+            final ByteArrayOutputStream os = new ByteArrayOutputStream(32 * 1024);
+            try {
+                saveUserInternalLocked(userId, os, /* forBackup */ true);
+            } catch (XmlPullParserException | IOException e) {
+                // Shouldn't happen.
+                Slog.w(TAG, "Backup failed.", e);
+                return null;
+            }
+            return os.toByteArray();
+        }
+!!!12295045.java!!!	applyRestore(inout payload : byte [[]], in userId : int) : void
+        enforceSystem();
+        if (DEBUG) {
+            Slog.d(TAG, "Restoring user " + userId);
+        }
+        synchronized (mLock) {
+            if (!isUserUnlockedL(userId)) {
+                wtf("Can't restore: user " + userId + " is locked or not running");
+                return;
+            }
+            // Actually do restore.
+            final ShortcutUser restored;
+            final ByteArrayInputStream is = new ByteArrayInputStream(payload);
+            try {
+                restored = loadUserInternal(userId, is, /* fromBackup */ true);
+            } catch (XmlPullParserException | IOException | InvalidFileFormatException e) {
+                Slog.w(TAG, "Restoration failed.", e);
+                return;
+            }
+            getUserShortcutsLocked(userId).mergeRestoredFile(restored);
+
+            // Rescan all packages to re-publish manifest shortcuts and do other checks.
+            rescanUpdatedPackagesLocked(userId,
+                    0 // lastScanTime = 0; rescan all packages.
+                    );
+
+            saveUserLocked(userId);
+        }
+!!!12295173.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        if (!DumpUtils.checkDumpAndUsageStatsPermission(mContext, TAG, pw)) return;
+        dumpNoCheck(fd, pw, args);
+!!!12295301.java!!!	dumpNoCheck(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        boolean checkin = false;
+        boolean clear = false;
+        if (args != null) {
+            for (String arg : args) {
+                if ("-c".equals(arg)) {
+                    checkin = true;
+                } else if ("--checkin".equals(arg)) {
+                    checkin = true;
+                    clear = true;
+                }
+            }
+        }
+
+        if (checkin) {
+            dumpCheckin(pw, clear);
+        } else {
+            dumpInner(pw);
+        }
+!!!12295429.java!!!	dumpInner(inout pw : PrintWriter) : void
+        synchronized (mLock) {
+            final long now = injectCurrentTimeMillis();
+            pw.print("Now: [");
+            pw.print(now);
+            pw.print("] ");
+            pw.print(formatTime(now));
+
+            pw.print("  Raw last reset: [");
+            pw.print(mRawLastResetTime);
+            pw.print("] ");
+            pw.print(formatTime(mRawLastResetTime));
+
+            final long last = getLastResetTimeLocked();
+            pw.print("  Last reset: [");
+            pw.print(last);
+            pw.print("] ");
+            pw.print(formatTime(last));
+
+            final long next = getNextResetTimeLocked();
+            pw.print("  Next reset: [");
+            pw.print(next);
+            pw.print("] ");
+            pw.print(formatTime(next));
+
+            pw.print("  Config:");
+            pw.print("    Max icon dim: ");
+            pw.println(mMaxIconDimension);
+            pw.print("    Icon format: ");
+            pw.println(mIconPersistFormat);
+            pw.print("    Icon quality: ");
+            pw.println(mIconPersistQuality);
+            pw.print("    saveDelayMillis: ");
+            pw.println(mSaveDelayMillis);
+            pw.print("    resetInterval: ");
+            pw.println(mResetInterval);
+            pw.print("    maxUpdatesPerInterval: ");
+            pw.println(mMaxUpdatesPerInterval);
+            pw.print("    maxShortcutsPerActivity: ");
+            pw.println(mMaxShortcuts);
+            pw.println();
+
+            pw.println("  Stats:");
+            synchronized (mStatLock) {
+                for (int i = 0; i < Stats.COUNT; i++) {
+                    dumpStatLS(pw, "    ", i);
+                }
+            }
+
+            pw.println();
+            pw.print("  #Failures: ");
+            pw.println(mWtfCount);
+
+            if (mLastWtfStacktrace != null) {
+                pw.print("  Last failure stack trace: ");
+                pw.println(Log.getStackTraceString(mLastWtfStacktrace));
+            }
+
+            pw.println();
+            mShortcutBitmapSaver.dumpLocked(pw, "  ");
+
+            for (int i = 0; i < mUsers.size(); i++) {
+                pw.println();
+                mUsers.valueAt(i).dump(pw, "  ");
+            }
+
+            pw.println();
+            pw.println("  UID state:");
+
+            for (int i = 0; i < mUidState.size(); i++) {
+                final int uid = mUidState.keyAt(i);
+                final int state = mUidState.valueAt(i);
+                pw.print("    UID=");
+                pw.print(uid);
+                pw.print(" state=");
+                pw.print(state);
+                if (isProcessStateForeground(state)) {
+                    pw.print("  [FG]");
+                }
+                pw.print("  last FG=");
+                pw.print(mUidLastForegroundElapsedTime.get(uid));
+                pw.println();
+            }
+        }
+!!!12295557.java!!!	formatTime(in time : long) : String
+        Time tobj = new Time();
+        tobj.set(time);
+        return tobj.format("%Y-%m-%d %H:%M:%S");
+!!!12295685.java!!!	dumpStatLS(inout pw : PrintWriter, in prefix : String, in statId : int) : void
+        pw.print(prefix);
+        final int count = mCountStats[statId];
+        final long dur = mDurationStats[statId];
+        pw.println(String.format("%s: count=%d, total=%dms, avg=%.1fms",
+                STAT_LABELS[statId], count, dur,
+                (count == 0 ? 0 : ((double) dur) / count)));
+!!!12295813.java!!!	dumpCheckin(inout pw : PrintWriter, inout clear : boolean) : void
+        synchronized (mLock) {
+            try {
+                final JSONArray users = new JSONArray();
+
+                for (int i = 0; i < mUsers.size(); i++) {
+                    users.put(mUsers.valueAt(i).dumpCheckin(clear));
+                }
+
+                final JSONObject result = new JSONObject();
+
+                result.put(KEY_SHORTCUT, users);
+                result.put(KEY_LOW_RAM, injectIsLowRamDevice());
+                result.put(KEY_ICON_SIZE, mMaxIconDimension);
+
+                pw.println(result.toString(1));
+            } catch (JSONException e) {
+                Slog.e(TAG, "Unable to write in json", e);
+            }
+        }
+!!!12295941.java!!!	onShellCommand(inout in : FileDescriptor, inout out : FileDescriptor, inout err : FileDescriptor, inout args : String [[]], inout callback : ShellCallback, inout resultReceiver : ResultReceiver) : void
+
+        enforceShell();
+
+        final long token = injectClearCallingIdentity();
+        try {
+            final int status = (new MyShellCommand()).exec(this, in, out, err, args, callback,
+                    resultReceiver);
+            resultReceiver.send(status, null);
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+!!!12297989.java!!!	injectCurrentTimeMillis() : long
+        return System.currentTimeMillis();
+!!!12298117.java!!!	injectElapsedRealtime() : long
+        return SystemClock.elapsedRealtime();
+!!!12298245.java!!!	injectUptimeMillis() : long
+        return SystemClock.uptimeMillis();
+!!!12298373.java!!!	injectBinderCallingUid() : int
+        return getCallingUid();
+!!!12298501.java!!!	getCallingUserId() : int
+        return UserHandle.getUserId(injectBinderCallingUid());
+!!!12298629.java!!!	injectClearCallingIdentity() : long
+        return Binder.clearCallingIdentity();
+!!!12298757.java!!!	injectRestoreCallingIdentity(in token : long) : void
+        Binder.restoreCallingIdentity(token);
+!!!12298885.java!!!	injectBuildFingerprint() : String
+        return Build.FINGERPRINT;
+!!!12299013.java!!!	wtf(in message : String) : void
+        wtf(message, /* exception= */ null);
+!!!12299141.java!!!	wtf(in message : String, inout e : Throwable) : void
+        if (e == null) {
+            e = new RuntimeException("Stacktrace");
+        }
+        synchronized (mLock) {
+            mWtfCount++;
+            mLastWtfStacktrace = new Exception("Last failure was logged here:");
+        }
+        Slog.wtf(TAG, message, e);
+!!!12299269.java!!!	injectSystemDataPath() : File
+        return Environment.getDataSystemDirectory();
+!!!12299397.java!!!	injectUserDataPath(in userId : int) : File
+        return new File(Environment.getDataSystemCeDirectory(userId), DIRECTORY_PER_USER);
+!!!12299525.java!!!	injectIsLowRamDevice() : boolean
+        return ActivityManager.isLowRamDeviceStatic();
+!!!12299653.java!!!	injectRegisterUidObserver(inout observer : IUidObserver, in which : int) : void
+        try {
+            ActivityManager.getService().registerUidObserver(observer, which,
+                    ActivityManager.PROCESS_STATE_UNKNOWN, null);
+        } catch (RemoteException shouldntHappen) {
+        }
+!!!12299781.java!!!	getUserBitmapFilePath(in userId : int) : File
+        return new File(injectUserDataPath(userId), DIRECTORY_BITMAPS);
+!!!12299909.java!!!	getShortcutsForTest() : SparseArray
+        return mUsers;
+!!!12300037.java!!!	getMaxShortcutsForTest() : int
+        return mMaxShortcuts;
+!!!12300165.java!!!	getMaxUpdatesPerIntervalForTest() : int
+        return mMaxUpdatesPerInterval;
+!!!12300293.java!!!	getResetIntervalForTest() : long
+        return mResetInterval;
+!!!12300421.java!!!	getMaxIconDimensionForTest() : int
+        return mMaxIconDimension;
+!!!12300549.java!!!	getIconPersistFormatForTest() : CompressFormat
+        return mIconPersistFormat;
+!!!12300677.java!!!	getIconPersistQualityForTest() : int
+        return mIconPersistQuality;
+!!!12300805.java!!!	getPackageShortcutForTest(in packageName : String, in userId : int) : ShortcutPackage
+        synchronized (mLock) {
+            final ShortcutUser user = mUsers.get(userId);
+            if (user == null) return null;
+
+            return user.getAllPackagesForTest().get(packageName);
+        }
+!!!12300933.java!!!	getPackageShortcutForTest(in packageName : String, in shortcutId : String, in userId : int) : ShortcutInfo
+        synchronized (mLock) {
+            final ShortcutPackage pkg = getPackageShortcutForTest(packageName, userId);
+            if (pkg == null) return null;
+
+            return pkg.findShortcutById(shortcutId);
+        }
+!!!12301061.java!!!	getLauncherShortcutForTest(in packageName : String, in userId : int) : ShortcutLauncher
+        synchronized (mLock) {
+            final ShortcutUser user = mUsers.get(userId);
+            if (user == null) return null;
+
+            return user.getAllLaunchersForTest().get(PackageWithUser.of(userId, packageName));
+        }
+!!!12301189.java!!!	getShortcutRequestPinProcessorForTest() : ShortcutRequestPinProcessor
+        return mShortcutRequestPinProcessor;
+!!!12301317.java!!!	injectShouldPerformVerification() : boolean
+        return DEBUG;
+!!!12301445.java!!!	verifyStates() : void
+        if (injectShouldPerformVerification()) {
+            verifyStatesInner();
+        }
+!!!12301573.java!!!	verifyStatesForce() : void
+        verifyStatesInner();
+!!!12301701.java!!!	verifyStatesInner() : void
+        synchronized (mLock) {
+            forEachLoadedUserLocked(u -> u.forAllPackageItems(ShortcutPackageItem::verifyStates));
+        }
+!!!12301829.java!!!	waitForBitmapSavesForTest() : void
+        synchronized (mLock) {
+            mShortcutBitmapSaver.waitForAllSavesLocked();
+        }

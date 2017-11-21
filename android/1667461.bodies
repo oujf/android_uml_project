@@ -1,0 +1,64 @@
+class TetherMasterSM
+!!!11397893.java!!!	TetherMasterSM(in name : String, inout looper : Looper)
+            super(name, looper);
+
+            //Add states
+            mInitialState = new InitialState();
+            mTetherModeAliveState = new TetherModeAliveState();
+            mSetIpForwardingEnabledErrorState = new SetIpForwardingEnabledErrorState();
+            mSetIpForwardingDisabledErrorState = new SetIpForwardingDisabledErrorState();
+            mStartTetheringErrorState = new StartTetheringErrorState();
+            mStopTetheringErrorState = new StopTetheringErrorState();
+            mSetDnsForwardersErrorState = new SetDnsForwardersErrorState();
+
+            addState(mInitialState);
+            addState(mTetherModeAliveState);
+            addState(mSetIpForwardingEnabledErrorState);
+            addState(mSetIpForwardingDisabledErrorState);
+            addState(mStartTetheringErrorState);
+            addState(mStopTetheringErrorState);
+            addState(mSetDnsForwardersErrorState);
+
+            mNotifyList = new ArrayList<>();
+            mIPv6TetheringCoordinator = new IPv6TetheringCoordinator(mNotifyList, mLog);
+            setInitialState(mInitialState);
+!!!11400709.java!!!	handleInterfaceServingStateActive(in mode : int, inout who : TetherInterfaceStateMachine) : void
+            if (mNotifyList.indexOf(who) < 0) {
+                mNotifyList.add(who);
+                mIPv6TetheringCoordinator.addActiveDownstream(who, mode);
+            }
+
+            if (mode == IControlsTethering.STATE_TETHERED) {
+                mForwardedDownstreams.add(who);
+            } else {
+                mForwardedDownstreams.remove(who);
+            }
+
+            // If this is a Wi-Fi interface, notify WifiManager of the active serving state.
+            if (who.interfaceType() == ConnectivityManager.TETHERING_WIFI) {
+                final WifiManager mgr = getWifiManager();
+                final String iface = who.interfaceName();
+                switch (mode) {
+                    case IControlsTethering.STATE_TETHERED:
+                        mgr.updateInterfaceIpState(iface, IFACE_IP_MODE_TETHERED);
+                        break;
+                    case IControlsTethering.STATE_LOCAL_ONLY:
+                        mgr.updateInterfaceIpState(iface, IFACE_IP_MODE_LOCAL_ONLY);
+                        break;
+                    default:
+                        Log.wtf(TAG, "Unknown active serving mode: " + mode);
+                        break;
+                }
+            }
+!!!11400837.java!!!	handleInterfaceServingStateInactive(inout who : TetherInterfaceStateMachine) : void
+            mNotifyList.remove(who);
+            mIPv6TetheringCoordinator.removeActiveDownstream(who);
+            mForwardedDownstreams.remove(who);
+
+            // If this is a Wi-Fi interface, tell WifiManager of any errors.
+            if (who.interfaceType() == ConnectivityManager.TETHERING_WIFI) {
+                if (who.lastError() != ConnectivityManager.TETHER_ERROR_NO_ERROR) {
+                    getWifiManager().updateInterfaceIpState(
+                            who.interfaceName(), IFACE_IP_MODE_CONFIGURATION_ERROR);
+                }
+            }

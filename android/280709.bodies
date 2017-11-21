@@ -1,0 +1,64 @@
+class AudioStreamBuilder
+!!!692101.cpp!!!	build(inout streamPtr : AudioStream) : aaudio_result_t
+    AudioStream *audioStream = nullptr;
+    *streamPtr = nullptr;
+
+    // The API setting is the highest priority.
+    aaudio_policy_t mmapPolicy = AAudio_getMMapPolicy();
+    // If not specified then get from a system property.
+    if (mmapPolicy == AAUDIO_UNSPECIFIED) {
+        mmapPolicy = AAudioProperty_getMMapPolicy();
+    }
+    // If still not specified then use the default.
+    if (mmapPolicy == AAUDIO_UNSPECIFIED) {
+        mmapPolicy = AAUDIO_MMAP_POLICY_DEFAULT;
+    }
+
+    int32_t mapExclusivePolicy = AAudioProperty_getMMapExclusivePolicy();
+    if (mapExclusivePolicy == AAUDIO_UNSPECIFIED) {
+        mapExclusivePolicy = AAUDIO_MMAP_EXCLUSIVE_POLICY_DEFAULT;
+    }
+    ALOGD("AudioStreamBuilder(): mmapPolicy = %d, mapExclusivePolicy = %d",
+          mmapPolicy, mapExclusivePolicy);
+
+    aaudio_sharing_mode_t sharingMode = getSharingMode();
+    if ((sharingMode == AAUDIO_SHARING_MODE_EXCLUSIVE)
+        && (mapExclusivePolicy == AAUDIO_POLICY_NEVER)) {
+        ALOGW("AudioStreamBuilder(): EXCLUSIVE sharing mode not supported. Use SHARED.");
+        sharingMode = AAUDIO_SHARING_MODE_SHARED;
+        setSharingMode(sharingMode);
+    }
+
+    bool allowMMap = mmapPolicy != AAUDIO_POLICY_NEVER;
+    bool allowLegacy = mmapPolicy != AAUDIO_POLICY_ALWAYS;
+
+    aaudio_result_t result = builder_createStream(getDirection(), sharingMode,
+                                                  allowMMap, &audioStream);
+    if (result == AAUDIO_OK) {
+        // Open the stream using the parameters from the builder.
+        result = audioStream->open(*this);
+        if (result == AAUDIO_OK) {
+            *streamPtr = audioStream;
+        } else {
+            bool isMMap = audioStream->isMMap();
+            delete audioStream;
+            audioStream = nullptr;
+
+            if (isMMap && allowLegacy) {
+                ALOGD("AudioStreamBuilder.build() MMAP stream did not open so try Legacy path");
+                // If MMAP stream failed to open then TRY using a legacy stream.
+                result = builder_createStream(getDirection(), sharingMode,
+                                              false, &audioStream);
+                if (result == AAUDIO_OK) {
+                    result = audioStream->open(*this);
+                    if (result == AAUDIO_OK) {
+                        *streamPtr = audioStream;
+                    } else {
+                        delete audioStream;
+                    }
+                }
+            }
+        }
+    }
+
+    return result;

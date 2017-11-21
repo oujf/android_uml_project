@@ -1,0 +1,96 @@
+class CountryDetectorService
+!!!10656261.java!!!	CountryDetectorService(inout context : Context)
+        super();
+        mReceivers = new HashMap<IBinder, Receiver>();
+        mContext = context;
+!!!10656389.java!!!	detectCountry() : Country
+        if (!mSystemReady) {
+            return null;   // server not yet active
+        } else {
+            return mCountryDetector.detectCountry();
+        }
+!!!10656517.java!!!	addCountryListener(inout listener : ICountryListener) : void
+        if (!mSystemReady) {
+            throw new RemoteException();
+        }
+        addListener(listener);
+!!!10656645.java!!!	removeCountryListener(inout listener : ICountryListener) : void
+        if (!mSystemReady) {
+            throw new RemoteException();
+        }
+        removeListener(listener.asBinder());
+!!!10656773.java!!!	addListener(inout listener : ICountryListener) : void
+        synchronized (mReceivers) {
+            Receiver r = new Receiver(listener);
+            try {
+                listener.asBinder().linkToDeath(r, 0);
+                mReceivers.put(listener.asBinder(), r);
+                if (mReceivers.size() == 1) {
+                    Slog.d(TAG, "The first listener is added");
+                    setCountryListener(mLocationBasedDetectorListener);
+                }
+            } catch (RemoteException e) {
+                Slog.e(TAG, "linkToDeath failed:", e);
+            }
+        }
+!!!10656901.java!!!	removeListener(inout key : IBinder) : void
+        synchronized (mReceivers) {
+            mReceivers.remove(key);
+            if (mReceivers.isEmpty()) {
+                setCountryListener(null);
+                Slog.d(TAG, "No listener is left");
+            }
+        }
+!!!10657029.java!!!	notifyReceivers(inout country : Country) : void
+        synchronized(mReceivers) {
+            for (Receiver receiver : mReceivers.values()) {
+                try {
+                    receiver.getListener().onCountryDetected(country);
+                } catch (RemoteException e) {
+                    // TODO: Shall we remove the receiver?
+                    Slog.e(TAG, "notifyReceivers failed:", e);
+                }
+            }
+        }
+!!!10657157.java!!!	systemRunning() : void
+        // Shall we wait for the initialization finish.
+        BackgroundThread.getHandler().post(this);
+!!!10657285.java!!!	initialize() : void
+        mCountryDetector = new ComprehensiveCountryDetector(mContext);
+        mLocationBasedDetectorListener = new CountryListener() {
+            public void onCountryDetected(final Country country) {
+                mHandler.post(new Runnable() {
+                    public void run() {
+                        notifyReceivers(country);
+                    }
+                });
+            }
+        };
+!!!10657413.java!!!	run() : void
+        mHandler = new Handler();
+        initialize();
+        mSystemReady = true;
+!!!10657541.java!!!	setCountryListener(in listener : CountryListener) : void
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mCountryDetector.setCountryListener(listener);
+            }
+        });
+!!!10657669.java!!!	isSystemReady() : boolean
+        return mSystemReady;
+!!!10657797.java!!!	dump(inout fd : FileDescriptor, inout fout : PrintWriter, inout args : String [[]]) : void
+        if (!DumpUtils.checkDumpPermission(mContext, TAG, fout)) return;
+        if (!DEBUG) return;
+        try {
+            final Printer p = new PrintWriterPrinter(fout);
+            p.println("CountryDetectorService state:");
+            p.println("  Number of listeners=" + mReceivers.keySet().size());
+            if (mCountryDetector == null) {
+                p.println("  ComprehensiveCountryDetector not initialized");
+            } else {
+                p.println("  " + mCountryDetector.toString());
+            }
+        } catch (Exception e) {
+            Slog.e(TAG, "Failed to dump CountryDetectorService: ", e);
+        }

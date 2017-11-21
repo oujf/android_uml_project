@@ -1,0 +1,41 @@
+class JobHandler
+!!!11698949.java!!!	JobHandler(inout looper : Looper)
+            super(looper);
+!!!11699077.java!!!	handleMessage(inout message : Message) : void
+            synchronized (mLock) {
+                if (!mReadyToRock) {
+                    return;
+                }
+                switch (message.what) {
+                    case MSG_JOB_EXPIRED: {
+                        JobStatus runNow = (JobStatus) message.obj;
+                        // runNow can be null, which is a controller's way of indicating that its
+                        // state is such that all ready jobs should be run immediately.
+                        if (runNow != null && isReadyToBeExecutedLocked(runNow)) {
+                            mJobPackageTracker.notePending(runNow);
+                            addOrderedItem(mPendingJobs, runNow, mEnqueueTimeComparator);
+                        } else {
+                            queueReadyJobsForExecutionLocked();
+                        }
+                    } break;
+                    case MSG_CHECK_JOB:
+                        if (mReportedActive) {
+                            // if jobs are currently being run, queue all ready jobs for execution.
+                            queueReadyJobsForExecutionLocked();
+                        } else {
+                            // Check the list of jobs and run some of them if we feel inclined.
+                            maybeQueueReadyJobsForExecutionLocked();
+                        }
+                        break;
+                    case MSG_CHECK_JOB_GREEDY:
+                        queueReadyJobsForExecutionLocked();
+                        break;
+                    case MSG_STOP_JOB:
+                        cancelJobImplLocked((JobStatus) message.obj, null,
+                                "app no longer allowed to run");
+                        break;
+                }
+                maybeRunPendingJobsLocked();
+                // Don't remove JOB_EXPIRED in case one came along while processing the queue.
+                removeMessages(MSG_CHECK_JOB);
+            }

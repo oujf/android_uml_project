@@ -1,0 +1,54 @@
+class ParallelPackageParser
+!!!12217477.java!!!	ParallelPackageParser(inout separateProcesses : String [[]], inout onlyCoreApps : boolean, inout metrics : DisplayMetrics, inout cacheDir : File, inout callback : PackageParser::Callback)
+        mSeparateProcesses = separateProcesses;
+        mOnlyCore = onlyCoreApps;
+        mMetrics = metrics;
+        mCacheDir = cacheDir;
+        mPackageParserCallback = callback;
+!!!12217733.java!!!	take() : ParallelPackageParser::ParseResult
+        try {
+            if (mInterruptedInThread != null) {
+                throw new InterruptedException("Interrupted in " + mInterruptedInThread);
+            }
+            return mQueue.take();
+        } catch (InterruptedException e) {
+            // We cannot recover from interrupt here
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+!!!12217861.java!!!	submit(inout scanFile : File, in parseFlags : int) : void
+        mService.submit(() -> {
+            ParseResult pr = new ParseResult();
+            Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "parallel parsePackage [" + scanFile + "]");
+            try {
+                PackageParser pp = new PackageParser();
+                pp.setSeparateProcesses(mSeparateProcesses);
+                pp.setOnlyCoreApps(mOnlyCore);
+                pp.setDisplayMetrics(mMetrics);
+                pp.setCacheDir(mCacheDir);
+                pp.setCallback(mPackageParserCallback);
+                pr.scanFile = scanFile;
+                pr.pkg = parsePackage(pp, scanFile, parseFlags);
+            } catch (Throwable e) {
+                pr.throwable = e;
+            } finally {
+                Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+            }
+            try {
+                mQueue.put(pr);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                // Propagate result to callers of take().
+                // This is helpful to prevent main thread from getting stuck waiting on
+                // ParallelPackageParser to finish in case of interruption
+                mInterruptedInThread = Thread.currentThread().getName();
+            }
+        });
+!!!12217989.java!!!	parsePackage(inout packageParser : PackageParser, inout scanFile : File, in parseFlags : int) : PackageParser::Package
+        return packageParser.parsePackage(scanFile, parseFlags, true /* useCaches */);
+!!!12218117.java!!!	close() : void
+        List<Runnable> unfinishedTasks = mService.shutdownNow();
+        if (!unfinishedTasks.isEmpty()) {
+            throw new IllegalStateException("Not all tasks finished before calling close: "
+                    + unfinishedTasks);
+        }

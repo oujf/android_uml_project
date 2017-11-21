@@ -1,0 +1,200 @@
+class AssistStructure
+!!!5812101.java!!!	setAcquisitionStartTime(in acquisitionStartTime : long) : void
+        mAcquisitionStartTime = acquisitionStartTime;
+!!!5812229.java!!!	setAcquisitionEndTime(in acquisitionEndTime : long) : void
+        mAcquisitionEndTime = acquisitionEndTime;
+!!!5812357.java!!!	setHomeActivity(inout isHomeActivity : boolean) : void
+        mIsHomeActivity = isHomeActivity;
+!!!5812485.java!!!	getAcquisitionStartTime() : long
+        ensureData();
+        return mAcquisitionStartTime;
+!!!5812613.java!!!	getAcquisitionEndTime() : long
+        ensureData();
+        return mAcquisitionEndTime;
+!!!5838469.java!!!	AssistStructure(inout activity : Activity, inout forAutoFill : boolean, in flags : int)
+        mHaveData = true;
+        mActivityComponent = activity.getComponentName();
+        mFlags = flags;
+        ArrayList<ViewRootImpl> views = WindowManagerGlobal.getInstance().getRootViews(
+                activity.getActivityToken());
+        for (int i=0; i<views.size(); i++) {
+            ViewRootImpl root = views.get(i);
+            mWindowNodes.add(new WindowNode(this, root, forAutoFill, flags));
+        }
+!!!5838597.java!!!	AssistStructure()
+        mHaveData = true;
+        mActivityComponent = null;
+        mFlags = 0;
+!!!5838725.java!!!	AssistStructure(inout in : Parcel)
+        mIsHomeActivity = in.readInt() == 1;
+        mReceiveChannel = in.readStrongBinder();
+!!!5838853.java!!!	sanitizeForParceling(inout sanitize : boolean) : void
+        mSanitizeOnWrite = sanitize;
+!!!5838981.java!!!	dump(inout showSensitive : boolean) : void
+        if (mActivityComponent == null) {
+            Log.i(TAG, "dump(): calling ensureData() first");
+            ensureData();
+        }
+        Log.i(TAG, "Activity: " + mActivityComponent.flattenToShortString());
+        Log.i(TAG, "Sanitize on write: " + mSanitizeOnWrite);
+        Log.i(TAG, "Flags: " + mFlags);
+        final int N = getWindowNodeCount();
+        for (int i=0; i<N; i++) {
+            WindowNode node = getWindowNodeAt(i);
+            Log.i(TAG, "Window #" + i + " [" + node.getLeft() + "," + node.getTop()
+                    + " " + node.getWidth() + "x" + node.getHeight() + "]" + " " + node.getTitle());
+            dump("  ", node.getRootViewNode(), showSensitive);
+        }
+!!!5839109.java!!!	dump(in prefix : String, inout node : AssistStructure::ViewNode, inout showSensitive : boolean) : void
+        Log.i(TAG, prefix + "View [" + node.getLeft() + "," + node.getTop()
+                + " " + node.getWidth() + "x" + node.getHeight() + "]" + " " + node.getClassName());
+        int id = node.getId();
+        if (id != 0) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(prefix); sb.append("  ID: #"); sb.append(Integer.toHexString(id));
+            String entry = node.getIdEntry();
+            if (entry != null) {
+                String type = node.getIdType();
+                String pkg = node.getIdPackage();
+                sb.append(" "); sb.append(pkg); sb.append(":"); sb.append(type);
+                sb.append("/"); sb.append(entry);
+            }
+            Log.i(TAG, sb.toString());
+        }
+        int scrollX = node.getScrollX();
+        int scrollY = node.getScrollY();
+        if (scrollX != 0 || scrollY != 0) {
+            Log.i(TAG, prefix + "  Scroll: " + scrollX + "," + scrollY);
+        }
+        Matrix matrix = node.getTransformation();
+        if (matrix != null) {
+            Log.i(TAG, prefix + "  Transformation: " + matrix);
+        }
+        float elevation = node.getElevation();
+        if (elevation != 0) {
+            Log.i(TAG, prefix + "  Elevation: " + elevation);
+        }
+        float alpha = node.getAlpha();
+        if (alpha != 0) {
+            Log.i(TAG, prefix + "  Alpha: " + elevation);
+        }
+        CharSequence contentDescription = node.getContentDescription();
+        if (contentDescription != null) {
+            Log.i(TAG, prefix + "  Content description: " + contentDescription);
+        }
+        CharSequence text = node.getText();
+        if (text != null) {
+            final String safeText = node.isSanitized() || showSensitive ? text.toString()
+                    : "REDACTED[" + text.length() + " chars]";
+            Log.i(TAG, prefix + "  Text (sel " + node.getTextSelectionStart() + "-"
+                    + node.getTextSelectionEnd() + "): " + safeText);
+            Log.i(TAG, prefix + "  Text size: " + node.getTextSize() + " , style: #"
+                    + node.getTextStyle());
+            Log.i(TAG, prefix + "  Text color fg: #" + Integer.toHexString(node.getTextColor())
+                    + ", bg: #" + Integer.toHexString(node.getTextBackgroundColor()));
+            Log.i(TAG, prefix + "  Input type: " + node.getInputType());
+        }
+        String webDomain = node.getWebDomain();
+        if (webDomain != null) {
+            Log.i(TAG, prefix + "  Web domain: " + webDomain);
+        }
+        HtmlInfo htmlInfo = node.getHtmlInfo();
+        if (htmlInfo != null) {
+            Log.i(TAG, prefix + "  HtmlInfo: tag=" + htmlInfo.getTag()
+                    + ", attr="+ htmlInfo.getAttributes());
+        }
+
+        LocaleList localeList = node.getLocaleList();
+        if (localeList != null) {
+            Log.i(TAG, prefix + "  LocaleList: " + localeList);
+        }
+        String hint = node.getHint();
+        if (hint != null) {
+            Log.i(TAG, prefix + "  Hint: " + hint);
+        }
+        Bundle extras = node.getExtras();
+        if (extras != null) {
+            Log.i(TAG, prefix + "  Extras: " + extras);
+        }
+        if (node.isAssistBlocked()) {
+            Log.i(TAG, prefix + "  BLOCKED");
+        }
+        AutofillId autofillId = node.getAutofillId();
+        if (autofillId == null) {
+            Log.i(TAG, prefix + " NO autofill ID");
+        } else {
+            Log.i(TAG, prefix + "Autofill info: id= " + autofillId
+                    + ", type=" + node.getAutofillType()
+                    + ", options=" + Arrays.toString(node.getAutofillOptions())
+                    + ", hints=" + Arrays.toString(node.getAutofillHints())
+                    + ", value=" + node.getAutofillValue()
+                    + ", sanitized=" + node.isSanitized());
+        }
+
+        final int NCHILDREN = node.getChildCount();
+        if (NCHILDREN > 0) {
+            Log.i(TAG, prefix + "  Children:");
+            String cprefix = prefix + "    ";
+            for (int i=0; i<NCHILDREN; i++) {
+                ViewNode cnode = node.getChildAt(i);
+                dump(cprefix, cnode, showSensitive);
+            }
+        }
+!!!5839237.java!!!	getActivityComponent() : ComponentName
+        ensureData();
+        return mActivityComponent;
+!!!5839365.java!!!	getFlags() : int
+        return mFlags;
+!!!5839493.java!!!	isHomeActivity() : boolean
+        return mIsHomeActivity;
+!!!5839621.java!!!	getWindowNodeCount() : int
+        ensureData();
+        return mWindowNodes.size();
+!!!5839749.java!!!	getWindowNodeAt(in index : int) : AssistStructure::WindowNode
+        ensureData();
+        return mWindowNodes.get(index);
+!!!5839877.java!!!	ensureData() : void
+        if (mHaveData) {
+            return;
+        }
+        mHaveData = true;
+        ParcelTransferReader reader = new ParcelTransferReader(mReceiveChannel);
+        reader.go();
+!!!5840005.java!!!	waitForReady() : boolean
+        boolean skipStructure = false;
+        synchronized (this) {
+            long endTime = SystemClock.uptimeMillis() + 5000;
+            long now;
+            while (mPendingAsyncChildren.size() > 0 && (now=SystemClock.uptimeMillis()) < endTime) {
+                try {
+                    wait(endTime-now);
+                } catch (InterruptedException e) {
+                }
+            }
+            if (mPendingAsyncChildren.size() > 0) {
+                // We waited too long, assume none of the assist structure is valid.
+                Log.w(TAG, "Skipping assist structure, waiting too long for async children (have "
+                        + mPendingAsyncChildren.size() + " remaining");
+                skipStructure = true;
+            }
+        }
+        return !skipStructure;
+!!!5840133.java!!!	clearSendChannel() : void
+        if (mSendChannel != null) {
+            mSendChannel.mAssistStructure = null;
+        }
+!!!5840261.java!!!	describeContents() : int
+        return 0;
+!!!5840389.java!!!	writeToParcel(inout out : Parcel, in flags : int) : void
+        out.writeInt(mIsHomeActivity ? 1 : 0);
+        if (mHaveData) {
+            // This object holds its data.  We want to write a send channel that the
+            // other side can use to retrieve that data.
+            if (mSendChannel == null) {
+                mSendChannel = new SendChannel(this);
+            }
+            out.writeStrongBinder(mSendChannel);
+        } else {
+            // This object doesn't hold its data, so just propagate along its receive channel.
+            out.writeStrongBinder(mReceiveChannel);
+        }

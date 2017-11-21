@@ -1,0 +1,151 @@
+class VrController
+!!!11284101.java!!!	VrController(in globalAmLock : Object)
+        mGlobalAmLock = globalAmLock;
+!!!11284229.java!!!	onSystemReady() : void
+        VrManagerInternal vrManagerInternal = LocalServices.getService(VrManagerInternal.class);
+        if (vrManagerInternal != null) {
+            vrManagerInternal.addPersistentVrModeStateListener(mPersistentVrModeListener);
+        }
+!!!11284357.java!!!	onTopProcChangedLocked(inout proc : ProcessRecord) : void
+        if (proc.curSchedGroup == ProcessList.SCHED_GROUP_TOP_APP) {
+            setVrRenderThreadLocked(proc.vrThreadTid, proc.curSchedGroup, true);
+        } else {
+            if (proc.vrThreadTid == mVrRenderThreadTid) {
+                clearVrRenderThreadLocked(true);
+            }
+        }
+!!!11284485.java!!!	onVrModeChanged(inout record : ActivityRecord) : boolean
+        // This message means that the top focused activity enabled VR mode (or an activity
+        // that previously set this has become focused).
+        VrManagerInternal vrService = LocalServices.getService(VrManagerInternal.class);
+        if (vrService == null) {
+            // VR mode isn't supported on this device.
+            return false;
+        }
+        boolean vrMode;
+        ComponentName requestedPackage;
+        ComponentName callingPackage;
+        int userId;
+        boolean changed = false;
+        synchronized (mGlobalAmLock) {
+            vrMode = record.requestedVrComponent != null;
+            requestedPackage = record.requestedVrComponent;
+            userId = record.userId;
+            callingPackage = record.info.getComponentName();
+
+            // Tell the VrController that a VR mode change is requested.
+            changed = changeVrModeLocked(vrMode, record.app);
+        }
+
+        // Tell VrManager that a VR mode changed is requested, VrManager will handle
+        // notifying all non-AM dependencies if needed.
+        vrService.setVrMode(vrMode, requestedPackage, userId, callingPackage);
+        return changed;
+!!!11284613.java!!!	setVrThreadLocked(in tid : int, in pid : int, inout proc : ProcessRecord) : void
+        if (hasPersistentVrFlagSet()) {
+            Slog.w(TAG, "VR thread cannot be set in persistent VR mode!");
+            return;
+        }
+        if (proc == null) {
+           Slog.w(TAG, "Persistent VR thread not set, calling process doesn't exist!");
+           return;
+        }
+        if (tid != 0) {
+            enforceThreadInProcess(tid, pid);
+        }
+        if (!inVrMode()) {
+            Slog.w(TAG, "VR thread cannot be set when not in VR mode!");
+        } else {
+            setVrRenderThreadLocked(tid, proc.curSchedGroup, false);
+        }
+        proc.vrThreadTid = (tid > 0) ? tid : 0;
+!!!11284741.java!!!	setPersistentVrThreadLocked(in tid : int, in pid : int, inout proc : ProcessRecord) : void
+        if (!hasPersistentVrFlagSet()) {
+            Slog.w(TAG, "Persistent VR thread may only be set in persistent VR mode!");
+            return;
+        }
+        if (proc == null) {
+           Slog.w(TAG, "Persistent VR thread not set, calling process doesn't exist!");
+           return;
+        }
+        if (tid != 0) {
+            enforceThreadInProcess(tid, pid);
+        }
+        setPersistentVrRenderThreadLocked(tid, false);
+!!!11284869.java!!!	shouldDisableNonVrUiLocked() : boolean
+        return mVrState != FLAG_NON_VR_MODE;
+!!!11284997.java!!!	changeVrModeLocked(inout vrMode : boolean, inout proc : ProcessRecord) : boolean
+        final int oldVrState = mVrState;
+
+        // This is the only place where mVrState should have its FLAG_VR_MODE setting
+        // changed.
+        if (vrMode) {
+            mVrState |= FLAG_VR_MODE;
+        } else {
+            mVrState &= ~FLAG_VR_MODE;
+        }
+
+        boolean changed = (oldVrState != mVrState);
+
+        if (changed) {
+            if (proc != null) {
+                if (proc.vrThreadTid > 0) {
+                    setVrRenderThreadLocked(proc.vrThreadTid, proc.curSchedGroup, false);
+                }
+            } else {
+              clearVrRenderThreadLocked(false);
+            }
+        }
+        return changed;
+!!!11285125.java!!!	updateVrRenderThreadLocked(in newTid : int, inout suppressLogs : boolean) : int
+        if (mVrRenderThreadTid == newTid) {
+            return mVrRenderThreadTid;
+        }
+
+        if (mVrRenderThreadTid > 0) {
+            ActivityManagerService.scheduleAsRegularPriority(mVrRenderThreadTid, suppressLogs);
+            mVrRenderThreadTid = 0;
+        }
+
+        if (newTid > 0) {
+            mVrRenderThreadTid = newTid;
+            ActivityManagerService.scheduleAsFifoPriority(mVrRenderThreadTid, suppressLogs);
+        }
+        return mVrRenderThreadTid;
+!!!11285253.java!!!	setPersistentVrRenderThreadLocked(in newTid : int, inout suppressLogs : boolean) : int
+       if (!hasPersistentVrFlagSet()) {
+            if (!suppressLogs) {
+                Slog.w(TAG, "Failed to set persistent VR thread, "
+                        + "system not in persistent VR mode.");
+            }
+            return mVrRenderThreadTid;
+        }
+        return updateVrRenderThreadLocked(newTid, suppressLogs);
+!!!11285381.java!!!	setVrRenderThreadLocked(in newTid : int, in schedGroup : int, inout suppressLogs : boolean) : int
+        boolean inVr = inVrMode();
+        boolean inPersistentVr = hasPersistentVrFlagSet();
+        if (!inVr || inPersistentVr || schedGroup != ProcessList.SCHED_GROUP_TOP_APP) {
+            if (!suppressLogs) {
+               String reason = "caller is not the current top application.";
+               if (!inVr) {
+                   reason = "system not in VR mode.";
+               } else if (inPersistentVr) {
+                   reason = "system in persistent VR mode.";
+               }
+               Slog.w(TAG, "Failed to set VR thread, " + reason);
+            }
+            return mVrRenderThreadTid;
+        }
+        return updateVrRenderThreadLocked(newTid, suppressLogs);
+!!!11285509.java!!!	clearVrRenderThreadLocked(inout suppressLogs : boolean) : void
+        updateVrRenderThreadLocked(0, suppressLogs);
+!!!11285637.java!!!	enforceThreadInProcess(in tid : int, in pid : int) : void
+        if (!Process.isThreadInProcess(pid, tid)) {
+            throw new IllegalArgumentException("VR thread does not belong to process");
+        }
+!!!11285765.java!!!	inVrMode() : boolean
+        return (mVrState & FLAG_VR_MODE) != 0;
+!!!11285893.java!!!	hasPersistentVrFlagSet() : boolean
+        return (mVrState & FLAG_PERSISTENT_VR_MODE) != 0;
+!!!11286021.java!!!	toString() : String
+      return String.format("[VrState=0x%x,VrRenderThreadTid=%d]", mVrState, mVrRenderThreadTid);

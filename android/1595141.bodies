@@ -1,0 +1,218 @@
+class ContextHubService
+!!!11749637.java!!!	ContextHubService(inout context : Context)
+        mContext = context;
+        mContextHubInfo = nativeInitialize();
+
+        for (int i = 0; i < mContextHubInfo.length; i++) {
+            Log.d(TAG, "ContextHub[" + i + "] id: " + mContextHubInfo[i].getId()
+                  + ", name:  " + mContextHubInfo[i].getName());
+        }
+!!!11749765.java!!!	registerCallback(inout callback : IContextHubCallback) : int
+        checkPermissions();
+        mCallbacksList.register(callback);
+        Log.d(TAG, "Added callback, total callbacks " +
+              mCallbacksList.getRegisteredCallbackCount());
+        return 0;
+!!!11749893.java!!!	getContextHubHandles() : int
+        checkPermissions();
+        int[] returnArray = new int[mContextHubInfo.length];
+
+        Log.d(TAG, "System supports " + returnArray.length + " hubs");
+        for (int i = 0; i < returnArray.length; ++i) {
+            returnArray[i] = i;
+            Log.d(TAG, String.format("Hub %s is mapped to %d",
+                                     mContextHubInfo[i].getName(), returnArray[i]));
+        }
+
+        return returnArray;
+!!!11750021.java!!!	getContextHubInfo(in contextHubHandle : int) : ContextHubInfo
+        checkPermissions();
+        if (!(contextHubHandle >= 0 && contextHubHandle < mContextHubInfo.length)) {
+            Log.e(TAG, "Invalid context hub handle " + contextHubHandle);
+            return null; // null means fail
+        }
+
+        return mContextHubInfo[contextHubHandle];
+!!!11750149.java!!!	loadNanoApp(in contextHubHandle : int, inout app : NanoApp) : int
+        checkPermissions();
+
+        if (!(contextHubHandle >= 0 && contextHubHandle < mContextHubInfo.length)) {
+            Log.e(TAG, "Invalid contextHubhandle " + contextHubHandle);
+            return -1;
+        }
+        if (app == null) {
+            Log.e(TAG, "Invalid null app");
+            return -1;
+        }
+
+        int[] msgHeader = new int[MSG_LOAD_APP_HEADER_SIZE];
+        msgHeader[HEADER_FIELD_HUB_HANDLE] = contextHubHandle;
+        msgHeader[HEADER_FIELD_APP_INSTANCE] = OS_APP_INSTANCE;
+        msgHeader[HEADER_FIELD_MSG_VERSION] = 0;
+        msgHeader[HEADER_FIELD_MSG_TYPE] = MSG_LOAD_NANO_APP;
+
+        long appId = app.getAppId();
+
+        msgHeader[HEADER_FIELD_LOAD_APP_ID_LO] = (int)(appId & 0xFFFFFFFF);
+        msgHeader[HEADER_FIELD_LOAD_APP_ID_HI] = (int)((appId >> 32) & 0xFFFFFFFF);
+
+        int errVal = nativeSendMessage(msgHeader, app.getAppBinary());
+        if (errVal != 0) {
+            Log.e(TAG, "Send Message returns error" + contextHubHandle);
+            return -1;
+        }
+
+        // Do not add an entry to mNanoAppInstance Hash yet. The HAL may reject the app
+        return 0;
+!!!11750277.java!!!	unloadNanoApp(in nanoAppInstanceHandle : int) : int
+        checkPermissions();
+        NanoAppInstanceInfo info = mNanoAppHash.get(nanoAppInstanceHandle);
+        if (info == null) {
+            Log.e(TAG, "Cannot find app with handle " + nanoAppInstanceHandle);
+            return -1; //means failed
+        }
+
+        // Call Native interface here
+        int[] msgHeader = new int[MSG_HEADER_SIZE];
+        msgHeader[HEADER_FIELD_HUB_HANDLE] = ANY_HUB;
+        msgHeader[HEADER_FIELD_APP_INSTANCE] = nanoAppInstanceHandle;
+        msgHeader[HEADER_FIELD_MSG_VERSION] = 0;
+        msgHeader[HEADER_FIELD_MSG_TYPE] = MSG_UNLOAD_NANO_APP;
+
+        byte msg[] = new byte[0];
+
+        if (nativeSendMessage(msgHeader, msg) != 0) {
+            Log.e(TAG, "native send message fails");
+            return -1;
+        }
+
+        // Do not add an entry to mNanoAppInstance Hash yet. The HAL may reject the app
+        return 0;
+!!!11750405.java!!!	getNanoAppInstanceInfo(in nanoAppInstanceHandle : int) : NanoAppInstanceInfo
+        checkPermissions();
+        // This assumes that all the nanoAppInfo is current. This is reasonable
+        // for the use cases for tightly controlled nanoApps.
+        if (mNanoAppHash.containsKey(nanoAppInstanceHandle)) {
+            return mNanoAppHash.get(nanoAppInstanceHandle);
+        } else {
+            Log.e(TAG, "Could not find nanoApp with handle " + nanoAppInstanceHandle);
+            return null;
+        }
+!!!11750533.java!!!	findNanoAppOnHub(in hubHandle : int, inout filter : NanoAppFilter) : int
+        checkPermissions();
+        ArrayList<Integer> foundInstances = new ArrayList<Integer>();
+
+        for (Integer nanoAppInstance: mNanoAppHash.keySet()) {
+            NanoAppInstanceInfo info = mNanoAppHash.get(nanoAppInstance);
+
+            if (filter.testMatch(info)) {
+                foundInstances.add(nanoAppInstance);
+            }
+        }
+
+        int[] retArray = new int[foundInstances.size()];
+        for (int i = 0; i < foundInstances.size(); i++) {
+            retArray[i] = foundInstances.get(i).intValue();
+        }
+
+        Log.w(TAG, "Found " + retArray.length + " apps on hub handle " + hubHandle);
+        return retArray;
+!!!11750661.java!!!	sendMessage(in hubHandle : int, in nanoAppHandle : int, inout msg : ContextHubMessage) : int
+        checkPermissions();
+
+        if (msg == null || msg.getData() == null) {
+            Log.w(TAG, "null ptr");
+            return -1;
+        }
+
+        int[] msgHeader = new int[MSG_HEADER_SIZE];
+        msgHeader[HEADER_FIELD_HUB_HANDLE] = hubHandle;
+        msgHeader[HEADER_FIELD_APP_INSTANCE] = nanoAppHandle;
+        msgHeader[HEADER_FIELD_MSG_VERSION] = msg.getVersion();
+        msgHeader[HEADER_FIELD_MSG_TYPE] = msg.getMsgType();
+
+        return nativeSendMessage(msgHeader, msg.getData());
+!!!11750789.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        if (!DumpUtils.checkDumpPermission(mContext, TAG, pw)) return;
+
+        pw.println("Dumping ContextHub Service");
+
+        pw.println("");
+        // dump ContextHubInfo
+        pw.println("=================== CONTEXT HUBS ====================");
+        for (int i = 0; i < mContextHubInfo.length; i++) {
+            pw.println("Handle " + i + " : " + mContextHubInfo[i].toString());
+        }
+        pw.println("");
+        pw.println("=================== NANOAPPS ====================");
+        // Dump nanoAppHash
+        for (Integer nanoAppInstance: mNanoAppHash.keySet()) {
+            pw.println(nanoAppInstance + " : " + mNanoAppHash.get(nanoAppInstance).toString());
+        }
+
+        // dump eventLog
+!!!11750917.java!!!	checkPermissions() : void
+        mContext.enforceCallingPermission(HARDWARE_PERMISSION, ENFORCE_HW_PERMISSION_MESSAGE);
+!!!11751045.java!!!	onMessageReceipt(inout header : int [[]], inout data : byte [[]]) : int
+        if (header == null || data == null || header.length < MSG_HEADER_SIZE) {
+            return  -1;
+        }
+
+        int callbacksCount = mCallbacksList.beginBroadcast();
+        int msgType = header[HEADER_FIELD_MSG_TYPE];
+        int msgVersion = header[HEADER_FIELD_MSG_VERSION];
+        int hubHandle = header[HEADER_FIELD_HUB_HANDLE];
+        int appInstance = header[HEADER_FIELD_APP_INSTANCE];
+
+        Log.d(TAG, "Sending message " + msgType + " version " + msgVersion + " from hubHandle " +
+              hubHandle + ", appInstance " + appInstance + ", callBackCount " + callbacksCount);
+
+        if (callbacksCount < 1) {
+            Log.v(TAG, "No message callbacks registered.");
+            return 0;
+        }
+
+        ContextHubMessage msg = new ContextHubMessage(msgType, msgVersion, data);
+        for (int i = 0; i < callbacksCount; ++i) {
+            IContextHubCallback callback = mCallbacksList.getBroadcastItem(i);
+            try {
+                callback.onMessageReceipt(hubHandle, appInstance, msg);
+            } catch (RemoteException e) {
+                Log.i(TAG, "Exception (" + e + ") calling remote callback (" + callback + ").");
+                continue;
+            }
+        }
+        mCallbacksList.finishBroadcast();
+        return 0;
+!!!11751173.java!!!	addAppInstance(in hubHandle : int, in appInstanceHandle : int, in appId : long, in appVersion : int) : int
+        // App Id encodes vendor & version
+        NanoAppInstanceInfo appInfo = new NanoAppInstanceInfo();
+
+        appInfo.setAppId(appId);
+        appInfo.setAppVersion(appVersion);
+        appInfo.setName(PRE_LOADED_APP_NAME);
+        appInfo.setContexthubId(hubHandle);
+        appInfo.setHandle(appInstanceHandle);
+        appInfo.setPublisher(PRE_LOADED_APP_PUBLISHER);
+        appInfo.setNeededExecMemBytes(PRE_LOADED_APP_MEM_REQ);
+        appInfo.setNeededReadMemBytes(PRE_LOADED_APP_MEM_REQ);
+        appInfo.setNeededWriteMemBytes(PRE_LOADED_APP_MEM_REQ);
+
+        String action;
+        if (mNanoAppHash.containsKey(appInstanceHandle)) {
+            action = "Updated";
+        } else {
+            action = "Added";
+        }
+
+        mNanoAppHash.put(appInstanceHandle, appInfo);
+        Log.d(TAG, action + " app instance " + appInstanceHandle + " with id "
+              + appId + " version " + appVersion);
+
+        return 0;
+!!!11751301.java!!!	deleteAppInstance(in appInstanceHandle : int) : int
+        if (mNanoAppHash.remove(appInstanceHandle) == null) {
+            return -1;
+        }
+
+        return 0;

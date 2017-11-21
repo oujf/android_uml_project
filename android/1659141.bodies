@@ -1,0 +1,299 @@
+class PlaybackActivityMonitor
+!!!11335045.java!!!	PlaybackActivityMonitor()
+        PlayMonitorClient.sListenerDeathMonitor = this;
+        AudioPlaybackConfiguration.sPlayerDeathMonitor = this;
+!!!11335173.java!!!	trackPlayer(inout pic : PlayerBase.PlayerIdCard) : int
+        final int newPiid = AudioSystem.newAudioPlayerId();
+        if (DEBUG) { Log.v(TAG, "trackPlayer() new piid=" + newPiid); }
+        final AudioPlaybackConfiguration apc =
+                new AudioPlaybackConfiguration(pic, newPiid,
+                        Binder.getCallingUid(), Binder.getCallingPid());
+        apc.init();
+        synchronized(mPlayerLock) {
+            mPlayers.put(newPiid, apc);
+        }
+        return newPiid;
+!!!11335301.java!!!	playerAttributes(in piid : int, inout attr : AudioAttributes, in binderUid : int) : void
+        final boolean change;
+        synchronized(mPlayerLock) {
+            final AudioPlaybackConfiguration apc = mPlayers.get(new Integer(piid));
+            if (checkConfigurationCaller(piid, apc, binderUid)) {
+                change = apc.handleAudioAttributesEvent(attr);
+            } else {
+                Log.e(TAG, "Error updating audio attributes");
+                change = false;
+            }
+        }
+        if (change) {
+            dispatchPlaybackChange();
+        }
+!!!11335429.java!!!	playerEvent(in piid : int, in event : int, in binderUid : int) : void
+        if (DEBUG) { Log.v(TAG, String.format("playerEvent(piid=%d, event=%d)", piid, event)); }
+        final boolean change;
+        synchronized(mPlayerLock) {
+            final AudioPlaybackConfiguration apc = mPlayers.get(new Integer(piid));
+            if (apc == null) {
+                return;
+            }
+            if (apc.getPlayerType() == AudioPlaybackConfiguration.PLAYER_TYPE_JAM_SOUNDPOOL) {
+                // FIXME SoundPool not ready for state reporting
+                return;
+            }
+            if (checkConfigurationCaller(piid, apc, binderUid)) {
+                //TODO add generation counter to only update to the latest state
+                change = apc.handleStateEvent(event);
+            } else {
+                Log.e(TAG, "Error handling event " + event);
+                change = false;
+            }
+            if (change && event == AudioPlaybackConfiguration.PLAYER_STATE_STARTED) {
+                mDuckingManager.checkDuck(apc);
+            }
+        }
+        if (change) {
+            dispatchPlaybackChange();
+        }
+!!!11335557.java!!!	releasePlayer(in piid : int, in binderUid : int) : void
+        if (DEBUG) { Log.v(TAG, "releasePlayer() for piid=" + piid); }
+        synchronized(mPlayerLock) {
+            final AudioPlaybackConfiguration apc = mPlayers.get(new Integer(piid));
+            if (checkConfigurationCaller(piid, apc, binderUid)) {
+                mPlayers.remove(new Integer(piid));
+                mDuckingManager.removeReleased(apc);
+            }
+        }
+!!!11335685.java!!!	playerDeath(in piid : int) : void
+        releasePlayer(piid, 0);
+!!!11335813.java!!!	dump(inout pw : PrintWriter) : void
+        // players
+        pw.println("\nPlaybackActivityMonitor dump time: "
+                + DateFormat.getTimeInstance().format(new Date()));
+        synchronized(mPlayerLock) {
+            for (AudioPlaybackConfiguration conf : mPlayers.values()) {
+                conf.dump(pw);
+            }
+            // ducked players
+            pw.println("\n  ducked players:");
+            mDuckingManager.dump(pw);
+            // players muted due to the device ringing or being in a call
+            pw.println("\n  muted player piids:");
+            for (int piid : mMutedPlayers) {
+                pw.println(" " + piid);
+            }
+        }
+!!!11335941.java!!!	checkConfigurationCaller(in piid : int, in apc : AudioPlaybackConfiguration, in binderUid : int) : boolean
+        if (apc == null) {
+            return false;
+        } else if ((binderUid != 0) && (apc.getClientUid() != binderUid)) {
+            Log.e(TAG, "Forbidden operation from uid " + binderUid + " for player " + piid);
+            return false;
+        }
+        return true;
+!!!11336069.java!!!	dispatchPlaybackChange() : void
+        synchronized (mClients) {
+            // typical use case, nobody is listening, don't do any work
+            if (mClients.isEmpty()) {
+                return;
+            }
+        }
+        if (DEBUG) { Log.v(TAG, "dispatchPlaybackChange to " + mClients.size() + " clients"); }
+        final List<AudioPlaybackConfiguration> configsSystem;
+        // list of playback configurations for "public consumption". It is only computed if there
+        // are non-system playback activity listeners.
+        final List<AudioPlaybackConfiguration> configsPublic;
+        synchronized (mPlayerLock) {
+            if (mPlayers.isEmpty()) {
+                return;
+            }
+            configsSystem = new ArrayList<AudioPlaybackConfiguration>(mPlayers.values());
+        }
+        synchronized (mClients) {
+            // was done at beginning of method, but could have changed
+            if (mClients.isEmpty()) {
+                return;
+            }
+            configsPublic = mHasPublicClients ? anonymizeForPublicConsumption(configsSystem) : null;
+            final Iterator<PlayMonitorClient> clientIterator = mClients.iterator();
+            while (clientIterator.hasNext()) {
+                final PlayMonitorClient pmc = clientIterator.next();
+                try {
+                    // do not spam the logs if there are problems communicating with this client
+                    if (pmc.mErrorCount < PlayMonitorClient.MAX_ERRORS) {
+                        if (pmc.mIsPrivileged) {
+                            pmc.mDispatcherCb.dispatchPlaybackConfigChange(configsSystem);
+                        } else {
+                            pmc.mDispatcherCb.dispatchPlaybackConfigChange(configsPublic);
+                        }
+                    }
+                } catch (RemoteException e) {
+                    pmc.mErrorCount++;
+                    Log.e(TAG, "Error (" + pmc.mErrorCount +
+                            ") trying to dispatch playback config change to " + pmc, e);
+                }
+            }
+        }
+!!!11336197.java!!!	anonymizeForPublicConsumption(inout sysConfigs : List<AudioPlaybackConfiguration>) : ArrayList<AudioPlaybackConfiguration>
+        ArrayList<AudioPlaybackConfiguration> publicConfigs =
+                new ArrayList<AudioPlaybackConfiguration>();
+        // only add active anonymized configurations,
+        for (AudioPlaybackConfiguration config : sysConfigs) {
+            if (config.isActive()) {
+                publicConfigs.add(AudioPlaybackConfiguration.anonymizedCopy(config));
+            }
+        }
+        return publicConfigs;
+!!!11336325.java!!!	duckPlayers(inout winner : FocusRequester, inout loser : FocusRequester) : boolean
+        if (DEBUG) {
+            Log.v(TAG, String.format("duckPlayers: uids winner=%d loser=%d",
+                    winner.getClientUid(), loser.getClientUid()));
+        }
+        synchronized (mPlayerLock) {
+            if (mPlayers.isEmpty()) {
+                return true;
+            }
+            // check if this UID needs to be ducked (return false if not), and gather list of
+            // eligible players to duck
+            final Iterator<AudioPlaybackConfiguration> apcIterator = mPlayers.values().iterator();
+            final ArrayList<AudioPlaybackConfiguration> apcsToDuck =
+                    new ArrayList<AudioPlaybackConfiguration>();
+            while (apcIterator.hasNext()) {
+                final AudioPlaybackConfiguration apc = apcIterator.next();
+                if (!winner.hasSameUid(apc.getClientUid())
+                        && loser.hasSameUid(apc.getClientUid())
+                        && apc.getPlayerState() == AudioPlaybackConfiguration.PLAYER_STATE_STARTED)
+                {
+                    if (apc.getAudioAttributes().getContentType() ==
+                            AudioAttributes.CONTENT_TYPE_SPEECH) {
+                        // the player is speaking, ducking will make the speech unintelligible
+                        // so let the app handle it instead
+                        Log.v(TAG, "not ducking player " + apc.getPlayerInterfaceId()
+                                + " uid:" + apc.getClientUid() + " pid:" + apc.getClientPid()
+                                + " - SPEECH");
+                        return false;
+                    } else if (apc.getPlayerType()
+                            == AudioPlaybackConfiguration.PLAYER_TYPE_JAM_SOUNDPOOL) {
+                        // TODO support ducking of SoundPool players
+                        Log.v(TAG, "not ducking player " + apc.getPlayerInterfaceId()
+                                + " uid:" + apc.getClientUid() + " pid:" + apc.getClientPid()
+                                + " - SoundPool");
+                        return false;
+                    }
+                    apcsToDuck.add(apc);
+                }
+            }
+            // add the players eligible for ducking to the list, and duck them
+            // (if apcsToDuck is empty, this will at least mark this uid as ducked, so when
+            //  players of the same uid start, they will be ducked by DuckingManager.checkDuck())
+            mDuckingManager.duckUid(loser.getClientUid(), apcsToDuck);
+        }
+        return true;
+!!!11336453.java!!!	unduckPlayers(inout winner : FocusRequester) : void
+        if (DEBUG) { Log.v(TAG, "unduckPlayers: uids winner=" + winner.getClientUid()); }
+        synchronized (mPlayerLock) {
+            mDuckingManager.unduckUid(winner.getClientUid(), mPlayers);
+        }
+!!!11336581.java!!!	mutePlayersForCall(inout usagesToMute : int [[]]) : void
+        if (DEBUG) {
+            String log = new String("mutePlayersForCall: usages=");
+            for (int usage : usagesToMute) { log += " " + usage; }
+            Log.v(TAG, log);
+        }
+        synchronized (mPlayerLock) {
+            final Set<Integer> piidSet = mPlayers.keySet();
+            final Iterator<Integer> piidIterator = piidSet.iterator();
+            // find which players to mute
+            while (piidIterator.hasNext()) {
+                final Integer piid = piidIterator.next();
+                final AudioPlaybackConfiguration apc = mPlayers.get(piid);
+                if (apc == null) {
+                    continue;
+                }
+                final int playerUsage = apc.getAudioAttributes().getUsage();
+                boolean mute = false;
+                for (int usageToMute : usagesToMute) {
+                    if (playerUsage == usageToMute) {
+                        mute = true;
+                        break;
+                    }
+                }
+                if (mute) {
+                    try {
+                        Log.v(TAG, "call: muting player" + piid + " uid:" + apc.getClientUid());
+                        apc.getPlayerProxy().setVolume(0.0f);
+                        mMutedPlayers.add(new Integer(piid));
+                    } catch (Exception e) {
+                        Log.e(TAG, "call: error muting player " + piid, e);
+                    }
+                }
+            }
+        }
+!!!11336709.java!!!	unmutePlayersForCall() : void
+        if (DEBUG) {
+            Log.v(TAG, "unmutePlayersForCall()");
+        }
+        synchronized (mPlayerLock) {
+            if (mMutedPlayers.isEmpty()) {
+                return;
+            }
+            for (int piid : mMutedPlayers) {
+                final AudioPlaybackConfiguration apc = mPlayers.get(piid);
+                if (apc != null) {
+                    try {
+                        Log.v(TAG, "call: unmuting player" + piid + " uid:" + apc.getClientUid());
+                        apc.getPlayerProxy().setVolume(1.0f);
+                    } catch (Exception e) {
+                        Log.e(TAG, "call: error unmuting player " + piid + " uid:"
+                                + apc.getClientUid(), e);
+                    }
+                }
+            }
+            mMutedPlayers.clear();
+        }
+!!!11336837.java!!!	registerPlaybackCallback(inout pcdb : IPlaybackConfigDispatcher, inout isPrivileged : boolean) : void
+        if (pcdb == null) {
+            return;
+        }
+        synchronized(mClients) {
+            final PlayMonitorClient pmc = new PlayMonitorClient(pcdb, isPrivileged);
+            if (pmc.init()) {
+                if (!isPrivileged) {
+                    mHasPublicClients = true;
+                }
+                mClients.add(pmc);
+            }
+        }
+!!!11336965.java!!!	unregisterPlaybackCallback(inout pcdb : IPlaybackConfigDispatcher) : void
+        if (pcdb == null) {
+            return;
+        }
+        synchronized(mClients) {
+            final Iterator<PlayMonitorClient> clientIterator = mClients.iterator();
+            boolean hasPublicClients = false;
+            // iterate over the clients to remove the dispatcher to remove, and reevaluate at
+            // the same time if we still have a public client.
+            while (clientIterator.hasNext()) {
+                PlayMonitorClient pmc = clientIterator.next();
+                if (pcdb.equals(pmc.mDispatcherCb)) {
+                    pmc.release();
+                    clientIterator.remove();
+                } else {
+                    if (!pmc.mIsPrivileged) {
+                        hasPublicClients = true;
+                    }
+                }
+            }
+            mHasPublicClients = hasPublicClients;
+        }
+!!!11337093.java!!!	getActivePlaybackConfigurations(inout isPrivileged : boolean) : List<AudioPlaybackConfiguration>
+        synchronized(mPlayers) {
+            if (isPrivileged) {
+                return new ArrayList<AudioPlaybackConfiguration>(mPlayers.values());
+            } else {
+                final List<AudioPlaybackConfiguration> configsPublic;
+                synchronized (mPlayerLock) {
+                    configsPublic = anonymizeForPublicConsumption(
+                            new ArrayList<AudioPlaybackConfiguration>(mPlayers.values()));
+                }
+                return configsPublic;
+            }
+        }

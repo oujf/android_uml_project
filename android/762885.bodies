@@ -1,0 +1,104 @@
+class ScrimView
+!!!3768453.java!!!	ScrimView(inout context : Context)
+        this(context, null);
+!!!3768581.java!!!	ScrimView(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, 0);
+!!!3768709.java!!!	ScrimView(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        this(context, attrs, defStyleAttr, 0);
+!!!3768837.java!!!	ScrimView(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        TypedArray ta = context.obtainStyledAttributes(attrs, R.styleable.ScrimView);
+
+        try {
+            mScrimColor = ta.getColor(R.styleable.ScrimView_scrimColor, Color.BLACK);
+        } finally {
+            ta.recycle();
+        }
+!!!3768965.java!!!	onDraw(inout canvas : Canvas) : void
+        if (mDrawAsSrc || (!mIsEmpty && mViewAlpha > 0f)) {
+            PorterDuff.Mode mode = mDrawAsSrc ? PorterDuff.Mode.SRC : PorterDuff.Mode.SRC_OVER;
+            int color = getScrimColorWithAlpha();
+            if (!mHasExcludedArea) {
+                canvas.drawColor(color, mode);
+            } else {
+                mPaint.setColor(color);
+                if (mExcludedRect.top > 0) {
+                    canvas.drawRect(0, 0, getWidth(), mExcludedRect.top, mPaint);
+                }
+                if (mExcludedRect.left > 0) {
+                    canvas.drawRect(0,  mExcludedRect.top, mExcludedRect.left, mExcludedRect.bottom,
+                            mPaint);
+                }
+                if (mExcludedRect.right < getWidth()) {
+                    canvas.drawRect(mExcludedRect.right,
+                            mExcludedRect.top,
+                            getWidth(),
+                            mExcludedRect.bottom,
+                            mPaint);
+                }
+                if (mExcludedRect.bottom < getHeight()) {
+                    canvas.drawRect(0,  mExcludedRect.bottom, getWidth(), getHeight(), mPaint);
+                }
+            }
+        }
+!!!3769093.java!!!	getScrimColorWithAlpha() : int
+        int color = mScrimColor;
+        color = Color.argb((int) (Color.alpha(color) * mViewAlpha), Color.red(color),
+                Color.green(color), Color.blue(color));
+        return color;
+!!!3769221.java!!!	setDrawAsSrc(inout asSrc : boolean) : void
+        mDrawAsSrc = asSrc;
+        mPaint.setXfermode(new PorterDuffXfermode(mDrawAsSrc ? PorterDuff.Mode.SRC
+                : PorterDuff.Mode.SRC_OVER));
+        invalidate();
+!!!3769349.java!!!	setScrimColor(in color : int) : void
+        if (color != mScrimColor) {
+            mIsEmpty = Color.alpha(color) == 0;
+            mScrimColor = color;
+            invalidate();
+            if (mChangeRunnable != null) {
+                mChangeRunnable.run();
+            }
+        }
+!!!3769477.java!!!	getScrimColor() : int
+        return mScrimColor;
+!!!3769605.java!!!	hasOverlappingRendering() : boolean
+        return false;
+!!!3769733.java!!!	setViewAlpha(in alpha : float) : void
+        if (mAlphaAnimator != null) {
+            mAlphaAnimator.cancel();
+        }
+        if (alpha != mViewAlpha) {
+            mViewAlpha = alpha;
+            invalidate();
+            if (mChangeRunnable != null) {
+                mChangeRunnable.run();
+            }
+        }
+!!!3769861.java!!!	animateViewAlpha(in alpha : float, in durationOut : long, inout interpolator : Interpolator) : void
+        if (mAlphaAnimator != null) {
+            mAlphaAnimator.cancel();
+        }
+        mAlphaAnimator = ValueAnimator.ofFloat(mViewAlpha, alpha);
+        mAlphaAnimator.addUpdateListener(mAlphaUpdateListener);
+        mAlphaAnimator.addListener(mClearAnimatorListener);
+        mAlphaAnimator.setInterpolator(interpolator);
+        mAlphaAnimator.setDuration(durationOut);
+        mAlphaAnimator.start();
+!!!3769989.java!!!	setExcludedArea(inout area : Rect) : void
+        if (area == null) {
+            mHasExcludedArea = false;
+            invalidate();
+            return;
+        }
+
+        int left = Math.max(area.left, 0);
+        int top = Math.max(area.top, 0);
+        int right = Math.min(area.right, getWidth());
+        int bottom = Math.min(area.bottom, getHeight());
+        mExcludedRect.set(left, top, right, bottom);
+        mHasExcludedArea = left < right && top < bottom;
+        invalidate();
+!!!3770117.java!!!	setChangeRunnable(inout changeRunnable : Runnable) : void
+        mChangeRunnable = changeRunnable;

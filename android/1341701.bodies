@@ -1,0 +1,79 @@
+class AutofillServiceInfo
+!!!7969797.java!!!	getServiceInfoOrThrow(inout comp : ComponentName, in userHandle : int) : ServiceInfo
+        try {
+            ServiceInfo si = AppGlobals.getPackageManager().getServiceInfo(
+                    comp,
+                    PackageManager.GET_META_DATA,
+                    userHandle);
+            if (si != null) {
+                return si;
+            }
+        } catch (RemoteException e) {
+        }
+        throw new PackageManager.NameNotFoundException(comp.toString());
+!!!7969925.java!!!	AutofillServiceInfo(inout pm : PackageManager, inout comp : ComponentName, in userHandle : int)
+        this(pm, getServiceInfoOrThrow(comp, userHandle));
+!!!7970053.java!!!	AutofillServiceInfo(inout pm : PackageManager, inout si : ServiceInfo)
+        mServiceInfo = si;
+        final TypedArray metaDataArray = getMetaDataArray(pm, si);
+        if (metaDataArray != null) {
+            mSettingsActivity = metaDataArray
+                    .getString(R.styleable.AutofillService_settingsActivity);
+            metaDataArray.recycle();
+        } else {
+            mSettingsActivity = null;
+        }
+!!!7970181.java!!!	getMetaDataArray(inout pm : PackageManager, inout si : ServiceInfo) : TypedArray
+        // Check for permissions.
+        // TODO(b/37563972): remove support to BIND_AUTOFILL once clients use BIND_AUTOFILL_SERVICE
+        if (!Manifest.permission.BIND_AUTOFILL_SERVICE.equals(si.permission)
+                && !Manifest.permission.BIND_AUTOFILL.equals(si.permission)) {
+            Log.w(TAG, "AutofillService from '" + si.packageName + "' does not require permission "
+                    + Manifest.permission.BIND_AUTOFILL_SERVICE);
+            throw new SecurityException("Service does not require permission "
+                    + Manifest.permission.BIND_AUTOFILL_SERVICE);
+        }
+
+        // Get the AutoFill metadata, if declared.
+        XmlResourceParser parser = si.loadXmlMetaData(pm, AutofillService.SERVICE_META_DATA);
+        if (parser == null) {
+            return null;
+        }
+
+        // Parse service info and get the <autofill-service> tag as an AttributeSet.
+        AttributeSet attrs;
+        try {
+            // Move the XML parser to the first tag.
+            try {
+                int type;
+                while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
+                        && type != XmlPullParser.START_TAG) {
+                }
+            } catch (XmlPullParserException | IOException e) {
+                Log.e(TAG, "Error parsing auto fill service meta-data", e);
+                return null;
+            }
+
+            if (!"autofill-service".equals(parser.getName())) {
+                Log.e(TAG, "Meta-data does not start with autofill-service tag");
+                return null;
+            }
+            attrs = Xml.asAttributeSet(parser);
+
+            // Get resources required to read the AttributeSet.
+            Resources res;
+            try {
+                res = pm.getResourcesForApplication(si.applicationInfo);
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.e(TAG, "Error getting application resources", e);
+                return null;
+            }
+
+            return res.obtainAttributes(attrs, R.styleable.AutofillService);
+        } finally {
+            parser.close();
+        }
+!!!7970309.java!!!	getServiceInfo() : ServiceInfo
+        return mServiceInfo;
+!!!7970437.java!!!	getSettingsActivity() : String
+        return mSettingsActivity;

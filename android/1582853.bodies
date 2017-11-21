@@ -1,0 +1,203 @@
+class SystemServiceManager
+!!!10861573.java!!!	SystemServiceManager(inout context : Context)
+        mContext = context;
+!!!10861701.java!!!	startService(in className : String) : SystemService
+        final Class<SystemService> serviceClass;
+        try {
+            serviceClass = (Class<SystemService>)Class.forName(className);
+        } catch (ClassNotFoundException ex) {
+            Slog.i(TAG, "Starting " + className);
+            throw new RuntimeException("Failed to create service " + className
+                    + ": service class not found, usually indicates that the caller should "
+                    + "have called PackageManager.hasSystemFeature() to check whether the "
+                    + "feature is available on this device before trying to start the "
+                    + "services that implement it", ex);
+        }
+        return startService(serviceClass);
+!!!10861829.java!!!	startService(inout serviceClass : Class<T>) : T
+        try {
+            final String name = serviceClass.getName();
+            Slog.i(TAG, "Starting " + name);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "StartService " + name);
+
+            // Create the service.
+            if (!SystemService.class.isAssignableFrom(serviceClass)) {
+                throw new RuntimeException("Failed to create " + name
+                        + ": service must extend " + SystemService.class.getName());
+            }
+            final T service;
+            try {
+                Constructor<T> constructor = serviceClass.getConstructor(Context.class);
+                service = constructor.newInstance(mContext);
+            } catch (InstantiationException ex) {
+                throw new RuntimeException("Failed to create service " + name
+                        + ": service could not be instantiated", ex);
+            } catch (IllegalAccessException ex) {
+                throw new RuntimeException("Failed to create service " + name
+                        + ": service must have a public constructor with a Context argument", ex);
+            } catch (NoSuchMethodException ex) {
+                throw new RuntimeException("Failed to create service " + name
+                        + ": service must have a public constructor with a Context argument", ex);
+            } catch (InvocationTargetException ex) {
+                throw new RuntimeException("Failed to create service " + name
+                        + ": service constructor threw an exception", ex);
+            }
+
+            startService(service);
+            return service;
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10861957.java!!!	startService(in service : SystemService) : void
+        // Register it.
+        mServices.add(service);
+        // Start it.
+        long time = System.currentTimeMillis();
+        try {
+            service.onStart();
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("Failed to start service " + service.getClass().getName()
+                    + ": onStart threw an exception", ex);
+        }
+        warnIfTooLong(System.currentTimeMillis() - time, service, "onStart");
+!!!10862085.java!!!	startBootPhase(in phase : int) : void
+        if (phase <= mCurrentPhase) {
+            throw new IllegalArgumentException("Next phase must be larger than previous");
+        }
+        mCurrentPhase = phase;
+
+        Slog.i(TAG, "Starting phase " + mCurrentPhase);
+        try {
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "OnBootPhase " + phase);
+            final int serviceLen = mServices.size();
+            for (int i = 0; i < serviceLen; i++) {
+                final SystemService service = mServices.get(i);
+                long time = System.currentTimeMillis();
+                Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, service.getClass().getName());
+                try {
+                    service.onBootPhase(mCurrentPhase);
+                } catch (Exception ex) {
+                    throw new RuntimeException("Failed to boot service "
+                            + service.getClass().getName()
+                            + ": onBootPhase threw an exception during phase "
+                            + mCurrentPhase, ex);
+                }
+                warnIfTooLong(System.currentTimeMillis() - time, service, "onBootPhase");
+                Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+            }
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862213.java!!!	isBootCompleted() : boolean
+        return mCurrentPhase >= SystemService.PHASE_BOOT_COMPLETED;
+!!!10862341.java!!!	startUser(in userHandle : int) : void
+        Slog.i(TAG, "Calling onStartUser u" + userHandle);
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "onStartUser "
+                    + service.getClass().getName());
+            long time = System.currentTimeMillis();
+            try {
+                service.onStartUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting start of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+            warnIfTooLong(System.currentTimeMillis() - time, service, "onStartUser ");
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862469.java!!!	unlockUser(in userHandle : int) : void
+        Slog.i(TAG, "Calling onUnlockUser u" + userHandle);
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "onUnlockUser "
+                    + service.getClass().getName());
+            long time = System.currentTimeMillis();
+            try {
+                service.onUnlockUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting unlock of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+            warnIfTooLong(System.currentTimeMillis() - time, service, "onUnlockUser ");
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862597.java!!!	switchUser(in userHandle : int) : void
+        Slog.i(TAG, "Calling switchUser u" + userHandle);
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "onSwitchUser "
+                    + service.getClass().getName());
+            long time = System.currentTimeMillis();
+            try {
+                service.onSwitchUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting switch of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+            warnIfTooLong(System.currentTimeMillis() - time, service, "onSwitchUser");
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862725.java!!!	stopUser(in userHandle : int) : void
+        Slog.i(TAG, "Calling onStopUser u" + userHandle);
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "onStopUser "
+                    + service.getClass().getName());
+            long time = System.currentTimeMillis();
+            try {
+                service.onStopUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting stop of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+            warnIfTooLong(System.currentTimeMillis() - time, service, "onStopUser");
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862853.java!!!	cleanupUser(in userHandle : int) : void
+        Slog.i(TAG, "Calling onCleanupUser u" + userHandle);
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "onCleanupUser "
+                    + service.getClass().getName());
+            long time = System.currentTimeMillis();
+            try {
+                service.onCleanupUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting cleanup of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+            warnIfTooLong(System.currentTimeMillis() - time, service, "onCleanupUser");
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        }
+!!!10862981.java!!!	setSafeMode(inout safeMode : boolean) : void
+        mSafeMode = safeMode;
+!!!10863109.java!!!	isSafeMode() : boolean
+        return mSafeMode;
+!!!10863237.java!!!	isRuntimeRestarted() : boolean
+        return mRuntimeRestarted;
+!!!10863365.java!!!	setRuntimeRestarted(inout runtimeRestarted : boolean) : void
+        mRuntimeRestarted = runtimeRestarted;
+!!!10863493.java!!!	warnIfTooLong(in duration : long, inout service : SystemService, in operation : String) : void
+        if (duration > SERVICE_CALL_WARN_TIME_MS) {
+            Slog.w(TAG, "Service " + service.getClass().getName() + " took " + duration + " ms in "
+                    + operation);
+        }
+!!!10863621.java!!!	dump() : void
+        StringBuilder builder = new StringBuilder();
+        builder.append("Current phase: ").append(mCurrentPhase).append("\n");
+        builder.append("Services:\n");
+        final int startedLen = mServices.size();
+        for (int i = 0; i < startedLen; i++) {
+            final SystemService service = mServices.get(i);
+            builder.append("\t")
+                    .append(service.getClass().getSimpleName())
+                    .append("\n");
+        }
+
+        Slog.e(TAG, builder.toString());

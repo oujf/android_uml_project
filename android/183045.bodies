@@ -1,0 +1,203 @@
+class Camera2ClientBase
+!!!445061.cpp!!!	connect(in client : sp<TCamCallbacks>) : status_t
+    ATRACE_CALL();
+    ALOGV("%s: E", __FUNCTION__);
+    Mutex::Autolock icl(mBinderSerializationLock);
+
+    if (TClientBase::mClientPid != 0 &&
+        getCallingPid() != TClientBase::mClientPid) {
+
+        ALOGE("%s: Camera %s: Connection attempt from pid %d; "
+                "current locked to pid %d",
+                __FUNCTION__,
+                TClientBase::mCameraIdStr.string(),
+                getCallingPid(),
+                TClientBase::mClientPid);
+        return BAD_VALUE;
+    }
+
+    TClientBase::mClientPid = getCallingPid();
+
+    TClientBase::mRemoteCallback = client;
+    mSharedCameraCallbacks = client;
+
+    return OK;
+!!!445189.cpp!!!	disconnect() : binder::Status
+    ATRACE_CALL();
+    Mutex::Autolock icl(mBinderSerializationLock);
+
+    binder::Status res = binder::Status::ok();
+    // Allow both client and the media server to disconnect at all times
+    int callingPid = getCallingPid();
+    if (callingPid != TClientBase::mClientPid &&
+        callingPid != TClientBase::mServicePid) return res;
+
+    ALOGV("Camera %s: Shutting down", TClientBase::mCameraIdStr.string());
+
+    detachDevice();
+
+    CameraService::BasicClient::disconnect();
+
+    ALOGV("Camera %s: Shut down complete complete", TClientBase::mCameraIdStr.string());
+
+    return res;
+!!!445317.cpp!!!	Camera2ClientBase(in cameraService : sp<CameraService>, in remoteCallback : sp<TCamCallbacks>, in clientPackageName : String16, in cameraId : String8, in cameraFacing : int, in clientPid : int, in clientUid : uid_t, in servicePid : int)
+    ALOGI("Camera %s: Opened. Client: %s (PID %d, UID %d)", cameraId.string(),
+            String8(clientPackageName).string(), clientPid, clientUid);
+
+    mInitialClientPid = clientPid;
+    mDevice = new Camera3Device(cameraId);
+    LOG_ALWAYS_FATAL_IF(mDevice == 0, "Device should never be NULL here.");
+!!!445445.cpp!!!	~Camera2ClientBase()
+    ATRACE_CALL();
+
+    TClientBase::mDestructionStarted = true;
+
+    disconnect();
+
+    ALOGI("Closed Camera %s. Client was: %s (PID %d, UID %u)",
+            TClientBase::mCameraIdStr.string(),
+            String8(TClientBase::mClientPackageName).string(),
+            mInitialClientPid, TClientBase::mClientUid);
+!!!445573.cpp!!!	initialize(in manager : sp<CameraProviderManager>) : status_t
+    return initializeImpl(manager);
+!!!445701.cpp!!!	dumpClient(in fd : int, in args : Vector<String16>) : status_t
+    String8 result;
+    result.appendFormat("Camera2ClientBase[%s] (%p) PID: %d, dump:\n",
+            TClientBase::mCameraIdStr.string(),
+            (TClientBase::getRemoteCallback() != NULL ?
+                    IInterface::asBinder(TClientBase::getRemoteCallback()).get() : NULL),
+            TClientBase::mClientPid);
+    result.append("  State: ");
+
+    write(fd, result.string(), result.size());
+    // TODO: print dynamic/request section from most recent requests
+
+    return dumpDevice(fd, args);
+!!!445829.cpp!!!	notifyError(in errorCode : int32_t, in resultExtras : CaptureResultExtras) : void
+    ALOGE("Error condition %d reported by HAL, requestId %" PRId32, errorCode,
+          resultExtras.requestId);
+!!!445957.cpp!!!	notifyIdle() : void
+    if (mDeviceActive) {
+        getCameraService()->updateProxyDeviceState(
+            ICameraServiceProxy::CAMERA_STATE_IDLE, TClientBase::mCameraIdStr);
+    }
+    mDeviceActive = false;
+
+    ALOGV("Camera device is now idle");
+!!!446085.cpp!!!	notifyShutter(in resultExtras : CaptureResultExtras, in timestamp : nsecs_t) : void
+    (void)resultExtras;
+    (void)timestamp;
+
+    if (!mDeviceActive) {
+        getCameraService()->updateProxyDeviceState(
+            ICameraServiceProxy::CAMERA_STATE_ACTIVE, TClientBase::mCameraIdStr);
+    }
+    mDeviceActive = true;
+
+    ALOGV("%s: Shutter notification for request id %" PRId32 " at time %" PRId64,
+            __FUNCTION__, resultExtras.requestId, timestamp);
+!!!446213.cpp!!!	notifyAutoFocus(in newState : uint8_t, in triggerId : int) : void
+    (void)newState;
+    (void)triggerId;
+
+    ALOGV("%s: Autofocus state now %d, last trigger %d",
+          __FUNCTION__, newState, triggerId);
+
+!!!446341.cpp!!!	notifyAutoExposure(in newState : uint8_t, in triggerId : int) : void
+    (void)newState;
+    (void)triggerId;
+
+    ALOGV("%s: Autoexposure state now %d, last trigger %d",
+            __FUNCTION__, newState, triggerId);
+!!!446469.cpp!!!	notifyAutoWhitebalance(in newState : uint8_t, in triggerId : int) : void
+    (void)newState;
+    (void)triggerId;
+
+    ALOGV("%s: Auto-whitebalance state now %d, last trigger %d",
+            __FUNCTION__, newState, triggerId);
+!!!446597.cpp!!!	notifyPrepared(in streamId : int) : void
+    (void)streamId;
+
+    ALOGV("%s: Stream %d now prepared",
+            __FUNCTION__, streamId);
+!!!446725.cpp!!!	notifyRequestQueueEmpty() : void
+
+    ALOGV("%s: Request queue now empty", __FUNCTION__);
+!!!446853.cpp!!!	notifyRepeatingRequestError(in lastFrameNumber : long) : void
+    (void)lastFrameNumber;
+
+    ALOGV("%s: Repeating request was stopped. Last frame number is %ld",
+            __FUNCTION__, lastFrameNumber);
+!!!446981.cpp!!!	getCameraId() : int
+    return std::stoi(TClientBase::mCameraIdStr.string());
+!!!447109.cpp!!!	getCameraDevice() : sp<CameraDeviceBase>
+    return mDevice;
+!!!447237.cpp!!!	getCameraDeviceVersion() : int
+    return mDeviceVersion;
+!!!447365.cpp!!!	getCameraService() : sp<CameraService>
+    return TClientBase::sCameraService;
+!!!448261.cpp!!!	dumpDevice(in fd : int, in args : Vector<String16>) : status_t
+    String8 result;
+
+    result = "  Device dump:\n";
+    write(fd, result.string(), result.size());
+
+    if (!mDevice.get()) {
+        result = "  *** Device is detached\n";
+        write(fd, result.string(), result.size());
+        return NO_ERROR;
+    }
+
+    status_t res = mDevice->dump(fd, args);
+    if (res != OK) {
+        result = String8::format("   Error dumping device: %s (%d)",
+                strerror(-res), res);
+        write(fd, result.string(), result.size());
+    }
+
+    return NO_ERROR;
+!!!448389.cpp!!!	checkPid(in checkLocation : char) : status_t
+
+    int callingPid = getCallingPid();
+    if (callingPid == TClientBase::mClientPid) return NO_ERROR;
+
+    ALOGE("%s: attempt to use a locked camera from a different process"
+            " (old pid %d, new pid %d)", checkLocation, TClientBase::mClientPid, callingPid);
+    return PERMISSION_DENIED;
+!!!448517.cpp!!!	detachDevice() : void
+    if (mDevice == 0) return;
+    mDevice->disconnect();
+
+    mDevice.clear();
+
+    ALOGV("Camera %s: Detach complete", TClientBase::mCameraIdStr.string());
+!!!448645.cpp!!!	initializeImpl(in providerPtr : TProviderPtr) : status_t
+    ATRACE_CALL();
+    ALOGV("%s: Initializing client for camera %s", __FUNCTION__,
+          TClientBase::mCameraIdStr.string());
+    status_t res;
+
+    // Verify ops permissions
+    res = TClientBase::startCameraOps();
+    if (res != OK) {
+        return res;
+    }
+
+    if (mDevice == NULL) {
+        ALOGE("%s: Camera %s: No device connected",
+                __FUNCTION__, TClientBase::mCameraIdStr.string());
+        return NO_INIT;
+    }
+
+    res = mDevice->initialize(providerPtr);
+    if (res != OK) {
+        ALOGE("%s: Camera %s: unable to initialize device: %s (%d)",
+                __FUNCTION__, TClientBase::mCameraIdStr.string(), strerror(-res), res);
+        return res;
+    }
+
+    wp<CameraDeviceBase::NotificationListener> weakThis(this);
+    res = mDevice->setNotifyCallback(weakThis);
+
+    return OK;

@@ -1,0 +1,60 @@
+class MediaCasService
+!!!522629.cpp!!!	instantiate() : void
+    defaultServiceManager()->addService(
+            String16("media.cas"), new MediaCasService());
+!!!522757.cpp!!!	enumeratePlugins(inout results : vector<ParcelableCasPluginDescriptor>) : Status
+    ALOGV("enumeratePlugins");
+
+    mCasLoader->enumeratePlugins(results);
+
+    return Status::ok();
+!!!522885.cpp!!!	isSystemIdSupported(in CA_system_id : int32_t, inout result : bool) : Status
+    ALOGV("isSystemIdSupported: CA_system_id=%d", CA_system_id);
+
+    *result = mCasLoader->findFactoryForScheme(CA_system_id);
+
+    return Status::ok();
+!!!523013.cpp!!!	createPlugin(in CA_system_id : int32_t, in listener : sp<ICasListener>, inout result : sp<ICas>) : Status
+    ALOGV("createPlugin: CA_system_id=%d", CA_system_id);
+
+    result->clear();
+
+    CasFactory *factory;
+    sp<SharedLibrary> library;
+    if (mCasLoader->findFactoryForScheme(CA_system_id, &library, &factory)) {
+        CasPlugin *plugin = NULL;
+        sp<CasImpl> casImpl = new CasImpl(listener);
+        if (factory->createPlugin(CA_system_id, (uint64_t)casImpl.get(),
+                &CasImpl::OnEvent, &plugin) == OK && plugin != NULL) {
+            casImpl->init(library, plugin);
+            *result = casImpl;
+        }
+    }
+
+    return Status::ok();
+!!!523141.cpp!!!	isDescramblerSupported(in CA_system_id : int32_t, inout result : bool) : Status
+    ALOGV("isDescramblerSupported: CA_system_id=%d", CA_system_id);
+
+    *result = mDescramblerLoader->findFactoryForScheme(CA_system_id);
+
+    return Status::ok();
+!!!523269.cpp!!!	createDescrambler(in CA_system_id : int32_t, inout result : sp<IDescrambler>) : Status
+    ALOGV("createDescrambler: CA_system_id=%d", CA_system_id);
+
+    result->clear();
+
+    DescramblerFactory *factory;
+    sp<SharedLibrary> library;
+    if (mDescramblerLoader->findFactoryForScheme(
+            CA_system_id, &library, &factory)) {
+        DescramblerPlugin *plugin = NULL;
+        if (factory->createPlugin(CA_system_id, &plugin) == OK
+                && plugin != NULL) {
+            *result = new DescramblerImpl(library, plugin);
+        }
+    }
+
+    return Status::ok();
+!!!523525.cpp!!!	~MediaCasService()
+    delete mCasLoader;
+    delete mDescramblerLoader;

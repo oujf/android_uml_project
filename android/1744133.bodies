@@ -1,0 +1,57 @@
+class PackageManagerServiceCompilerMapping
+!!!12195973.java!!!	getSystemPropertyName(in reason : int) : String
+        if (reason < 0 || reason >= REASON_STRINGS.length) {
+            throw new IllegalArgumentException("reason " + reason + " invalid");
+        }
+
+        return "pm.dexopt." + REASON_STRINGS[reason];
+!!!12196101.java!!!	getAndCheckValidity(in reason : int) : String
+        String sysPropValue = SystemProperties.get(getSystemPropertyName(reason));
+        if (sysPropValue == null || sysPropValue.isEmpty() ||
+                !DexFile.isValidCompilerFilter(sysPropValue)) {
+            throw new IllegalStateException("Value \"" + sysPropValue +"\" not valid "
+                    + "(reason " + REASON_STRINGS[reason] + ")");
+        }
+
+        return sysPropValue;
+!!!12196229.java!!!	checkProperties() : void
+        // We're gonna check all properties and collect the exceptions, so we can give a general
+        // overview. Store the exceptions here.
+        RuntimeException toThrow = null;
+
+        for (int reason = 0; reason <= PackageManagerService.REASON_LAST; reason++) {
+            try {
+                // Check that the system property name is legal.
+                String sysPropName = getSystemPropertyName(reason);
+                if (sysPropName == null || sysPropName.isEmpty()) {
+                    throw new IllegalStateException("Reason system property name \"" +
+                            sysPropName +"\" for reason " + REASON_STRINGS[reason]);
+                }
+
+                // Check validity, ignore result.
+                getAndCheckValidity(reason);
+            } catch (Exception exc) {
+                if (toThrow == null) {
+                    toThrow = new IllegalStateException("PMS compiler filter settings are bad.");
+                }
+                toThrow.addSuppressed(exc);
+            }
+        }
+
+        if (toThrow != null) {
+            throw toThrow;
+        }
+!!!12196357.java!!!	getCompilerFilterForReason(in reason : int) : String
+        return getAndCheckValidity(reason);
+!!!12196485.java!!!	getDefaultCompilerFilter() : String
+        String value = SystemProperties.get("dalvik.vm.dex2oat-filter");
+        if (value == null || value.isEmpty()) {
+            return "speed";
+        }
+
+        if (!DexFile.isValidCompilerFilter(value) ||
+                DexFile.isProfileGuidedCompilerFilter(value)) {
+            return "speed";
+        }
+
+        return value;

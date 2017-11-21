@@ -1,0 +1,186 @@
+class NightDisplayController
+!!!9816581.java!!!	NightDisplayController(inout context : Context)
+        this(context, ActivityManager.getCurrentUser());
+!!!9816709.java!!!	NightDisplayController(inout context : Context, in userId : int)
+        mContext = context.getApplicationContext();
+        mUserId = userId;
+
+        mContentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override
+            public void onChange(boolean selfChange, Uri uri) {
+                super.onChange(selfChange, uri);
+
+                final String setting = uri == null ? null : uri.getLastPathSegment();
+                if (setting != null) {
+                    onSettingChanged(setting);
+                }
+            }
+        };
+!!!9816837.java!!!	isActivated() : boolean
+        return Secure.getIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_ACTIVATED, 0, mUserId) == 1;
+!!!9816965.java!!!	setActivated(inout activated : boolean) : boolean
+        if (isActivated() != activated) {
+            Secure.putLongForUser(mContext.getContentResolver(),
+                    Secure.NIGHT_DISPLAY_LAST_ACTIVATED_TIME, System.currentTimeMillis(),
+                    mUserId);
+        }
+        return Secure.putIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_ACTIVATED, activated ? 1 : 0, mUserId);
+!!!9817093.java!!!	getLastActivatedTime() : Calendar
+        final ContentResolver cr = mContext.getContentResolver();
+        final long lastActivatedTimeMillis = Secure.getLongForUser(
+                cr, Secure.NIGHT_DISPLAY_LAST_ACTIVATED_TIME, -1, mUserId);
+        if (lastActivatedTimeMillis < 0) {
+            return null;
+        }
+
+        final Calendar lastActivatedTime = Calendar.getInstance();
+        lastActivatedTime.setTimeInMillis(lastActivatedTimeMillis);
+        return lastActivatedTime;
+!!!9817221.java!!!	getAutoMode() : int
+        int autoMode = Secure.getIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_AUTO_MODE, -1, mUserId);
+        if (autoMode == -1) {
+            if (DEBUG) {
+                Slog.d(TAG, "Using default value for setting: " + Secure.NIGHT_DISPLAY_AUTO_MODE);
+            }
+            autoMode = mContext.getResources().getInteger(
+                    R.integer.config_defaultNightDisplayAutoMode);
+        }
+
+        if (autoMode != AUTO_MODE_DISABLED
+                && autoMode != AUTO_MODE_CUSTOM
+                && autoMode != AUTO_MODE_TWILIGHT) {
+            Slog.e(TAG, "Invalid autoMode: " + autoMode);
+            autoMode = AUTO_MODE_DISABLED;
+        }
+
+        return autoMode;
+!!!9817349.java!!!	setAutoMode(in autoMode : int) : boolean
+        if (autoMode != AUTO_MODE_DISABLED
+                && autoMode != AUTO_MODE_CUSTOM
+                && autoMode != AUTO_MODE_TWILIGHT) {
+            throw new IllegalArgumentException("Invalid autoMode: " + autoMode);
+        }
+
+        return Secure.putIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_AUTO_MODE, autoMode, mUserId);
+!!!9817477.java!!!	getCustomStartTime() : NightDisplayController::LocalTime
+        int startTimeValue = Secure.getIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_CUSTOM_START_TIME, -1, mUserId);
+        if (startTimeValue == -1) {
+            if (DEBUG) {
+                Slog.d(TAG, "Using default value for setting: "
+                        + Secure.NIGHT_DISPLAY_CUSTOM_START_TIME);
+            }
+            startTimeValue = mContext.getResources().getInteger(
+                    R.integer.config_defaultNightDisplayCustomStartTime);
+        }
+
+        return LocalTime.valueOf(startTimeValue);
+!!!9817605.java!!!	setCustomStartTime(inout startTime : NightDisplayController::LocalTime) : boolean
+        if (startTime == null) {
+            throw new IllegalArgumentException("startTime cannot be null");
+        }
+        return Secure.putIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_CUSTOM_START_TIME, startTime.toMillis(), mUserId);
+!!!9817733.java!!!	getCustomEndTime() : NightDisplayController::LocalTime
+        int endTimeValue = Secure.getIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_CUSTOM_END_TIME, -1, mUserId);
+        if (endTimeValue == -1) {
+            if (DEBUG) {
+                Slog.d(TAG, "Using default value for setting: "
+                        + Secure.NIGHT_DISPLAY_CUSTOM_END_TIME);
+            }
+            endTimeValue = mContext.getResources().getInteger(
+                    R.integer.config_defaultNightDisplayCustomEndTime);
+        }
+
+        return LocalTime.valueOf(endTimeValue);
+!!!9817861.java!!!	setCustomEndTime(inout endTime : NightDisplayController::LocalTime) : boolean
+        if (endTime == null) {
+            throw new IllegalArgumentException("endTime cannot be null");
+        }
+        return Secure.putIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_CUSTOM_END_TIME, endTime.toMillis(), mUserId);
+!!!9817989.java!!!	getColorTemperature() : int
+        int colorTemperature = Secure.getIntForUser(mContext.getContentResolver(),
+                Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE, -1, mUserId);
+        if (colorTemperature == -1) {
+            if (DEBUG) {
+                Slog.d(TAG, "Using default value for setting: "
+                    + Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE);
+            }
+            colorTemperature = getDefaultColorTemperature();
+        }
+        final int minimumTemperature = getMinimumColorTemperature();
+        final int maximumTemperature = getMaximumColorTemperature();
+        if (colorTemperature < minimumTemperature) {
+            colorTemperature = minimumTemperature;
+        } else if (colorTemperature > maximumTemperature) {
+            colorTemperature = maximumTemperature;
+        }
+
+        return colorTemperature;
+!!!9818117.java!!!	setColorTemperature(in colorTemperature : int) : boolean
+        return Secure.putIntForUser(mContext.getContentResolver(),
+            Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE, colorTemperature, mUserId);
+!!!9818245.java!!!	getMinimumColorTemperature() : int
+        return mContext.getResources().getInteger(
+                R.integer.config_nightDisplayColorTemperatureMin);
+!!!9818373.java!!!	getMaximumColorTemperature() : int
+        return mContext.getResources().getInteger(
+                R.integer.config_nightDisplayColorTemperatureMax);
+!!!9818501.java!!!	getDefaultColorTemperature() : int
+        return mContext.getResources().getInteger(
+                R.integer.config_nightDisplayColorTemperatureDefault);
+!!!9818629.java!!!	onSettingChanged(in setting : String) : void
+        if (DEBUG) {
+            Slog.d(TAG, "onSettingChanged: " + setting);
+        }
+
+        if (mCallback != null) {
+            switch (setting) {
+                case Secure.NIGHT_DISPLAY_ACTIVATED:
+                    mCallback.onActivated(isActivated());
+                    break;
+                case Secure.NIGHT_DISPLAY_AUTO_MODE:
+                    mCallback.onAutoModeChanged(getAutoMode());
+                    break;
+                case Secure.NIGHT_DISPLAY_CUSTOM_START_TIME:
+                    mCallback.onCustomStartTimeChanged(getCustomStartTime());
+                    break;
+                case Secure.NIGHT_DISPLAY_CUSTOM_END_TIME:
+                    mCallback.onCustomEndTimeChanged(getCustomEndTime());
+                    break;
+                case Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE:
+                    mCallback.onColorTemperatureChanged(getColorTemperature());
+                    break;
+            }
+        }
+!!!9818757.java!!!	setListener(inout callback : NightDisplayController::Callback) : void
+        final Callback oldCallback = mCallback;
+        if (oldCallback != callback) {
+            mCallback = callback;
+
+            if (callback == null) {
+                // Stop listening for changes now that there IS NOT a listener.
+                mContext.getContentResolver().unregisterContentObserver(mContentObserver);
+            } else if (oldCallback == null) {
+                // Start listening for changes now that there IS a listener.
+                final ContentResolver cr = mContext.getContentResolver();
+                cr.registerContentObserver(Secure.getUriFor(Secure.NIGHT_DISPLAY_ACTIVATED),
+                        false /* notifyForDescendants */, mContentObserver, mUserId);
+                cr.registerContentObserver(Secure.getUriFor(Secure.NIGHT_DISPLAY_AUTO_MODE),
+                        false /* notifyForDescendants */, mContentObserver, mUserId);
+                cr.registerContentObserver(Secure.getUriFor(Secure.NIGHT_DISPLAY_CUSTOM_START_TIME),
+                        false /* notifyForDescendants */, mContentObserver, mUserId);
+                cr.registerContentObserver(Secure.getUriFor(Secure.NIGHT_DISPLAY_CUSTOM_END_TIME),
+                        false /* notifyForDescendants */, mContentObserver, mUserId);
+                cr.registerContentObserver(Secure.getUriFor(Secure.NIGHT_DISPLAY_COLOR_TEMPERATURE),
+                        false /* notifyForDescendants */, mContentObserver, mUserId);
+            }
+        }
+!!!9818885.java!!!	isAvailable(inout context : Context) : boolean
+        return context.getResources().getBoolean(R.bool.config_nightDisplayAvailable);

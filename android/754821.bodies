@@ -1,0 +1,191 @@
+class Dependency
+!!!3113093.java!!!	start() : void
+        sDependency = this;
+        // TODO: Think about ways to push these creation rules out of Dependency to cut down
+        // on imports.
+        mProviders.put(TIME_TICK_HANDLER, () -> {
+            HandlerThread thread = new HandlerThread("TimeTick");
+            thread.start();
+            return new Handler(thread.getLooper());
+        });
+        mProviders.put(BG_LOOPER, () -> {
+            HandlerThread thread = new HandlerThread("SysUiBg",
+                    Process.THREAD_PRIORITY_BACKGROUND);
+            thread.start();
+            return thread.getLooper();
+        });
+        mProviders.put(MAIN_HANDLER, () -> new Handler(Looper.getMainLooper()));
+        mProviders.put(ActivityStarter.class, () -> new ActivityStarterDelegate());
+        mProviders.put(ActivityStarterDelegate.class, () ->
+                getDependency(ActivityStarter.class));
+
+        mProviders.put(BluetoothController.class, () ->
+                new BluetoothControllerImpl(mContext, getDependency(BG_LOOPER)));
+
+        mProviders.put(LocationController.class, () ->
+                new LocationControllerImpl(mContext, getDependency(BG_LOOPER)));
+
+        mProviders.put(RotationLockController.class, () ->
+                new RotationLockControllerImpl(mContext));
+
+        mProviders.put(NetworkController.class, () ->
+                new NetworkControllerImpl(mContext, getDependency(BG_LOOPER),
+                        getDependency(DeviceProvisionedController.class)));
+
+        mProviders.put(ZenModeController.class, () ->
+                new ZenModeControllerImpl(mContext, getDependency(MAIN_HANDLER)));
+
+        mProviders.put(HotspotController.class, () ->
+                new HotspotControllerImpl(mContext));
+
+        mProviders.put(CastController.class, () ->
+                new CastControllerImpl(mContext));
+
+        mProviders.put(FlashlightController.class, () ->
+                new FlashlightControllerImpl(mContext));
+
+        mProviders.put(KeyguardMonitor.class, () ->
+                new KeyguardMonitorImpl(mContext));
+
+        mProviders.put(UserSwitcherController.class, () ->
+                new UserSwitcherController(mContext, getDependency(KeyguardMonitor.class),
+                        getDependency(MAIN_HANDLER), getDependency(ActivityStarter.class)));
+
+        mProviders.put(UserInfoController.class, () ->
+                new UserInfoControllerImpl(mContext));
+
+        mProviders.put(BatteryController.class, () ->
+                new BatteryControllerImpl(mContext));
+
+        mProviders.put(NightDisplayController.class, () ->
+                new NightDisplayController(mContext));
+
+        mProviders.put(ManagedProfileController.class, () ->
+                new ManagedProfileControllerImpl(mContext));
+
+        mProviders.put(NextAlarmController.class, () ->
+                new NextAlarmControllerImpl(mContext));
+
+        mProviders.put(DataSaverController.class, () ->
+                get(NetworkController.class).getDataSaverController());
+
+        mProviders.put(AccessibilityController.class, () ->
+                new AccessibilityController(mContext));
+
+        mProviders.put(DeviceProvisionedController.class, () ->
+                new DeviceProvisionedControllerImpl(mContext));
+
+        mProviders.put(PluginManager.class, () ->
+                new PluginManagerImpl(mContext));
+
+        mProviders.put(AssistManager.class, () ->
+                new AssistManager(getDependency(DeviceProvisionedController.class), mContext));
+
+        mProviders.put(SecurityController.class, () ->
+                new SecurityControllerImpl(mContext));
+
+        mProviders.put(LeakDetector.class, LeakDetector::create);
+
+        mProviders.put(LEAK_REPORT_EMAIL, () -> null);
+
+        mProviders.put(LeakReporter.class, () -> new LeakReporter(
+                mContext,
+                getDependency(LeakDetector.class),
+                getDependency(LEAK_REPORT_EMAIL)));
+
+        mProviders.put(GarbageMonitor.class, () -> new GarbageMonitor(
+                getDependency(BG_LOOPER),
+                getDependency(LeakDetector.class),
+                getDependency(LeakReporter.class)));
+
+        mProviders.put(TunerService.class, () ->
+                new TunerServiceImpl(mContext));
+
+        mProviders.put(StatusBarWindowManager.class, () ->
+                new StatusBarWindowManager(mContext));
+
+        mProviders.put(DarkIconDispatcher.class, () ->
+                new DarkIconDispatcherImpl(mContext));
+
+        mProviders.put(ConfigurationController.class, () ->
+                new ConfigurationControllerImpl(mContext));
+
+        mProviders.put(StatusBarIconController.class, () ->
+                new StatusBarIconControllerImpl(mContext));
+
+        mProviders.put(FragmentService.class, () ->
+                new FragmentService(mContext));
+
+        mProviders.put(ExtensionController.class, () ->
+                new ExtensionControllerImpl());
+
+        mProviders.put(PluginDependencyProvider.class, () ->
+                new PluginDependencyProvider(get(PluginManager.class)));
+
+        mProviders.put(LocalBluetoothManager.class, () ->
+                LocalBluetoothManager.getInstance(mContext, null));
+
+        mProviders.put(VolumeDialogController.class, () ->
+                new VolumeDialogControllerImpl(mContext));
+
+        mProviders.put(MetricsLogger.class, () -> new MetricsLogger());
+
+        mProviders.put(AccessibilityManagerWrapper.class,
+                () -> new AccessibilityManagerWrapper(mContext));
+
+        mProviders.put(ForegroundServiceController.class,
+                () -> new ForegroundServiceControllerImpl(mContext));
+
+        mProviders.put(UiOffloadThread.class, UiOffloadThread::new);
+
+        // Put all dependencies above here so the factory can override them if it wants.
+        SystemUIFactory.getInstance().injectDependencies(mProviders, mContext);
+!!!3113221.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        super.dump(fd, pw, args);
+        pw.println("Dumping existing controllers:");
+        mDependencies.values().stream().filter(obj -> obj instanceof Dumpable)
+                .forEach(o -> ((Dumpable) o).dump(fd, pw, args));
+!!!3113349.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        mDependencies.values().stream().filter(obj -> obj instanceof ConfigurationChangedReceiver)
+                .forEach(o -> ((ConfigurationChangedReceiver) o).onConfigurationChanged(newConfig));
+!!!3113477.java!!!	getDependency(inout cls : Class<T>) : T
+        return getDependencyInner(cls);
+!!!3113605.java!!!	getDependency(inout key : Dependency::DependencyKey) : T
+        return getDependencyInner(key);
+!!!3113733.java!!!	getDependencyInner(inout key : Object) : T
+        @SuppressWarnings("unchecked")
+        T obj = (T) mDependencies.get(key);
+        if (obj == null) {
+            obj = createDependency(key);
+            mDependencies.put(key, obj);
+        }
+        return obj;
+!!!3113861.java!!!	createDependency(inout cls : Object) : T
+        Preconditions.checkArgument(cls instanceof DependencyKey<?> || cls instanceof Class<?>);
+
+        @SuppressWarnings("unchecked")
+        DependencyProvider<T> provider = mProviders.get(cls);
+        if (provider == null) {
+            throw new IllegalArgumentException("Unsupported dependency " + cls);
+        }
+        return provider.createDependency();
+!!!3114117.java!!!	destroyDependency(inout cls : Class<T>, inout destroy : Consumer<T>) : void
+        T dep = (T) mDependencies.remove(cls);
+        if (dep != null && destroy != null) {
+            destroy.accept(dep);
+        }
+!!!3114245.java!!!	initDependencies(inout context : Context) : void
+        if (sDependency != null) return;
+        Dependency d = new Dependency();
+        d.mContext = context;
+        d.mComponents = new HashMap<>();
+        d.start();
+!!!3114373.java!!!	clearDependencies() : void
+        sDependency = null;
+!!!3114501.java!!!	destroy(inout cls : Class<T>, inout destroy : Consumer<T>) : void
+        sDependency.destroyDependency(cls, destroy);
+!!!3114629.java!!!	get(inout cls : Class<T>) : T
+        return sDependency.getDependency(cls);
+!!!3114757.java!!!	get(inout cls : Dependency::DependencyKey) : T
+        return sDependency.getDependency(cls);

@@ -1,0 +1,39 @@
+class DeviceInfo1
+!!!460933.cpp!!!	setTorchMode(in enabled : bool) : status_t
+    return DeviceInfo::setTorchMode(mInterface, enabled);
+!!!461061.cpp!!!	getCameraInfo(inout info : hardware::CameraInfo) : status_t
+    if (info == nullptr) return BAD_VALUE;
+
+    Status status;
+    device::V1_0::CameraInfo cInfo;
+    hardware::Return<void> ret;
+    ret = mInterface->getCameraInfo([&status, &cInfo](Status s, device::V1_0::CameraInfo camInfo) {
+                status = s;
+                cInfo = camInfo;
+            });
+    if (!ret.isOk()) {
+        ALOGE("%s: Transaction error reading camera info from device %s: %s",
+                __FUNCTION__, mId.c_str(), ret.description().c_str());
+        return DEAD_OBJECT;
+    }
+    if (status != Status::OK) {
+        return mapToStatusT(status);
+    }
+
+    switch(cInfo.facing) {
+        case device::V1_0::CameraFacing::BACK:
+            info->facing = hardware::CAMERA_FACING_BACK;
+            break;
+        case device::V1_0::CameraFacing::EXTERNAL:
+            // Map external to front for legacy API
+        case device::V1_0::CameraFacing::FRONT:
+            info->facing = hardware::CAMERA_FACING_FRONT;
+            break;
+        default:
+            ALOGW("%s: Device %s: Unknown camera facing: %d",
+                    __FUNCTION__, mId.c_str(), cInfo.facing);
+            info->facing = hardware::CAMERA_FACING_BACK;
+    }
+    info->orientation = cInfo.orientation;
+
+    return OK;

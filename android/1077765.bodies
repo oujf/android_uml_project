@@ -1,0 +1,112 @@
+class KeyguardManager
+!!!5509253.java!!!	createConfirmDeviceCredentialIntent(inout title : CharSequence, inout description : CharSequence) : Intent
+        if (!isDeviceSecure()) return null;
+        Intent intent = new Intent(ACTION_CONFIRM_DEVICE_CREDENTIAL);
+        intent.putExtra(EXTRA_TITLE, title);
+        intent.putExtra(EXTRA_DESCRIPTION, description);
+
+        // explicitly set the package for security
+        intent.setPackage(getSettingsPackageForIntent(intent));
+        return intent;
+!!!5509381.java!!!	createConfirmDeviceCredentialIntent(inout title : CharSequence, inout description : CharSequence, in userId : int) : Intent
+        if (!isDeviceSecure(userId)) return null;
+        Intent intent = new Intent(ACTION_CONFIRM_DEVICE_CREDENTIAL_WITH_USER);
+        intent.putExtra(EXTRA_TITLE, title);
+        intent.putExtra(EXTRA_DESCRIPTION, description);
+        intent.putExtra(Intent.EXTRA_USER_ID, userId);
+
+        // explicitly set the package for security
+        intent.setPackage(getSettingsPackageForIntent(intent));
+
+        return intent;
+!!!5509509.java!!!	getSettingsPackageForIntent(inout intent : Intent) : String
+        List<ResolveInfo> resolveInfos = mContext.getPackageManager()
+                .queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY);
+        for (int i = 0; i < resolveInfos.size(); i++) {
+            return resolveInfos.get(i).activityInfo.packageName;
+        }
+
+        return "com.android.settings";
+!!!5510533.java!!!	KeyguardManager(inout context : Context)
+        mContext = context;
+        mWM = WindowManagerGlobal.getWindowManagerService();
+        mAm = ActivityManager.getService();
+        mTrustManager = ITrustManager.Stub.asInterface(
+                ServiceManager.getServiceOrThrow(Context.TRUST_SERVICE));
+!!!5510661.java!!!	newKeyguardLock(in tag : String) : KeyguardManager::KeyguardLock
+        return new KeyguardLock(tag);
+!!!5510789.java!!!	isKeyguardLocked() : boolean
+        try {
+            return mWM.isKeyguardLocked();
+        } catch (RemoteException ex) {
+            return false;
+        }
+!!!5510917.java!!!	isKeyguardSecure() : boolean
+        try {
+            return mWM.isKeyguardSecure();
+        } catch (RemoteException ex) {
+            return false;
+        }
+!!!5511045.java!!!	inKeyguardRestrictedInputMode() : boolean
+        try {
+            return mWM.inKeyguardRestrictedInputMode();
+        } catch (RemoteException ex) {
+            return false;
+        }
+!!!5511173.java!!!	isDeviceLocked() : boolean
+        return isDeviceLocked(UserHandle.myUserId());
+!!!5511301.java!!!	isDeviceLocked(in userId : int) : boolean
+        try {
+            return mTrustManager.isDeviceLocked(userId);
+        } catch (RemoteException e) {
+            return false;
+        }
+!!!5511429.java!!!	isDeviceSecure() : boolean
+        return isDeviceSecure(UserHandle.myUserId());
+!!!5511557.java!!!	isDeviceSecure(in userId : int) : boolean
+        try {
+            return mTrustManager.isDeviceSecure(userId);
+        } catch (RemoteException e) {
+            return false;
+        }
+!!!5511685.java!!!	dismissKeyguard(inout activity : Activity, inout callback : KeyguardManager::KeyguardDismissCallback, inout handler : Handler) : void
+        requestDismissKeyguard(activity, callback);
+!!!5511813.java!!!	requestDismissKeyguard(inout activity : Activity, inout callback : KeyguardManager::KeyguardDismissCallback) : void
+        try {
+            mAm.dismissKeyguard(activity.getActivityToken(), new IKeyguardDismissCallback.Stub() {
+                @Override
+                public void onDismissError() throws RemoteException {
+                    if (callback != null && !activity.isDestroyed()) {
+                        activity.mHandler.post(callback::onDismissError);
+                    }
+                }
+
+                @Override
+                public void onDismissSucceeded() throws RemoteException {
+                    if (callback != null && !activity.isDestroyed()) {
+                        activity.mHandler.post(callback::onDismissSucceeded);
+                    }
+                }
+
+                @Override
+                public void onDismissCancelled() throws RemoteException {
+                    if (callback != null && !activity.isDestroyed()) {
+                        activity.mHandler.post(callback::onDismissCancelled);
+                    }
+                }
+            });
+        } catch (RemoteException e) {
+            Log.i(TAG, "Failed to dismiss keyguard: " + e);
+        }
+!!!5511941.java!!!	exitKeyguardSecurely(in callback : KeyguardManager::OnKeyguardExitResult) : void
+        try {
+            mWM.exitKeyguardSecurely(new IOnKeyguardExitResult.Stub() {
+                public void onKeyguardExitResult(boolean success) throws RemoteException {
+                    if (callback != null) {
+                        callback.onKeyguardExitResult(success);
+                    }
+                }
+            });
+        } catch (RemoteException e) {
+
+        }

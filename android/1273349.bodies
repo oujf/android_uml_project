@@ -1,0 +1,36 @@
+class FileBridgeOutputStream
+!!!7461253.java!!!	FileBridgeOutputStream(inout clientPfd : ParcelFileDescriptor)
+            mClientPfd = clientPfd;
+            mClient = clientPfd.getFileDescriptor();
+!!!7461381.java!!!	FileBridgeOutputStream(inout client : FileDescriptor)
+            mClientPfd = null;
+            mClient = client;
+!!!7461509.java!!!	close() : void
+            try {
+                writeCommandAndBlock(CMD_CLOSE, "close()");
+            } finally {
+                IoBridge.closeAndSignalBlockedThreads(mClient);
+                IoUtils.closeQuietly(mClientPfd);
+            }
+!!!7461637.java!!!	fsync() : void
+            writeCommandAndBlock(CMD_FSYNC, "fsync()");
+!!!7461765.java!!!	writeCommandAndBlock(in cmd : int, in cmdString : String) : void
+            Memory.pokeInt(mTemp, 0, cmd, ByteOrder.BIG_ENDIAN);
+            IoBridge.write(mClient, mTemp, 0, MSG_LENGTH);
+
+            // Wait for server to ack
+            if (IoBridge.read(mClient, mTemp, 0, MSG_LENGTH) == MSG_LENGTH) {
+                if (Memory.peekInt(mTemp, 0, ByteOrder.BIG_ENDIAN) == cmd) {
+                    return;
+                }
+            }
+
+            throw new IOException("Failed to execute " + cmdString + " across bridge");
+!!!7461893.java!!!	write(inout buffer : byte [[]], in byteOffset : int, in byteCount : int) : void
+            Arrays.checkOffsetAndCount(buffer.length, byteOffset, byteCount);
+            Memory.pokeInt(mTemp, 0, CMD_WRITE, ByteOrder.BIG_ENDIAN);
+            Memory.pokeInt(mTemp, 4, byteCount, ByteOrder.BIG_ENDIAN);
+            IoBridge.write(mClient, mTemp, 0, MSG_LENGTH);
+            IoBridge.write(mClient, buffer, byteOffset, byteCount);
+!!!7462021.java!!!	write(in oneByte : int) : void
+            Streams.writeSingleByte(this, oneByte);

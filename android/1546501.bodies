@@ -1,0 +1,32 @@
+class SurfaceFlingerVsyncChoreographer
+!!!10182021.java!!!	SurfaceFlingerVsyncChoreographer(inout handler : Handler, inout display : Display, inout choreographer : Choreographer)
+        mHandler = handler;
+        mChoreographer = choreographer;
+        mSurfaceFlingerOffsetMs = calculateAppSurfaceFlingerVsyncOffsetMs(display);
+!!!10182149.java!!!	getSurfaceFlingerOffsetMs() : long
+        return mSurfaceFlingerOffsetMs;
+!!!10182277.java!!!	calculateAppSurfaceFlingerVsyncOffsetMs(inout display : Display) : long
+
+        // Calculate vsync offset from SurfaceFlinger.
+        // See frameworks/native/services/surfaceflinger/SurfaceFlinger.cpp:getDisplayConfigs
+        long vsyncPeriod = (long) (ONE_S_IN_NS / display.getRefreshRate());
+        long sfVsyncOffset = vsyncPeriod - (display.getPresentationDeadlineNanos() - ONE_MS_IN_NS);
+        return Math.max(0, (sfVsyncOffset - display.getAppVsyncOffsetNanos()) / ONE_MS_IN_NS);
+!!!10182405.java!!!	scheduleAtSfVsync(inout r : Runnable) : void
+        final long delay = calculateDelay();
+        if (delay <= 0) {
+            r.run();
+        } else {
+            mHandler.postDelayed(r, delay);
+        }
+!!!10182533.java!!!	scheduleAtSfVsync(inout h : Handler, inout m : Message) : void
+        final long delay = calculateDelay();
+        if (delay <= 0) {
+            h.handleMessage(m);
+        } else {
+            m.setAsynchronous(true);
+            h.sendMessageDelayed(m, delay);
+        }
+!!!10182661.java!!!	calculateDelay() : long
+        final long sinceFrameStart = System.nanoTime() - mChoreographer.getLastFrameTimeNanos();
+        return mSurfaceFlingerOffsetMs - sinceFrameStart / 1000000;

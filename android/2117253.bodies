@@ -1,0 +1,92 @@
+class LruCache
+!!!14482437.cpp!!!	LruCache(in maxCapacity : uint32_t)
+    mSet->max_load_factor(1.0);
+!!!14482565.cpp!!!	~LruCache()
+    // Need to delete created entries.
+    clear();
+!!!14482821.cpp!!!	size() : size_t
+    return mSet->size();
+!!!14482949.cpp!!!	get(in key : TKey) : TValue
+    typename LruCacheSet::const_iterator find_result = findByKey(key);
+    if (find_result == mSet->end()) {
+        return mNullValue;
+    }
+    // All the elements in the set are of type Entry. See comment in the definition
+    // of LruCacheSet above.
+    Entry *entry = reinterpret_cast<Entry*>(*find_result);
+    detachFromCache(*entry);
+    attachToCache(*entry);
+    return entry->value;
+!!!14483077.cpp!!!	put(in key : TKey, in value : TValue) : bool
+    if (mMaxCapacity != kUnlimitedCapacity && size() >= mMaxCapacity) {
+        removeOldest();
+    }
+
+    if (findByKey(key) != mSet->end()) {
+        return false;
+    }
+
+    Entry* newEntry = new Entry(key, value);
+    mSet->insert(newEntry);
+    attachToCache(*newEntry);
+    return true;
+!!!14483205.cpp!!!	remove(in key : TKey) : bool
+    typename LruCacheSet::const_iterator find_result = findByKey(key);
+    if (find_result == mSet->end()) {
+        return false;
+    }
+    // All the elements in the set are of type Entry. See comment in the definition
+    // of LruCacheSet above.
+    Entry* entry = reinterpret_cast<Entry*>(*find_result);
+    mSet->erase(entry);
+    if (mListener) {
+        (*mListener)(entry->key, entry->value);
+    }
+    detachFromCache(*entry);
+    delete entry;
+    return true;
+!!!14483333.cpp!!!	removeOldest() : bool
+    if (mOldest != NULL) {
+        return remove(mOldest->key);
+        // TODO: should probably abort if false
+    }
+    return false;
+!!!14483461.cpp!!!	clear() : void
+    if (mListener) {
+        for (Entry* p = mOldest; p != NULL; p = p->child) {
+            (*mListener)(p->key, p->value);
+        }
+    }
+    mYoungest = NULL;
+    mOldest = NULL;
+    for (auto entry : *mSet.get()) {
+        delete entry;
+    }
+    mSet->clear();
+!!!14483589.cpp!!!	peekOldestValue() : TValue
+    if (mOldest) {
+        return mOldest->value;
+    }
+    return mNullValue;
+!!!14484613.cpp!!!	attachToCache(inout entry : Entry) : void
+    if (mYoungest == NULL) {
+        mYoungest = mOldest = &entry;
+    } else {
+        entry.parent = mYoungest;
+        mYoungest->child = &entry;
+        mYoungest = &entry;
+    }
+!!!14484741.cpp!!!	detachFromCache(inout entry : Entry) : void
+    if (entry.parent != NULL) {
+        entry.parent->child = entry.child;
+    } else {
+        mOldest = entry.child;
+    }
+    if (entry.child != NULL) {
+        entry.child->parent = entry.parent;
+    } else {
+        mYoungest = entry.parent;
+    }
+
+    entry.parent = NULL;
+    entry.child = NULL;

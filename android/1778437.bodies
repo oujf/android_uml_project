@@ -1,0 +1,144 @@
+class WebViewUpdateServiceImpl
+!!!12574853.java!!!	WebViewUpdateServiceImpl(inout context : Context, inout systemInterface : SystemInterface)
+        mContext = context;
+        mSystemInterface = systemInterface;
+        mWebViewUpdater = new WebViewUpdater(mContext, mSystemInterface);
+!!!12574981.java!!!	packageStateChanged(in packageName : String, in changedState : int, in userId : int) : void
+        // We don't early out here in different cases where we could potentially early-out (e.g. if
+        // we receive PACKAGE_CHANGED for another user than the system user) since that would
+        // complicate this logic further and open up for more edge cases.
+        updateFallbackStateOnPackageChange(packageName, changedState);
+        mWebViewUpdater.packageStateChanged(packageName, changedState);
+!!!12575109.java!!!	prepareWebViewInSystemServer() : void
+        updateFallbackStateOnBoot();
+        mWebViewUpdater.prepareWebViewInSystemServer();
+        mSystemInterface.notifyZygote(isMultiProcessEnabled());
+!!!12575237.java!!!	existsValidNonFallbackProvider(inout providers : WebViewProviderInfo [[]]) : boolean
+        for (WebViewProviderInfo provider : providers) {
+            if (provider.availableByDefault && !provider.isFallback) {
+                // userPackages can contain null objects.
+                List<UserPackage> userPackages =
+                        mSystemInterface.getPackageInfoForProviderAllUsers(mContext, provider);
+                if (WebViewUpdater.isInstalledAndEnabledForAllUsers(userPackages) &&
+                        // Checking validity of the package for the system user (rather than all
+                        // users) since package validity depends not on the user but on the package
+                        // itself.
+                        mWebViewUpdater.isValidProvider(provider,
+                                userPackages.get(UserHandle.USER_SYSTEM).getPackageInfo())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!12575365.java!!!	handleNewUser(in userId : int) : void
+        // The system user is always started at boot, and by that point we have already run one
+        // round of the package-changing logic (through prepareWebViewInSystemServer()), so early
+        // out here.
+        if (userId == UserHandle.USER_SYSTEM) return;
+        handleUserChange();
+!!!12575493.java!!!	handleUserRemoved(in userId : int) : void
+        handleUserChange();
+!!!12575621.java!!!	handleUserChange() : void
+        if (mSystemInterface.isFallbackLogicEnabled()) {
+            updateFallbackState(mSystemInterface.getWebViewPackages());
+        }
+        // Potentially trigger package-changing logic.
+        mWebViewUpdater.updateCurrentWebViewPackage(null);
+!!!12575749.java!!!	notifyRelroCreationCompleted() : void
+        mWebViewUpdater.notifyRelroCreationCompleted();
+!!!12575877.java!!!	waitForAndGetProvider() : WebViewProviderResponse
+        return mWebViewUpdater.waitForAndGetProvider();
+!!!12576005.java!!!	changeProviderAndSetting(in newProvider : String) : String
+        return mWebViewUpdater.changeProviderAndSetting(newProvider);
+!!!12576133.java!!!	getValidWebViewPackages() : WebViewProviderInfo
+        return mWebViewUpdater.getValidWebViewPackages();
+!!!12576261.java!!!	getWebViewPackages() : WebViewProviderInfo
+        return mSystemInterface.getWebViewPackages();
+!!!12576389.java!!!	getCurrentWebViewPackage() : PackageInfo
+        return mWebViewUpdater.getCurrentWebViewPackage();
+!!!12576517.java!!!	enableFallbackLogic(inout enable : boolean) : void
+        mSystemInterface.enableFallbackLogic(enable);
+!!!12576645.java!!!	updateFallbackStateOnBoot() : void
+        if (!mSystemInterface.isFallbackLogicEnabled()) return;
+
+        WebViewProviderInfo[] webviewProviders = mSystemInterface.getWebViewPackages();
+        updateFallbackState(webviewProviders);
+!!!12576773.java!!!	updateFallbackStateOnPackageChange(in changedPackage : String, in changedState : int) : void
+        if (!mSystemInterface.isFallbackLogicEnabled()) return;
+
+        WebViewProviderInfo[] webviewProviders = mSystemInterface.getWebViewPackages();
+
+        // A package was changed / updated / downgraded, early out if it is not one of the
+        // webview packages that are available by default.
+        boolean changedPackageAvailableByDefault = false;
+        for (WebViewProviderInfo provider : webviewProviders) {
+            if (provider.packageName.equals(changedPackage)) {
+                if (provider.availableByDefault) {
+                    changedPackageAvailableByDefault = true;
+                }
+                break;
+            }
+        }
+        if (!changedPackageAvailableByDefault) return;
+        updateFallbackState(webviewProviders);
+!!!12576901.java!!!	updateFallbackState(inout webviewProviders : WebViewProviderInfo [[]]) : void
+        // If there exists a valid and enabled non-fallback package - disable the fallback
+        // package, otherwise, enable it.
+        WebViewProviderInfo fallbackProvider = getFallbackProvider(webviewProviders);
+        if (fallbackProvider == null) return;
+        boolean existsValidNonFallbackProvider = existsValidNonFallbackProvider(webviewProviders);
+
+        List<UserPackage> userPackages =
+                mSystemInterface.getPackageInfoForProviderAllUsers(mContext, fallbackProvider);
+        if (existsValidNonFallbackProvider && !isDisabledForAllUsers(userPackages)) {
+            mSystemInterface.uninstallAndDisablePackageForAllUsers(mContext,
+                    fallbackProvider.packageName);
+        } else if (!existsValidNonFallbackProvider
+                && !WebViewUpdater.isInstalledAndEnabledForAllUsers(userPackages)) {
+            // Enable the fallback package for all users.
+            mSystemInterface.enablePackageForAllUsers(mContext,
+                    fallbackProvider.packageName, true);
+        }
+!!!12577029.java!!!	getFallbackProvider(inout webviewPackages : WebViewProviderInfo [[]]) : WebViewProviderInfo
+        for (WebViewProviderInfo provider : webviewPackages) {
+            if (provider.isFallback) {
+                return provider;
+            }
+        }
+        return null;
+!!!12577157.java!!!	isFallbackPackage(in packageName : String) : boolean
+        if (packageName == null || !mSystemInterface.isFallbackLogicEnabled()) return false;
+
+        WebViewProviderInfo[] webviewPackages = mSystemInterface.getWebViewPackages();
+        WebViewProviderInfo fallbackProvider = getFallbackProvider(webviewPackages);
+        return (fallbackProvider != null
+                && packageName.equals(fallbackProvider.packageName));
+!!!12577285.java!!!	isMultiProcessEnabled() : boolean
+        int settingValue = mSystemInterface.getMultiProcessSetting(mContext);
+        if (mSystemInterface.isMultiProcessDefaultEnabled()) {
+            // Multiprocess should be enabled unless the user has turned it off manually.
+            return settingValue > MULTIPROCESS_SETTING_OFF_VALUE;
+        } else {
+            // Multiprocess should not be enabled, unless the user has turned it on manually.
+            return settingValue >= MULTIPROCESS_SETTING_ON_VALUE;
+        }
+!!!12577413.java!!!	enableMultiProcess(inout enable : boolean) : void
+        PackageInfo current = getCurrentWebViewPackage();
+        mSystemInterface.setMultiProcessSetting(mContext,
+                enable ? MULTIPROCESS_SETTING_ON_VALUE : MULTIPROCESS_SETTING_OFF_VALUE);
+        mSystemInterface.notifyZygote(enable);
+        if (current != null) {
+            mSystemInterface.killPackageDependents(current.packageName);
+        }
+!!!12577541.java!!!	isDisabledForAllUsers(inout userPackages : List<UserPackage>) : boolean
+        for (UserPackage userPackage : userPackages) {
+            if (userPackage.getPackageInfo() != null && userPackage.isEnabledPackage()) {
+                return false;
+            }
+        }
+        return true;
+!!!12577669.java!!!	dumpState(inout pw : PrintWriter) : void
+        pw.println("Current WebView Update Service state");
+        pw.println(String.format("  Fallback logic enabled: %b",
+                mSystemInterface.isFallbackLogicEnabled()));
+        mWebViewUpdater.dumpState(pw);

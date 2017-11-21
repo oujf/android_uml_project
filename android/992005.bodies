@@ -1,0 +1,455 @@
+class Dialog
+!!!5118725.java!!!	Dialog(inout context : Context)
+        this(context, 0, true);
+!!!5118853.java!!!	Dialog(inout context : Context, in themeResId : int)
+        this(context, themeResId, true);
+!!!5118981.java!!!	Dialog(inout context : Context, in themeResId : int, inout createContextThemeWrapper : boolean)
+        if (createContextThemeWrapper) {
+            if (themeResId == ResourceId.ID_NULL) {
+                final TypedValue outValue = new TypedValue();
+                context.getTheme().resolveAttribute(R.attr.dialogTheme, outValue, true);
+                themeResId = outValue.resourceId;
+            }
+            mContext = new ContextThemeWrapper(context, themeResId);
+        } else {
+            mContext = context;
+        }
+
+        mWindowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+
+        final Window w = new PhoneWindow(mContext);
+        mWindow = w;
+        w.setCallback(this);
+        w.setOnWindowDismissedCallback(this);
+        w.setOnWindowSwipeDismissedCallback(() -> {
+            if (mCancelable) {
+                cancel();
+            }
+        });
+        w.setWindowManager(mWindowManager, null, null);
+        w.setGravity(Gravity.CENTER);
+
+        mListenersHandler = new ListenersHandler(this);
+!!!5119109.java!!!	Dialog(inout context : Context, inout cancelable : boolean, inout cancelCallback : Message)
+        this(context);
+        mCancelable = cancelable;
+        updateWindowForCancelable();
+        mCancelMessage = cancelCallback;
+!!!5119237.java!!!	Dialog(inout context : Context, inout cancelable : boolean, inout cancelListener : DialogInterface::OnCancelListener)
+        this(context);
+        mCancelable = cancelable;
+        updateWindowForCancelable();
+        setOnCancelListener(cancelListener);
+!!!5119365.java!!!	getContext() : Context
+        return mContext;
+!!!5119493.java!!!	getActionBar() : ActionBar
+        return mActionBar;
+!!!5119621.java!!!	setOwnerActivity(inout activity : Activity) : void
+        mOwnerActivity = activity;
+        
+        getWindow().setVolumeControlStream(mOwnerActivity.getVolumeControlStream());
+!!!5119749.java!!!	getOwnerActivity() : Activity
+        return mOwnerActivity;
+!!!5119877.java!!!	isShowing() : boolean
+        return mShowing;
+!!!5120005.java!!!	create() : void
+        if (!mCreated) {
+            dispatchOnCreate(null);
+        }
+!!!5120133.java!!!	show() : void
+        if (mShowing) {
+            if (mDecor != null) {
+                if (mWindow.hasFeature(Window.FEATURE_ACTION_BAR)) {
+                    mWindow.invalidatePanelMenu(Window.FEATURE_ACTION_BAR);
+                }
+                mDecor.setVisibility(View.VISIBLE);
+            }
+            return;
+        }
+
+        mCanceled = false;
+
+        if (!mCreated) {
+            dispatchOnCreate(null);
+        } else {
+            // Fill the DecorView in on any configuration changes that
+            // may have occured while it was removed from the WindowManager.
+            final Configuration config = mContext.getResources().getConfiguration();
+            mWindow.getDecorView().dispatchConfigurationChanged(config);
+        }
+
+        onStart();
+        mDecor = mWindow.getDecorView();
+
+        if (mActionBar == null && mWindow.hasFeature(Window.FEATURE_ACTION_BAR)) {
+            final ApplicationInfo info = mContext.getApplicationInfo();
+            mWindow.setDefaultIcon(info.icon);
+            mWindow.setDefaultLogo(info.logo);
+            mActionBar = new WindowDecorActionBar(this);
+        }
+
+        WindowManager.LayoutParams l = mWindow.getAttributes();
+        if ((l.softInputMode
+                & WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION) == 0) {
+            WindowManager.LayoutParams nl = new WindowManager.LayoutParams();
+            nl.copyFrom(l);
+            nl.softInputMode |=
+                    WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION;
+            l = nl;
+        }
+
+        mWindowManager.addView(mDecor, l);
+        mShowing = true;
+
+        sendShowMessage();
+!!!5120261.java!!!	hide() : void
+        if (mDecor != null) {
+            mDecor.setVisibility(View.GONE);
+        }
+!!!5120389.java!!!	dismiss() : void
+        if (Looper.myLooper() == mHandler.getLooper()) {
+            dismissDialog();
+        } else {
+            mHandler.post(mDismissAction);
+        }
+!!!5120517.java!!!	dismissDialog() : void
+        if (mDecor == null || !mShowing) {
+            return;
+        }
+
+        if (mWindow.isDestroyed()) {
+            Log.e(TAG, "Tried to dismissDialog() but the Dialog's window was already destroyed!");
+            return;
+        }
+
+        try {
+            mWindowManager.removeViewImmediate(mDecor);
+        } finally {
+            if (mActionMode != null) {
+                mActionMode.finish();
+            }
+            mDecor = null;
+            mWindow.closeAllPanels();
+            onStop();
+            mShowing = false;
+
+            sendDismissMessage();
+        }
+!!!5120645.java!!!	sendDismissMessage() : void
+        if (mDismissMessage != null) {
+            // Obtain a new message so this dialog can be re-used
+            Message.obtain(mDismissMessage).sendToTarget();
+        }
+!!!5120773.java!!!	sendShowMessage() : void
+        if (mShowMessage != null) {
+            // Obtain a new message so this dialog can be re-used
+            Message.obtain(mShowMessage).sendToTarget();
+        }
+!!!5120901.java!!!	dispatchOnCreate(inout savedInstanceState : Bundle) : void
+        if (!mCreated) {
+            onCreate(savedInstanceState);
+            mCreated = true;
+        }
+!!!5121157.java!!!	onStart() : void
+        if (mActionBar != null) mActionBar.setShowHideAnimationEnabled(true);
+!!!5121285.java!!!	onStop() : void
+        if (mActionBar != null) mActionBar.setShowHideAnimationEnabled(false);
+!!!5121413.java!!!	onSaveInstanceState() : Bundle
+        Bundle bundle = new Bundle();
+        bundle.putBoolean(DIALOG_SHOWING_TAG, mShowing);
+        if (mCreated) {
+            bundle.putBundle(DIALOG_HIERARCHY_TAG, mWindow.saveHierarchyState());
+        }
+        return bundle;
+!!!5121541.java!!!	onRestoreInstanceState(inout savedInstanceState : Bundle) : void
+        final Bundle dialogHierarchyState = savedInstanceState.getBundle(DIALOG_HIERARCHY_TAG);
+        if (dialogHierarchyState == null) {
+            // dialog has never been shown, or onCreated, nothing to restore.
+            return;
+        }
+        dispatchOnCreate(savedInstanceState);
+        mWindow.restoreHierarchyState(dialogHierarchyState);
+        if (savedInstanceState.getBoolean(DIALOG_SHOWING_TAG)) {
+            show();
+        }
+!!!5121669.java!!!	getWindow() : Window
+        return mWindow;
+!!!5121797.java!!!	getCurrentFocus() : View
+        return mWindow != null ? mWindow.getCurrentFocus() : null;
+!!!5121925.java!!!	findViewById(in id : int) : T
+        return mWindow.findViewById(id);
+!!!5122053.java!!!	setContentView(in layoutResID : int) : void
+        mWindow.setContentView(layoutResID);
+!!!5122181.java!!!	setContentView(inout view : View) : void
+        mWindow.setContentView(view);
+!!!5122309.java!!!	setContentView(inout view : View, inout params : ViewGroup::LayoutParams) : void
+        mWindow.setContentView(view, params);
+!!!5122437.java!!!	addContentView(inout view : View, inout params : ViewGroup::LayoutParams) : void
+        mWindow.addContentView(view, params);
+!!!5122565.java!!!	setTitle(inout title : CharSequence) : void
+        mWindow.setTitle(title);
+        mWindow.getAttributes().setTitle(title);
+!!!5122693.java!!!	setTitle(in titleId : int) : void
+        setTitle(mContext.getText(titleId));
+!!!5122821.java!!!	onKeyDown(in keyCode : int, inout event : KeyEvent) : boolean
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            event.startTracking();
+            return true;
+        }
+
+        return false;
+!!!5122949.java!!!	onKeyLongPress(in keyCode : int, inout event : KeyEvent) : boolean
+        return false;
+!!!5123077.java!!!	onKeyUp(in keyCode : int, inout event : KeyEvent) : boolean
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.isTracking()
+                && !event.isCanceled()) {
+            onBackPressed();
+            return true;
+        }
+        return false;
+!!!5123205.java!!!	onKeyMultiple(in keyCode : int, in repeatCount : int, inout event : KeyEvent) : boolean
+        return false;
+!!!5123333.java!!!	onBackPressed() : void
+        if (mCancelable) {
+            cancel();
+        }
+!!!5123461.java!!!	onKeyShortcut(in keyCode : int, inout event : KeyEvent) : boolean
+        return false;
+!!!5123589.java!!!	onTouchEvent(inout event : MotionEvent) : boolean
+        if (mCancelable && mShowing && mWindow.shouldCloseOnTouch(mContext, event)) {
+            cancel();
+            return true;
+        }
+        
+        return false;
+!!!5123717.java!!!	onTrackballEvent(inout event : MotionEvent) : boolean
+        return false;
+!!!5123845.java!!!	onGenericMotionEvent(inout event : MotionEvent) : boolean
+        return false;
+!!!5123973.java!!!	onWindowAttributesChanged(inout params : WindowManager::LayoutParams) : void
+        if (mDecor != null) {
+            mWindowManager.updateViewLayout(mDecor, params);
+        }
+!!!5124613.java!!!	onWindowDismissed(inout finishTask : boolean, inout suppressWindowTransition : boolean) : void
+        dismiss();
+!!!5124741.java!!!	dispatchKeyEvent(inout event : KeyEvent) : boolean
+        if ((mOnKeyListener != null) && (mOnKeyListener.onKey(this, event.getKeyCode(), event))) {
+            return true;
+        }
+        if (mWindow.superDispatchKeyEvent(event)) {
+            return true;
+        }
+        return event.dispatch(this, mDecor != null
+                ? mDecor.getKeyDispatcherState() : null, this);
+!!!5124869.java!!!	dispatchKeyShortcutEvent(inout event : KeyEvent) : boolean
+        if (mWindow.superDispatchKeyShortcutEvent(event)) {
+            return true;
+        }
+        return onKeyShortcut(event.getKeyCode(), event);
+!!!5124997.java!!!	dispatchTouchEvent(inout ev : MotionEvent) : boolean
+        if (mWindow.superDispatchTouchEvent(ev)) {
+            return true;
+        }
+        return onTouchEvent(ev);
+!!!5125125.java!!!	dispatchTrackballEvent(inout ev : MotionEvent) : boolean
+        if (mWindow.superDispatchTrackballEvent(ev)) {
+            return true;
+        }
+        return onTrackballEvent(ev);
+!!!5125253.java!!!	dispatchGenericMotionEvent(inout ev : MotionEvent) : boolean
+        if (mWindow.superDispatchGenericMotionEvent(ev)) {
+            return true;
+        }
+        return onGenericMotionEvent(ev);
+!!!5125381.java!!!	dispatchPopulateAccessibilityEvent(inout event : AccessibilityEvent) : boolean
+        event.setClassName(getClass().getName());
+        event.setPackageName(mContext.getPackageName());
+
+        LayoutParams params = getWindow().getAttributes();
+        boolean isFullScreen = (params.width == LayoutParams.MATCH_PARENT) &&
+            (params.height == LayoutParams.MATCH_PARENT);
+        event.setFullScreen(isFullScreen);
+
+        return false;
+!!!5125509.java!!!	onCreatePanelView(in featureId : int) : View
+        return null;
+!!!5125637.java!!!	onCreatePanelMenu(in featureId : int, inout menu : Menu) : boolean
+        if (featureId == Window.FEATURE_OPTIONS_PANEL) {
+            return onCreateOptionsMenu(menu);
+        }
+        
+        return false;
+!!!5125765.java!!!	onPreparePanel(in featureId : int, inout view : View, inout menu : Menu) : boolean
+        if (featureId == Window.FEATURE_OPTIONS_PANEL && menu != null) {
+            return onPrepareOptionsMenu(menu) && menu.hasVisibleItems();
+        }
+        return true;
+!!!5125893.java!!!	onMenuOpened(in featureId : int, inout menu : Menu) : boolean
+        if (featureId == Window.FEATURE_ACTION_BAR) {
+            mActionBar.dispatchMenuVisibilityChanged(true);
+        }
+        return true;
+!!!5126021.java!!!	onMenuItemSelected(in featureId : int, inout item : MenuItem) : boolean
+        return false;
+!!!5126149.java!!!	onPanelClosed(in featureId : int, inout menu : Menu) : void
+        if (featureId == Window.FEATURE_ACTION_BAR) {
+            mActionBar.dispatchMenuVisibilityChanged(false);
+        }
+!!!5126277.java!!!	onCreateOptionsMenu(inout menu : Menu) : boolean
+        return true;
+!!!5126405.java!!!	onPrepareOptionsMenu(inout menu : Menu) : boolean
+        return true;
+!!!5126533.java!!!	onOptionsItemSelected(inout item : MenuItem) : boolean
+        return false;
+!!!5126789.java!!!	openOptionsMenu() : void
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.openPanel(Window.FEATURE_OPTIONS_PANEL, null);
+        }
+!!!5126917.java!!!	closeOptionsMenu() : void
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.closePanel(Window.FEATURE_OPTIONS_PANEL);
+        }
+!!!5127045.java!!!	invalidateOptionsMenu() : void
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.invalidatePanelMenu(Window.FEATURE_OPTIONS_PANEL);
+        }
+!!!5127301.java!!!	registerForContextMenu(inout view : View) : void
+        view.setOnCreateContextMenuListener(this);
+!!!5127429.java!!!	unregisterForContextMenu(inout view : View) : void
+        view.setOnCreateContextMenuListener(null);
+!!!5127557.java!!!	openContextMenu(inout view : View) : void
+        view.showContextMenu();
+!!!5127685.java!!!	onContextItemSelected(inout item : MenuItem) : boolean
+        return false;
+!!!5127941.java!!!	onSearchRequested(inout searchEvent : SearchEvent) : boolean
+        mSearchEvent = searchEvent;
+        return onSearchRequested();
+!!!5128069.java!!!	onSearchRequested() : boolean
+        final SearchManager searchManager = (SearchManager) mContext
+                .getSystemService(Context.SEARCH_SERVICE);
+
+        // associate search with owner activity
+        final ComponentName appName = getAssociatedActivity();
+        if (appName != null && searchManager.getSearchableInfo(appName) != null) {
+            searchManager.startSearch(null, false, appName, null, false);
+            dismiss();
+            return true;
+        } else {
+            return false;
+        }
+!!!5128197.java!!!	getSearchEvent() : SearchEvent
+        return mSearchEvent;
+!!!5128325.java!!!	onWindowStartingActionMode(inout callback : ActionMode::Callback) : ActionMode
+        if (mActionBar != null && mActionModeTypeStarting == ActionMode.TYPE_PRIMARY) {
+            return mActionBar.startActionMode(callback);
+        }
+        return null;
+!!!5128453.java!!!	onWindowStartingActionMode(inout callback : ActionMode::Callback, in type : int) : ActionMode
+        try {
+            mActionModeTypeStarting = type;
+            return onWindowStartingActionMode(callback);
+        } finally {
+            mActionModeTypeStarting = ActionMode.TYPE_PRIMARY;
+        }
+!!!5128581.java!!!	onActionModeStarted(inout mode : ActionMode) : void
+        mActionMode = mode;
+!!!5128709.java!!!	onActionModeFinished(inout mode : ActionMode) : void
+        if (mode == mActionMode) {
+            mActionMode = null;
+        }
+!!!5128837.java!!!	getAssociatedActivity() : ComponentName
+        Activity activity = mOwnerActivity;
+        Context context = getContext();
+        while (activity == null && context != null) {
+            if (context instanceof Activity) {
+                activity = (Activity) context;  // found it!
+            } else {
+                context = (context instanceof ContextWrapper) ?
+                        ((ContextWrapper) context).getBaseContext() : // unwrap one level
+                        null;                                         // done
+            }
+        }
+        return activity == null ? null : activity.getComponentName();
+!!!5128965.java!!!	takeKeyEvents(inout get : boolean) : void
+        mWindow.takeKeyEvents(get);
+!!!5129093.java!!!	requestWindowFeature(in featureId : int) : boolean
+        return getWindow().requestFeature(featureId);
+!!!5129221.java!!!	setFeatureDrawableResource(in featureId : int, in resId : int) : void
+        getWindow().setFeatureDrawableResource(featureId, resId);
+!!!5129349.java!!!	setFeatureDrawableUri(in featureId : int, inout uri : Uri) : void
+        getWindow().setFeatureDrawableUri(featureId, uri);
+!!!5129477.java!!!	setFeatureDrawable(in featureId : int, inout drawable : Drawable) : void
+        getWindow().setFeatureDrawable(featureId, drawable);
+!!!5129605.java!!!	setFeatureDrawableAlpha(in featureId : int, in alpha : int) : void
+        getWindow().setFeatureDrawableAlpha(featureId, alpha);
+!!!5129733.java!!!	getLayoutInflater() : LayoutInflater
+        return getWindow().getLayoutInflater();
+!!!5129861.java!!!	setCancelable(inout flag : boolean) : void
+        mCancelable = flag;
+        updateWindowForCancelable();
+!!!5129989.java!!!	setCanceledOnTouchOutside(inout cancel : boolean) : void
+        if (cancel && !mCancelable) {
+            mCancelable = true;
+            updateWindowForCancelable();
+        }
+        
+        mWindow.setCloseOnTouchOutside(cancel);
+!!!5130117.java!!!	cancel() : void
+        if (!mCanceled && mCancelMessage != null) {
+            mCanceled = true;
+            // Obtain a new message so this dialog can be re-used
+            Message.obtain(mCancelMessage).sendToTarget();
+        }
+        dismiss();
+!!!5130245.java!!!	setOnCancelListener(inout listener : DialogInterface::OnCancelListener) : void
+        if (mCancelAndDismissTaken != null) {
+            throw new IllegalStateException(
+                    "OnCancelListener is already taken by "
+                    + mCancelAndDismissTaken + " and can not be replaced.");
+        }
+        if (listener != null) {
+            mCancelMessage = mListenersHandler.obtainMessage(CANCEL, listener);
+        } else {
+            mCancelMessage = null;
+        }
+!!!5130373.java!!!	setCancelMessage(inout msg : Message) : void
+        mCancelMessage = msg;
+!!!5130501.java!!!	setOnDismissListener(inout listener : DialogInterface::OnDismissListener) : void
+        if (mCancelAndDismissTaken != null) {
+            throw new IllegalStateException(
+                    "OnDismissListener is already taken by "
+                    + mCancelAndDismissTaken + " and can not be replaced.");
+        }
+        if (listener != null) {
+            mDismissMessage = mListenersHandler.obtainMessage(DISMISS, listener);
+        } else {
+            mDismissMessage = null;
+        }
+!!!5130629.java!!!	setOnShowListener(inout listener : DialogInterface::OnShowListener) : void
+        if (listener != null) {
+            mShowMessage = mListenersHandler.obtainMessage(SHOW, listener);
+        } else {
+            mShowMessage = null;
+        }
+!!!5130757.java!!!	setDismissMessage(inout msg : Message) : void
+        mDismissMessage = msg;
+!!!5130885.java!!!	takeCancelAndDismissListeners(in msg : String, inout cancel : DialogInterface::OnCancelListener, inout dismiss : DialogInterface::OnDismissListener) : boolean
+        if (mCancelAndDismissTaken != null) {
+            mCancelAndDismissTaken = null;
+        } else if (mCancelMessage != null || mDismissMessage != null) {
+            return false;
+        }
+        
+        setOnCancelListener(cancel);
+        setOnDismissListener(dismiss);
+        mCancelAndDismissTaken = msg;
+        
+        return true;
+!!!5131013.java!!!	setVolumeControlStream(in streamType : int) : void
+        getWindow().setVolumeControlStream(streamType);
+!!!5131141.java!!!	getVolumeControlStream() : int
+        return getWindow().getVolumeControlStream();
+!!!5131269.java!!!	setOnKeyListener(inout onKeyListener : DialogInterface::OnKeyListener) : void
+        mOnKeyListener = onKeyListener;
+!!!5131653.java!!!	updateWindowForCancelable() : void
+        mWindow.setCloseOnSwipeEnabled(mCancelable);

@@ -1,0 +1,40 @@
+class RemoveObsoleteFilesQueueItem
+!!!12760069.java!!!	RemoveObsoleteFilesQueueItem(inout persistentTaskIds : ArraySet, inout runningUserIds : int [[]])
+            mPersistentTaskIds = persistentTaskIds;
+            mRunningUserIds = runningUserIds;
+!!!12760197.java!!!	write() : void
+            final ArraySet<Integer> newPersistedTaskIds;
+            synchronized (mLock) {
+                newPersistedTaskIds = new ArraySet<>(mPersistedTaskIdsSinceLastRemoveObsolete);
+            }
+            for (int userId : mRunningUserIds) {
+                final File dir = getDirectory(userId);
+                final String[] files = dir.list();
+                if (files == null) {
+                    continue;
+                }
+                for (String file : files) {
+                    final int taskId = getTaskId(file);
+                    if (!mPersistentTaskIds.contains(taskId)
+                            && !newPersistedTaskIds.contains(taskId)) {
+                        new File(dir, file).delete();
+                    }
+                }
+            }
+!!!12760325.java!!!	getTaskId(in fileName : String) : int
+            if (!fileName.endsWith(PROTO_EXTENSION) && !fileName.endsWith(BITMAP_EXTENSION)) {
+                return -1;
+            }
+            final int end = fileName.lastIndexOf('.');
+            if (end == -1) {
+                return -1;
+            }
+            String name = fileName.substring(0, end);
+            if (name.endsWith(REDUCED_POSTFIX)) {
+                name = name.substring(0, name.length() - REDUCED_POSTFIX.length());
+            }
+            try {
+                return Integer.parseInt(name);
+            } catch (NumberFormatException e) {
+                return -1;
+            }

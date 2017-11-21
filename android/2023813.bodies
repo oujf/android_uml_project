@@ -1,0 +1,48 @@
+class OccupancyTracker
+!!!14303877.cpp!!!	registerOccupancyChange(in occupancy : size_t) : void
+    ATRACE_CALL();
+    nsecs_t now = systemTime();
+    nsecs_t delta = now - mLastOccupancyChangeTime;
+    if (delta > NEW_SEGMENT_DELAY) {
+        recordPendingSegment();
+    } else {
+        mPendingSegment.totalTime += delta;
+        if (mPendingSegment.mOccupancyTimes.count(mLastOccupancy)) {
+            mPendingSegment.mOccupancyTimes[mLastOccupancy] += delta;
+        } else {
+            mPendingSegment.mOccupancyTimes[mLastOccupancy] = delta;
+        }
+    }
+    if (occupancy > mLastOccupancy) {
+        ++mPendingSegment.numFrames;
+    }
+    mLastOccupancyChangeTime = now;
+    mLastOccupancy = occupancy;
+!!!14304005.cpp!!!	getSegmentHistory(in forceFlush : bool) : std::vector<Segment>
+    if (forceFlush) {
+        recordPendingSegment();
+    }
+    std::vector<Segment> segments(mSegmentHistory.cbegin(),
+            mSegmentHistory.cend());
+    mSegmentHistory.clear();
+    return segments;
+!!!14304261.cpp!!!	recordPendingSegment() : void
+    // Only record longer segments to get a better measurement of actual double-
+    // vs. triple-buffered time
+    if (mPendingSegment.numFrames > LONG_SEGMENT_THRESHOLD) {
+        float occupancyAverage = 0.0f;
+        bool usedThirdBuffer = false;
+        for (const auto& timePair : mPendingSegment.mOccupancyTimes) {
+            size_t occupancy = timePair.first;
+            float timeRatio = static_cast<float>(timePair.second) /
+                    mPendingSegment.totalTime;
+            occupancyAverage += timeRatio * occupancy;
+            usedThirdBuffer = usedThirdBuffer || (occupancy > 1);
+        }
+        mSegmentHistory.push_front({mPendingSegment.totalTime,
+                mPendingSegment.numFrames, occupancyAverage, usedThirdBuffer});
+        if (mSegmentHistory.size() > MAX_HISTORY_SIZE) {
+            mSegmentHistory.pop_back();
+        }
+    }
+    mPendingSegment.clear();

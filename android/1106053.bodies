@@ -1,0 +1,100 @@
+class Event
+!!!8428549.java!!!	Event(inout data : byte [[]])
+            mBuffer = ByteBuffer.wrap(data);
+            mBuffer.order(ByteOrder.nativeOrder());
+!!!8428677.java!!!	getProcessId() : int
+            return mBuffer.getInt(PROCESS_OFFSET);
+!!!8428805.java!!!	getUid() : int
+            try {
+                return mBuffer.getInt(UID_OFFSET);
+            } catch (IndexOutOfBoundsException e) {
+                // buffer won't contain the UID if the caller doesn't have permission.
+                return -1;
+            }
+!!!8428933.java!!!	getThreadId() : int
+            return mBuffer.getInt(THREAD_OFFSET);
+!!!8429061.java!!!	getTimeNanos() : long
+            return mBuffer.getInt(SECONDS_OFFSET) * 1000000000l
+                    + mBuffer.getInt(NANOSECONDS_OFFSET);
+!!!8429189.java!!!	getTag() : int
+            int offset = mBuffer.getShort(HEADER_SIZE_OFFSET);
+            if (offset == 0) {
+                offset = V1_PAYLOAD_START;
+            }
+            return mBuffer.getInt(offset);
+!!!8429317.java!!!	getData() : Object
+            try {
+                int offset = mBuffer.getShort(HEADER_SIZE_OFFSET);
+                if (offset == 0) {
+                    offset = V1_PAYLOAD_START;
+                }
+                mBuffer.limit(offset + mBuffer.getShort(LENGTH_OFFSET));
+                if ((offset + DATA_OFFSET) >= mBuffer.limit()) {
+                    // no payload
+                    return null;
+                }
+                mBuffer.position(offset + DATA_OFFSET); // Just after the tag.
+                return decodeObject();
+            } catch (IllegalArgumentException e) {
+                Log.wtf(TAG, "Illegal entry payload: tag=" + getTag(), e);
+                mLastWtf = e;
+                return null;
+            } catch (BufferUnderflowException e) {
+                Log.wtf(TAG, "Truncated entry payload: tag=" + getTag(), e);
+                mLastWtf = e;
+                return null;
+            }
+!!!8429445.java!!!	decodeObject() : Object
+            byte type = mBuffer.get();
+            switch (type) {
+            case INT_TYPE:
+                return mBuffer.getInt();
+
+            case LONG_TYPE:
+                return mBuffer.getLong();
+
+            case FLOAT_TYPE:
+                return mBuffer.getFloat();
+
+            case STRING_TYPE:
+                try {
+                    int length = mBuffer.getInt();
+                    int start = mBuffer.position();
+                    mBuffer.position(start + length);
+                    return new String(mBuffer.array(), start, length, "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    Log.wtf(TAG, "UTF-8 is not supported", e);
+                    mLastWtf = e;
+                    return null;
+                }
+
+            case LIST_TYPE:
+                int length = mBuffer.get();
+                if (length < 0) length += 256;  // treat as signed byte
+                Object[] array = new Object[length];
+                for (int i = 0; i < length; ++i) array[i] = decodeObject();
+                return array;
+
+            default:
+                throw new IllegalArgumentException("Unknown entry type: " + type);
+            }
+!!!8429573.java!!!	fromBytes(inout data : byte [[]]) : EventLog::Event
+            return new Event(data);
+!!!8429701.java!!!	getBytes() : byte
+            byte[] bytes = mBuffer.array();
+            return Arrays.copyOf(bytes, bytes.length);
+!!!8429829.java!!!	getLastError() : Exception
+            return mLastWtf;
+!!!8429957.java!!!	clearError() : void
+            mLastWtf = null;
+!!!8430085.java!!!	equals(inout o : Object) : boolean
+            // Not using ByteBuffer.equals since it takes buffer position into account and we
+            // always use absolute positions here.
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Event other = (Event) o;
+            return Arrays.equals(mBuffer.array(), other.mBuffer.array());
+!!!8430213.java!!!	hashCode() : int
+            // Not using ByteBuffer.hashCode since it takes buffer position into account and we
+            // always use absolute positions here.
+            return Arrays.hashCode(mBuffer.array());

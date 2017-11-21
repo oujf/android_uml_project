@@ -1,0 +1,47 @@
+class PendingAppPermission
+!!!10919301.java!!!	PendingAppPermission(in accountDigest : String, in packageName : String, in certDigest : String, in userId : int)
+            this.accountDigest = accountDigest;
+            this.packageName = packageName;
+            this.certDigest = certDigest;
+            this.userId = userId;
+!!!10919429.java!!!	apply(inout packageManager : PackageManager) : boolean
+            Account account = null;
+            AccountManagerService.UserAccounts accounts = mAccountManagerService
+                    .getUserAccounts(userId);
+            synchronized (accounts.dbLock) {
+                synchronized (accounts.cacheLock) {
+                    for (Account[] accountsPerType : accounts.accountCache.values()) {
+                        for (Account accountPerType : accountsPerType) {
+                            if (accountDigest.equals(PackageUtils.computeSha256Digest(
+                                    accountPerType.name.getBytes()))) {
+                                account = accountPerType;
+                                break;
+                            }
+                        }
+                        if (account != null) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (account == null) {
+                return false;
+            }
+            final PackageInfo packageInfo;
+            try {
+                packageInfo = packageManager.getPackageInfoAsUser(packageName,
+                        PackageManager.GET_SIGNATURES, userId);
+            } catch (PackageManager.NameNotFoundException e) {
+                return false;
+            }
+            String currentCertDigest = PackageUtils.computeCertSha256Digest(
+                    packageInfo.signatures[0]);
+            if (!certDigest.equals(currentCertDigest)) {
+                return false;
+            }
+            final int uid = packageInfo.applicationInfo.uid;
+            if (!mAccountManagerInternal.hasAccountAccess(account, uid)) {
+                mAccountManagerService.grantAppPermission(account,
+                        AccountManager.ACCOUNT_ACCESS_TOKEN_TYPE, uid);
+            }
+            return true;

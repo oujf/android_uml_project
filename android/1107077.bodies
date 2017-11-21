@@ -1,0 +1,346 @@
+class ViewNode
+!!!5816197.java!!!	ViewNode(inout reader : AssistStructure::ParcelTransferReader, in nestingLevel : int)
+            final Parcel in = reader.readParcel(VALIDATE_VIEW_TOKEN, nestingLevel);
+            reader.mNumReadViews++;
+            final PooledStringReader preader = reader.mStringReader;
+            mClassName = preader.readString();
+            mFlags = in.readInt();
+            final int flags = mFlags;
+            if ((flags&FLAGS_HAS_ID) != 0) {
+                mId = in.readInt();
+                if (mId != 0) {
+                    mIdEntry = preader.readString();
+                    if (mIdEntry != null) {
+                        mIdType = preader.readString();
+                        mIdPackage = preader.readString();
+                    }
+                }
+            }
+
+            if ((flags&FLAGS_HAS_AUTOFILL_DATA) != 0) {
+                mSanitized = in.readInt() == 1;
+                mAutofillId = in.readParcelable(null);
+                mAutofillType = in.readInt();
+                mAutofillHints = in.readStringArray();
+                mAutofillValue = in.readParcelable(null);
+                mAutofillOptions = in.readCharSequenceArray();
+                final Parcelable p = in.readParcelable(null);
+                if (p instanceof HtmlInfo) {
+                    mHtmlInfo = (HtmlInfo) p;
+                }
+            }
+            if ((flags&FLAGS_HAS_LARGE_COORDS) != 0) {
+                mX = in.readInt();
+                mY = in.readInt();
+                mWidth = in.readInt();
+                mHeight = in.readInt();
+            } else {
+                int val = in.readInt();
+                mX = val&0x7fff;
+                mY = (val>>16)&0x7fff;
+                val = in.readInt();
+                mWidth = val&0x7fff;
+                mHeight = (val>>16)&0x7fff;
+            }
+            if ((flags&FLAGS_HAS_SCROLL) != 0) {
+                mScrollX = in.readInt();
+                mScrollY = in.readInt();
+            }
+            if ((flags&FLAGS_HAS_MATRIX) != 0) {
+                mMatrix = new Matrix();
+                in.readFloatArray(reader.mTmpMatrix);
+                mMatrix.setValues(reader.mTmpMatrix);
+            }
+            if ((flags&FLAGS_HAS_ELEVATION) != 0) {
+                mElevation = in.readFloat();
+            }
+            if ((flags&FLAGS_HAS_ALPHA) != 0) {
+                mAlpha = in.readFloat();
+            }
+            if ((flags&FLAGS_HAS_CONTENT_DESCRIPTION) != 0) {
+                mContentDescription = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(in);
+            }
+            if ((flags&FLAGS_HAS_TEXT) != 0) {
+                mText = new ViewNodeText(in, (flags&FLAGS_HAS_COMPLEX_TEXT) == 0);
+            }
+            if ((flags&FLAGS_HAS_INPUT_TYPE) != 0) {
+                mInputType = in.readInt();
+            }
+            if ((flags&FLAGS_HAS_URL) != 0) {
+                mWebDomain = in.readString();
+            }
+            if ((flags&FLAGS_HAS_LOCALE_LIST) != 0) {
+                mLocaleList = in.readParcelable(null);
+            }
+            if ((flags&FLAGS_HAS_EXTRAS) != 0) {
+                mExtras = in.readBundle();
+            }
+            if ((flags&FLAGS_HAS_CHILDREN) != 0) {
+                final int NCHILDREN = in.readInt();
+                if (DEBUG_PARCEL_TREE || DEBUG_PARCEL_CHILDREN) Log.d(TAG,
+                        "Preparing to read " + NCHILDREN
+                                + " children: @ #" + reader.mNumReadViews
+                                + ", level " + nestingLevel);
+                mChildren = new ViewNode[NCHILDREN];
+                for (int i=0; i<NCHILDREN; i++) {
+                    mChildren[i] = new ViewNode(reader, nestingLevel + 1);
+                }
+            }
+!!!5816325.java!!!	writeSelfToParcel(inout out : Parcel, inout pwriter : PooledStringWriter, inout sanitizeOnWrite : boolean, inout tmpMatrix : float [[]]) : int
+            // Guard used to skip non-sanitized data when writing for autofill.
+            boolean writeSensitive = true;
+
+            int flags = mFlags & ~FLAGS_ALL_CONTROL;
+
+            if (mId != View.NO_ID) {
+                flags |= FLAGS_HAS_ID;
+            }
+            if (mAutofillId != null) {
+                flags |= FLAGS_HAS_AUTOFILL_DATA;
+            }
+            if ((mX&~0x7fff) != 0 || (mY&~0x7fff) != 0
+                    || (mWidth&~0x7fff) != 0 | (mHeight&~0x7fff) != 0) {
+                flags |= FLAGS_HAS_LARGE_COORDS;
+            }
+            if (mScrollX != 0 || mScrollY != 0) {
+                flags |= FLAGS_HAS_SCROLL;
+            }
+            if (mMatrix != null) {
+                flags |= FLAGS_HAS_MATRIX;
+            }
+            if (mElevation != 0) {
+                flags |= FLAGS_HAS_ELEVATION;
+            }
+            if (mAlpha != 1.0f) {
+                flags |= FLAGS_HAS_ALPHA;
+            }
+            if (mContentDescription != null) {
+                flags |= FLAGS_HAS_CONTENT_DESCRIPTION;
+            }
+            if (mText != null) {
+                flags |= FLAGS_HAS_TEXT;
+                if (!mText.isSimple()) {
+                    flags |= FLAGS_HAS_COMPLEX_TEXT;
+                }
+            }
+            if (mInputType != 0) {
+                flags |= FLAGS_HAS_INPUT_TYPE;
+            }
+            if (mWebDomain != null) {
+                flags |= FLAGS_HAS_URL;
+            }
+            if (mLocaleList != null) {
+                flags |= FLAGS_HAS_LOCALE_LIST;
+            }
+            if (mExtras != null) {
+                flags |= FLAGS_HAS_EXTRAS;
+            }
+            if (mChildren != null) {
+                flags |= FLAGS_HAS_CHILDREN;
+            }
+
+            pwriter.writeString(mClassName);
+
+            int writtenFlags = flags;
+            if ((flags&FLAGS_HAS_AUTOFILL_DATA) != 0 && (mSanitized || !sanitizeOnWrite)) {
+                // Remove 'checked' from sanitized autofill request.
+                writtenFlags = flags & ~FLAGS_CHECKED;
+            }
+            if (mAutofillOverlay != null) {
+                if (mAutofillOverlay.focused) {
+                    writtenFlags |= ViewNode.FLAGS_FOCUSED;
+                } else {
+                    writtenFlags &= ~ViewNode.FLAGS_FOCUSED;
+                }
+            }
+
+            out.writeInt(writtenFlags);
+            if ((flags&FLAGS_HAS_ID) != 0) {
+                out.writeInt(mId);
+                if (mId != 0) {
+                    pwriter.writeString(mIdEntry);
+                    if (mIdEntry != null) {
+                        pwriter.writeString(mIdType);
+                        pwriter.writeString(mIdPackage);
+                    }
+                }
+            }
+
+            if ((flags&FLAGS_HAS_AUTOFILL_DATA) != 0) {
+                writeSensitive = mSanitized || !sanitizeOnWrite;
+                out.writeInt(mSanitized ? 1 : 0);
+                out.writeParcelable(mAutofillId, 0);
+                out.writeInt(mAutofillType);
+                out.writeStringArray(mAutofillHints);
+                final AutofillValue sanitizedValue;
+                if (writeSensitive) {
+                    sanitizedValue = mAutofillValue;
+                } else if (mAutofillOverlay != null && mAutofillOverlay.value != null) {
+                    sanitizedValue = mAutofillOverlay.value;
+                } else {
+                    sanitizedValue = null;
+                }
+                out.writeParcelable(sanitizedValue,  0);
+                out.writeCharSequenceArray(mAutofillOptions);
+                if (mHtmlInfo instanceof Parcelable) {
+                    out.writeParcelable((Parcelable) mHtmlInfo, 0);
+                } else {
+                    out.writeParcelable(null, 0);
+                }
+            }
+            if ((flags&FLAGS_HAS_LARGE_COORDS) != 0) {
+                out.writeInt(mX);
+                out.writeInt(mY);
+                out.writeInt(mWidth);
+                out.writeInt(mHeight);
+            } else {
+                out.writeInt((mY<<16) | mX);
+                out.writeInt((mHeight<<16) | mWidth);
+            }
+            if ((flags&FLAGS_HAS_SCROLL) != 0) {
+                out.writeInt(mScrollX);
+                out.writeInt(mScrollY);
+            }
+            if ((flags&FLAGS_HAS_MATRIX) != 0) {
+                mMatrix.getValues(tmpMatrix);
+                out.writeFloatArray(tmpMatrix);
+            }
+            if ((flags&FLAGS_HAS_ELEVATION) != 0) {
+                out.writeFloat(mElevation);
+            }
+            if ((flags&FLAGS_HAS_ALPHA) != 0) {
+                out.writeFloat(mAlpha);
+            }
+            if ((flags&FLAGS_HAS_CONTENT_DESCRIPTION) != 0) {
+                TextUtils.writeToParcel(mContentDescription, out, 0);
+            }
+            if ((flags&FLAGS_HAS_TEXT) != 0) {
+                mText.writeToParcel(out, (flags&FLAGS_HAS_COMPLEX_TEXT) == 0, writeSensitive);
+            }
+            if ((flags&FLAGS_HAS_INPUT_TYPE) != 0) {
+                out.writeInt(mInputType);
+            }
+            if ((flags&FLAGS_HAS_URL) != 0) {
+                out.writeString(mWebDomain);
+            }
+            if ((flags&FLAGS_HAS_LOCALE_LIST) != 0) {
+                out.writeParcelable(mLocaleList, 0);
+            }
+            if ((flags&FLAGS_HAS_EXTRAS) != 0) {
+                out.writeBundle(mExtras);
+            }
+            return flags;
+!!!5816453.java!!!	getId() : int
+            return mId;
+!!!5816581.java!!!	getIdPackage() : String
+            return mIdPackage;
+!!!5816709.java!!!	getIdType() : String
+            return mIdType;
+!!!5816837.java!!!	getIdEntry() : String
+            return mIdEntry;
+!!!5816965.java!!!	getAutofillId() : AutofillId
+            return mAutofillId;
+!!!5817093.java!!!	getAutofillType() : int
+            return mAutofillType;
+!!!5817221.java!!!	getAutofillHints() : String
+            return mAutofillHints;
+!!!5817349.java!!!	getAutofillValue() : AutofillValue
+            return mAutofillValue;
+!!!5817477.java!!!	setAutofillOverlay(inout overlay : AssistStructure::AutofillOverlay) : void
+            mAutofillOverlay = overlay;
+!!!5817605.java!!!	getAutofillOptions() : CharSequence
+            return mAutofillOptions;
+!!!5817733.java!!!	getInputType() : int
+            return mInputType;
+!!!5817861.java!!!	isSanitized() : boolean
+            return mSanitized;
+!!!5817989.java!!!	updateAutofillValue(inout value : AutofillValue) : void
+            mAutofillValue = value;
+            if (value.isText()) {
+                if (mText == null) {
+                    mText = new ViewNodeText();
+                }
+                mText.mText = value.getTextValue();
+            }
+!!!5818117.java!!!	getLeft() : int
+            return mX;
+!!!5818245.java!!!	getTop() : int
+            return mY;
+!!!5818373.java!!!	getScrollX() : int
+            return mScrollX;
+!!!5818501.java!!!	getScrollY() : int
+            return mScrollY;
+!!!5818629.java!!!	getWidth() : int
+            return mWidth;
+!!!5818757.java!!!	getHeight() : int
+            return mHeight;
+!!!5818885.java!!!	getTransformation() : Matrix
+            return mMatrix;
+!!!5819013.java!!!	getElevation() : float
+            return mElevation;
+!!!5819141.java!!!	getAlpha() : float
+            return mAlpha;
+!!!5819269.java!!!	getVisibility() : int
+            return mFlags&ViewNode.FLAGS_VISIBILITY_MASK;
+!!!5819397.java!!!	isAssistBlocked() : boolean
+            return (mFlags&ViewNode.FLAGS_ASSIST_BLOCKED) != 0;
+!!!5819525.java!!!	isEnabled() : boolean
+            return (mFlags&ViewNode.FLAGS_DISABLED) == 0;
+!!!5819653.java!!!	isClickable() : boolean
+            return (mFlags&ViewNode.FLAGS_CLICKABLE) != 0;
+!!!5819781.java!!!	isFocusable() : boolean
+            return (mFlags&ViewNode.FLAGS_FOCUSABLE) != 0;
+!!!5819909.java!!!	isFocused() : boolean
+            return (mFlags&ViewNode.FLAGS_FOCUSED) != 0;
+!!!5820037.java!!!	isAccessibilityFocused() : boolean
+            return (mFlags&ViewNode.FLAGS_ACCESSIBILITY_FOCUSED) != 0;
+!!!5820165.java!!!	isCheckable() : boolean
+            return (mFlags&ViewNode.FLAGS_CHECKABLE) != 0;
+!!!5820293.java!!!	isChecked() : boolean
+            return (mFlags&ViewNode.FLAGS_CHECKED) != 0;
+!!!5820421.java!!!	isSelected() : boolean
+            return (mFlags&ViewNode.FLAGS_SELECTED) != 0;
+!!!5820549.java!!!	isActivated() : boolean
+            return (mFlags&ViewNode.FLAGS_ACTIVATED) != 0;
+!!!5820677.java!!!	isOpaque() : boolean
+ return (mFlags&ViewNode.FLAGS_OPAQUE) != 0;
+!!!5820805.java!!!	isLongClickable() : boolean
+            return (mFlags&ViewNode.FLAGS_LONG_CLICKABLE) != 0;
+!!!5820933.java!!!	isContextClickable() : boolean
+            return (mFlags&ViewNode.FLAGS_CONTEXT_CLICKABLE) != 0;
+!!!5821061.java!!!	getClassName() : String
+            return mClassName;
+!!!5821189.java!!!	getContentDescription() : CharSequence
+            return mContentDescription;
+!!!5821317.java!!!	getWebDomain() : String
+            return mWebDomain;
+!!!5821445.java!!!	getHtmlInfo() : ViewStructure::HtmlInfo
+            return mHtmlInfo;
+!!!5821573.java!!!	getLocaleList() : LocaleList
+            return mLocaleList;
+!!!5821701.java!!!	getText() : CharSequence
+            return mText != null ? mText.mText : null;
+!!!5821829.java!!!	getTextSelectionStart() : int
+            return mText != null ? mText.mTextSelectionStart : -1;
+!!!5821957.java!!!	getTextSelectionEnd() : int
+            return mText != null ? mText.mTextSelectionEnd : -1;
+!!!5822085.java!!!	getTextColor() : int
+            return mText != null ? mText.mTextColor : TEXT_COLOR_UNDEFINED;
+!!!5822213.java!!!	getTextBackgroundColor() : int
+            return mText != null ? mText.mTextBackgroundColor : TEXT_COLOR_UNDEFINED;
+!!!5822341.java!!!	getTextSize() : float
+            return mText != null ? mText.mTextSize : 0;
+!!!5822469.java!!!	getTextStyle() : int
+            return mText != null ? mText.mTextStyle : 0;
+!!!5822597.java!!!	getTextLineCharOffsets() : int
+            return mText != null ? mText.mLineCharOffsets : null;
+!!!5822725.java!!!	getTextLineBaselines() : int
+            return mText != null ? mText.mLineBaselines : null;
+!!!5822853.java!!!	getHint() : String
+            return mText != null ? mText.mHint : null;
+!!!5822981.java!!!	getExtras() : Bundle
+            return mExtras;
+!!!5823109.java!!!	getChildCount() : int
+            return mChildren != null ? mChildren.length : 0;
+!!!5823237.java!!!	getChildAt(in index : int) : AssistStructure::ViewNode
+            return mChildren[index];

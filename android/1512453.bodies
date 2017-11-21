@@ -1,0 +1,315 @@
+class FileSystemProvider
+!!!9891973.java!!!	onCreate() : boolean
+        throw new UnsupportedOperationException(
+                "Subclass should override this and call onCreate(defaultDocumentProjection)");
+!!!9892101.java!!!	onCreate(inout defaultProjection : String [[]]) : void
+        mHandler = new Handler();
+        mDefaultProjection = defaultProjection;
+!!!9892229.java!!!	isChildDocument(in parentDocId : String, in docId : String) : boolean
+        try {
+            final File parent = getFileForDocId(parentDocId).getCanonicalFile();
+            final File doc = getFileForDocId(docId).getCanonicalFile();
+            return FileUtils.contains(parent, doc);
+        } catch (IOException e) {
+            throw new IllegalArgumentException(
+                    "Failed to determine if " + docId + " is child of " + parentDocId + ": " + e);
+        }
+!!!9892357.java!!!	findDocumentPath(inout parent : File, inout doc : File) : List<String>
+
+        if (!doc.exists()) {
+            throw new FileNotFoundException(doc + " is not found.");
+        }
+
+        if (!FileUtils.contains(parent, doc)) {
+            throw new FileNotFoundException(doc + " is not found under " + parent);
+        }
+
+        LinkedList<String> path = new LinkedList<>();
+        while (doc != null && FileUtils.contains(parent, doc)) {
+            path.addFirst(getDocIdForFile(doc));
+
+            doc = doc.getParentFile();
+        }
+
+        return path;
+!!!9892485.java!!!	createDocument(in docId : String, in mimeType : String, in displayName : String) : String
+        displayName = FileUtils.buildValidFatFilename(displayName);
+
+        final File parent = getFileForDocId(docId);
+        if (!parent.isDirectory()) {
+            throw new IllegalArgumentException("Parent document isn't a directory");
+        }
+
+        final File file = FileUtils.buildUniqueFile(parent, mimeType, displayName);
+        final String childId;
+        if (Document.MIME_TYPE_DIR.equals(mimeType)) {
+            if (!file.mkdir()) {
+                throw new IllegalStateException("Failed to mkdir " + file);
+            }
+            childId = getDocIdForFile(file);
+            addFolderToMediaStore(getFileForDocId(childId, true));
+        } else {
+            try {
+                if (!file.createNewFile()) {
+                    throw new IllegalStateException("Failed to touch " + file);
+                }
+                childId = getDocIdForFile(file);
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to touch " + file + ": " + e);
+            }
+        }
+
+        return childId;
+!!!9892613.java!!!	addFolderToMediaStore(inout visibleFolder : File) : void
+        // visibleFolder is null if we're adding a folder to external thumb drive or SD card.
+        if (visibleFolder != null) {
+            assert (visibleFolder.isDirectory());
+
+            final ContentResolver resolver = getContext().getContentResolver();
+            final Uri uri = MediaStore.Files.getDirectoryUri("external");
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Files.FileColumns.DATA, visibleFolder.getAbsolutePath());
+            resolver.insert(uri, values);
+        }
+!!!9892741.java!!!	renameDocument(in docId : String, in displayName : String) : String
+        // Since this provider treats renames as generating a completely new
+        // docId, we're okay with letting the MIME type change.
+        displayName = FileUtils.buildValidFatFilename(displayName);
+
+        final File before = getFileForDocId(docId);
+        final File after = FileUtils.buildUniqueFile(before.getParentFile(), displayName);
+        final File visibleFileBefore = getFileForDocId(docId, true);
+        if (!before.renameTo(after)) {
+            throw new IllegalStateException("Failed to rename to " + after);
+        }
+
+        final String afterDocId = getDocIdForFile(after);
+        moveInMediaStore(visibleFileBefore, getFileForDocId(afterDocId, true));
+
+        if (!TextUtils.equals(docId, afterDocId)) {
+            return afterDocId;
+        } else {
+            return null;
+        }
+!!!9892869.java!!!	moveDocument(in sourceDocumentId : String, in sourceParentDocumentId : String, in targetParentDocumentId : String) : String
+        final File before = getFileForDocId(sourceDocumentId);
+        final File after = new File(getFileForDocId(targetParentDocumentId), before.getName());
+        final File visibleFileBefore = getFileForDocId(sourceDocumentId, true);
+
+        if (after.exists()) {
+            throw new IllegalStateException("Already exists " + after);
+        }
+        if (!before.renameTo(after)) {
+            throw new IllegalStateException("Failed to move to " + after);
+        }
+
+        final String docId = getDocIdForFile(after);
+        moveInMediaStore(visibleFileBefore, getFileForDocId(docId, true));
+
+        return docId;
+!!!9892997.java!!!	moveInMediaStore(inout oldVisibleFile : File, inout newVisibleFile : File) : void
+        // visibleFolders are null if we're moving a document in external thumb drive or SD card.
+        //
+        // They should be all null or not null at the same time. File#renameTo() doesn't work across
+        // volumes so an exception will be thrown before calling this method.
+        if (oldVisibleFile != null && newVisibleFile != null) {
+            final ContentResolver resolver = getContext().getContentResolver();
+            final Uri externalUri = newVisibleFile.isDirectory()
+                    ? MediaStore.Files.getDirectoryUri("external")
+                    : MediaStore.Files.getContentUri("external");
+
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Files.FileColumns.DATA, newVisibleFile.getAbsolutePath());
+
+            // Logic borrowed from MtpDatabase.
+            // note - we are relying on a special case in MediaProvider.update() to update
+            // the paths for all children in the case where this is a directory.
+            final String path = oldVisibleFile.getAbsolutePath();
+            resolver.update(externalUri,
+                    values,
+                    "_data LIKE ? AND lower(_data)=lower(?)",
+                    new String[] { path, path });
+        }
+!!!9893125.java!!!	deleteDocument(in docId : String) : void
+        final File file = getFileForDocId(docId);
+        final File visibleFile = getFileForDocId(docId, true);
+
+        final boolean isDirectory = file.isDirectory();
+        if (isDirectory) {
+            FileUtils.deleteContents(file);
+        }
+        if (!file.delete()) {
+            throw new IllegalStateException("Failed to delete " + file);
+        }
+
+        removeFromMediaStore(visibleFile, isDirectory);
+!!!9893253.java!!!	removeFromMediaStore(inout visibleFile : File, inout isFolder : boolean) : void
+        // visibleFolder is null if we're removing a document from external thumb drive or SD card.
+        if (visibleFile != null) {
+            final ContentResolver resolver = getContext().getContentResolver();
+            final Uri externalUri = MediaStore.Files.getContentUri("external");
+
+            // Remove media store entries for any files inside this directory, using
+            // path prefix match. Logic borrowed from MtpDatabase.
+            if (isFolder) {
+                final String path = visibleFile.getAbsolutePath() + "/";
+                resolver.delete(externalUri,
+                        "_data LIKE ?1 AND lower(substr(_data,1,?2))=lower(?3)",
+                        new String[] { path + "%", Integer.toString(path.length()), path });
+            }
+
+            // Remove media store entry for this exact file.
+            final String path = visibleFile.getAbsolutePath();
+            resolver.delete(externalUri,
+                    "_data LIKE ?1 AND lower(_data)=lower(?2)",
+                    new String[] { path, path });
+        }
+!!!9893381.java!!!	queryDocument(in documentId : String, inout projection : String [[]]) : Cursor
+        final MatrixCursor result = new MatrixCursor(resolveProjection(projection));
+        includeFile(result, documentId, null);
+        return result;
+!!!9893509.java!!!	queryChildDocuments(in parentDocumentId : String, inout projection : String [[]], in sortOrder : String) : Cursor
+
+        final File parent = getFileForDocId(parentDocumentId);
+        final MatrixCursor result = new DirectoryCursor(
+                resolveProjection(projection), parentDocumentId, parent);
+        for (File file : parent.listFiles()) {
+            includeFile(result, null, file);
+        }
+        return result;
+!!!9893637.java!!!	querySearchDocuments(inout folder : File, in query : String, inout projection : String [[]], inout exclusion : Set<String>) : Cursor
+
+        query = query.toLowerCase();
+        final MatrixCursor result = new MatrixCursor(resolveProjection(projection));
+        final LinkedList<File> pending = new LinkedList<>();
+        pending.add(folder);
+        while (!pending.isEmpty() && result.getCount() < 24) {
+            final File file = pending.removeFirst();
+            if (file.isDirectory()) {
+                for (File child : file.listFiles()) {
+                    pending.add(child);
+                }
+            }
+            if (file.getName().toLowerCase().contains(query)
+                    && !exclusion.contains(file.getAbsolutePath())) {
+                includeFile(result, null, file);
+            }
+        }
+        return result;
+!!!9893765.java!!!	getDocumentType(in documentId : String) : String
+        final File file = getFileForDocId(documentId);
+        return getTypeForFile(file);
+!!!9893893.java!!!	openDocument(in documentId : String, in mode : String, inout signal : CancellationSignal) : ParcelFileDescriptor
+        final File file = getFileForDocId(documentId);
+        final File visibleFile = getFileForDocId(documentId, true);
+
+        final int pfdMode = ParcelFileDescriptor.parseMode(mode);
+        if (pfdMode == ParcelFileDescriptor.MODE_READ_ONLY || visibleFile == null) {
+            return ParcelFileDescriptor.open(file, pfdMode);
+        } else {
+            try {
+                // When finished writing, kick off media scanner
+                return ParcelFileDescriptor.open(
+                        file, pfdMode, mHandler, (IOException e) -> scanFile(visibleFile));
+            } catch (IOException e) {
+                throw new FileNotFoundException("Failed to open for writing: " + e);
+            }
+        }
+!!!9894021.java!!!	scanFile(inout visibleFile : File) : void
+        final Intent intent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+        intent.setData(Uri.fromFile(visibleFile));
+        getContext().sendBroadcast(intent);
+!!!9894149.java!!!	openDocumentThumbnail(in documentId : String, inout sizeHint : Point, inout signal : CancellationSignal) : AssetFileDescriptor
+        final File file = getFileForDocId(documentId);
+        return DocumentsContract.openImageThumbnail(file);
+!!!9894277.java!!!	includeFile(inout result : MatrixCursor, in docId : String, inout file : File) : MatrixCursor::RowBuilder
+        if (docId == null) {
+            docId = getDocIdForFile(file);
+        } else {
+            file = getFileForDocId(docId);
+        }
+
+        int flags = 0;
+
+        if (file.canWrite()) {
+            if (file.isDirectory()) {
+                flags |= Document.FLAG_DIR_SUPPORTS_CREATE;
+                flags |= Document.FLAG_SUPPORTS_DELETE;
+                flags |= Document.FLAG_SUPPORTS_RENAME;
+                flags |= Document.FLAG_SUPPORTS_MOVE;
+            } else {
+                flags |= Document.FLAG_SUPPORTS_WRITE;
+                flags |= Document.FLAG_SUPPORTS_DELETE;
+                flags |= Document.FLAG_SUPPORTS_RENAME;
+                flags |= Document.FLAG_SUPPORTS_MOVE;
+            }
+        }
+
+        final String mimeType = getTypeForFile(file);
+        final String displayName = file.getName();
+        if (mimeType.startsWith("image/")) {
+            flags |= Document.FLAG_SUPPORTS_THUMBNAIL;
+        }
+
+        final RowBuilder row = result.newRow();
+        row.add(Document.COLUMN_DOCUMENT_ID, docId);
+        row.add(Document.COLUMN_DISPLAY_NAME, displayName);
+        row.add(Document.COLUMN_SIZE, file.length());
+        row.add(Document.COLUMN_MIME_TYPE, mimeType);
+        row.add(Document.COLUMN_FLAGS, flags);
+
+        // Only publish dates reasonably after epoch
+        long lastModified = file.lastModified();
+        if (lastModified > 31536000000L) {
+            row.add(Document.COLUMN_LAST_MODIFIED, lastModified);
+        }
+
+        // Return the row builder just in case any subclass want to add more stuff to it.
+        return row;
+!!!9894405.java!!!	getTypeForFile(inout file : File) : String
+        if (file.isDirectory()) {
+            return Document.MIME_TYPE_DIR;
+        } else {
+            return getTypeForName(file.getName());
+        }
+!!!9894533.java!!!	getTypeForName(in name : String) : String
+        final int lastDot = name.lastIndexOf('.');
+        if (lastDot >= 0) {
+            final String extension = name.substring(lastDot + 1).toLowerCase();
+            final String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+            if (mime != null) {
+                return mime;
+            }
+        }
+
+        return "application/octet-stream";
+!!!9894661.java!!!	getFileForDocId(in docId : String) : File
+        return getFileForDocId(docId, false);
+!!!9894789.java!!!	resolveProjection(inout projection : String [[]]) : String
+        return projection == null ? mDefaultProjection : projection;
+!!!9894917.java!!!	startObserving(inout file : File, inout notifyUri : Uri) : void
+        synchronized (mObservers) {
+            DirectoryObserver observer = mObservers.get(file);
+            if (observer == null) {
+                observer = new DirectoryObserver(
+                        file, getContext().getContentResolver(), notifyUri);
+                observer.startWatching();
+                mObservers.put(file, observer);
+            }
+            observer.mRefCount++;
+
+            if (LOG_INOTIFY) Log.d(TAG, "after start: " + observer);
+        }
+!!!9895045.java!!!	stopObserving(inout file : File) : void
+        synchronized (mObservers) {
+            DirectoryObserver observer = mObservers.get(file);
+            if (observer == null) return;
+
+            observer.mRefCount--;
+            if (observer.mRefCount == 0) {
+                mObservers.remove(file);
+                observer.stopWatching();
+            }
+
+            if (LOG_INOTIFY) Log.d(TAG, "after stop: " + observer);
+        }

@@ -1,0 +1,49 @@
+class TrackedGarbage
+!!!4257157.java!!!	TrackedGarbage(inout trackedCollections : TrackedCollections)
+        mTrackedCollections = trackedCollections;
+!!!4257285.java!!!	track(inout o : Object) : void
+        cleanUp();
+        mGarbage.add(new LeakReference(o, mRefQueue));
+        mTrackedCollections.track(mGarbage, "Garbage");
+!!!4257413.java!!!	cleanUp() : void
+        Reference<?> ref;
+        while ((ref = mRefQueue.poll()) != null) {
+            mGarbage.remove(ref);
+        }
+!!!4257669.java!!!	dump(inout pw : PrintWriter) : void
+        cleanUp();
+
+        long now = SystemClock.uptimeMillis();
+
+        ArrayMap<Class<?>, Integer> acc = new ArrayMap<>();
+        ArrayMap<Class<?>, Integer> accOld = new ArrayMap<>();
+        for (LeakReference ref : mGarbage) {
+            acc.put(ref.clazz, acc.getOrDefault(ref.clazz, 0) + 1);
+            if (isOld(ref.createdUptimeMillis, now)) {
+                accOld.put(ref.clazz, accOld.getOrDefault(ref.clazz, 0) + 1);
+            }
+        }
+
+        for (Map.Entry<Class<?>, Integer> entry : acc.entrySet()) {
+            pw.print(entry.getKey().getName());
+            pw.print(": ");
+            pw.print(entry.getValue());
+            pw.print(" total, ");
+            pw.print(accOld.getOrDefault(entry.getKey(), 0));
+            pw.print(" old");
+            pw.println();
+        }
+!!!4257797.java!!!	countOldGarbage() : int
+        cleanUp();
+
+        long now = SystemClock.uptimeMillis();
+
+        int result = 0;
+        for (LeakReference ref : mGarbage) {
+            if (isOld(ref.createdUptimeMillis, now)) {
+                result++;
+            }
+        }
+        return result;
+!!!4257925.java!!!	isOld(in createdUptimeMillis : long, in now : long) : boolean
+        return createdUptimeMillis + GARBAGE_COLLECTION_DEADLINE_MILLIS < now;

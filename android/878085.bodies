@@ -1,0 +1,124 @@
+class NotificationSwipeHelper
+!!!4022533.java!!!	NotificationSwipeHelper(in swipeDirection : int, inout callback : SwipeHelper::Callback, inout context : Context)
+            super(swipeDirection, callback, context);
+            mHandler = new Handler();
+            mFalsingCheck = new Runnable() {
+                @Override
+                public void run() {
+                    resetExposedMenuView(true /* animate */, true /* force */);
+                }
+            };
+!!!4022661.java!!!	onDownUpdate(inout currView : View, inout ev : MotionEvent) : void
+            mTranslatingParentView = currView;
+            mCurrMenuRow = null;
+            if (mCurrMenuRow != null) {
+                mCurrMenuRow.onTouchEvent(currView, ev, 0 /* velocity */);
+            }
+            mHandler.removeCallbacks(mFalsingCheck);
+
+            // Slide back any notifications that might be showing a menu
+            resetExposedMenuView(true /* animate */, false /* force */);
+
+            if (currView instanceof ExpandableNotificationRow) {
+                ExpandableNotificationRow row = (ExpandableNotificationRow) currView;
+                mCurrMenuRow = row.createMenu();
+                mCurrMenuRow.setSwipeActionHelper(NotificationSwipeHelper.this);
+                mCurrMenuRow.setMenuClickListener(NotificationStackScrollLayout.this);
+            }
+!!!4022789.java!!!	onMoveUpdate(inout view : View, inout ev : MotionEvent, in translation : float, in delta : float) : void
+            mHandler.removeCallbacks(mFalsingCheck);
+            if (mCurrMenuRow != null) {
+                mCurrMenuRow.onTouchEvent(view, ev, 0 /* velocity */);
+            }
+!!!4022917.java!!!	handleUpEvent(inout ev : MotionEvent, inout animView : View, in velocity : float, in translation : float) : boolean
+            if (mCurrMenuRow != null) {
+                return mCurrMenuRow.onTouchEvent(animView, ev, velocity);
+            }
+            return false;
+!!!4023045.java!!!	dismissChild(in view : View, in velocity : float, inout useAccelerateInterpolator : boolean) : void
+            super.dismissChild(view, velocity, useAccelerateInterpolator);
+            if (mIsExpanded) {
+                // We don't want to quick-dismiss when it's a heads up as this might lead to closing
+                // of the panel early.
+                handleChildDismissed(view);
+            }
+            mStatusBar.closeAndSaveGuts(true /* removeLeavebehind */, false /* force */,
+                    false /* removeControls */, -1 /* x */, -1 /* y */, false /* resetMenu */);
+            handleMenuCoveredOrDismissed();
+!!!4023173.java!!!	snapChild(in animView : View, in targetLeft : float, in velocity : float) : void
+            super.snapChild(animView, targetLeft, velocity);
+            onDragCancelled(animView);
+            if (targetLeft == 0) {
+                handleMenuCoveredOrDismissed();
+            }
+!!!4023301.java!!!	snooze(inout sbn : StatusBarNotification, inout snoozeOption : SnoozeOption) : void
+            mStatusBar.setNotificationSnoozed(sbn, snoozeOption);
+!!!4023429.java!!!	isFalseGesture(inout ev : MotionEvent) : boolean
+            return super.isFalseGesture(ev);
+!!!4023557.java!!!	handleMenuCoveredOrDismissed() : void
+            if (mMenuExposedView != null && mMenuExposedView == mTranslatingParentView) {
+                mMenuExposedView = null;
+            }
+!!!4023685.java!!!	getViewTranslationAnimator(inout v : View, in target : float, inout listener : AnimatorUpdateListener) : Animator
+            if (v instanceof ExpandableNotificationRow) {
+                return ((ExpandableNotificationRow) v).getTranslateViewAnimator(target, listener);
+            } else {
+                return super.getViewTranslationAnimator(v, target, listener);
+            }
+!!!4023813.java!!!	setTranslation(inout v : View, in translate : float) : void
+            ((ExpandableView) v).setTranslation(translate);
+!!!4023941.java!!!	getTranslation(inout v : View) : float
+            return ((ExpandableView) v).getTranslation();
+!!!4024069.java!!!	dismiss(inout animView : View, in velocity : float) : void
+            dismissChild(animView, velocity,
+                    !swipedFastEnough(0, 0) /* useAccelerateInterpolator */);
+!!!4024197.java!!!	snap(inout animView : View, in targetLeft : float, in velocity : float) : void
+            snapChild(animView, targetLeft, velocity);
+!!!4024325.java!!!	swipedFarEnough(in translation : float, in viewSize : float) : boolean
+            return swipedFarEnough();
+!!!4024453.java!!!	swipedFastEnough(in translation : float, in velocity : float) : boolean
+            return swipedFastEnough();
+!!!4024581.java!!!	getMinDismissVelocity() : float
+            return getEscapeVelocity();
+!!!4024709.java!!!	onMenuShown(inout animView : View) : void
+            onDragCancelled(animView);
+
+            // If we're on the lockscreen we want to false this.
+            if (isAntiFalsingNeeded()) {
+                mHandler.removeCallbacks(mFalsingCheck);
+                mHandler.postDelayed(mFalsingCheck, COVER_MENU_DELAY);
+            }
+!!!4024837.java!!!	closeControlsIfOutsideTouch(inout ev : MotionEvent) : void
+            NotificationGuts guts = mStatusBar.getExposedGuts();
+            View view = null;
+            if (guts != null && !guts.getGutsContent().isLeavebehind()) {
+                // Only close visible guts if they're not a leavebehind.
+                view = guts;
+            } else if (mCurrMenuRow != null && mCurrMenuRow.isMenuVisible()
+                    && mTranslatingParentView != null) {
+                // Checking menu
+                view = mTranslatingParentView;
+            }
+            if (view != null && !isTouchInView(ev, view)) {
+                // Touch was outside visible guts / menu notification, close what's visible
+                mStatusBar.closeAndSaveGuts(false /* removeLeavebehind */, false /* force */,
+                        true /* removeControls */, -1 /* x */, -1 /* y */, false /* resetMenu */);
+                resetExposedMenuView(true /* animate */, true /* force */);
+            }
+!!!4024965.java!!!	resetExposedMenuView(inout animate : boolean, inout force : boolean) : void
+            if (mMenuExposedView == null
+                    || (!force && mMenuExposedView == mTranslatingParentView)) {
+                // If no menu is showing or it's showing for this view we do nothing.
+                return;
+            }
+            final View prevMenuExposedView = mMenuExposedView;
+            if (animate) {
+                Animator anim = getViewTranslationAnimator(prevMenuExposedView,
+                        0 /* leftTarget */, null /* updateListener */);
+                if (anim != null) {
+                    anim.start();
+                }
+            } else if (mMenuExposedView instanceof ExpandableNotificationRow) {
+                ((ExpandableNotificationRow) mMenuExposedView).resetTranslation();
+            }
+            mMenuExposedView = null;

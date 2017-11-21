@@ -1,0 +1,91 @@
+class NetlinkTracker
+!!!10528517.java!!!	NetlinkTracker(in iface : String, inout callback : NetlinkTracker::Callback)
+        TAG = "NetlinkTracker/" + iface;
+        mInterfaceName = iface;
+        mCallback = callback;
+        mLinkProperties = new LinkProperties();
+        mLinkProperties.setInterfaceName(mInterfaceName);
+        mDnsServerRepository = new DnsServerRepository();
+!!!10528645.java!!!	maybeLog(in operation : String, in iface : String, inout address : LinkAddress) : void
+        if (DBG) {
+            Log.d(TAG, operation + ": " + address + " on " + iface +
+                    " flags " + address.getFlags() + " scope " + address.getScope());
+        }
+!!!10528773.java!!!	maybeLog(in operation : String, inout o : Object) : void
+        if (DBG) {
+            Log.d(TAG, operation + ": " + o.toString());
+        }
+!!!10528901.java!!!	interfaceRemoved(in iface : String) : void
+        maybeLog("interfaceRemoved", iface);
+        if (mInterfaceName.equals(iface)) {
+            // Our interface was removed. Clear our LinkProperties and tell our owner that they are
+            // now empty. Note that from the moment that the interface is removed, any further
+            // interface-specific messages (e.g., RTM_DELADDR) will not reach us, because the netd
+            // code that parses them will not be able to resolve the ifindex to an interface name.
+            clearLinkProperties();
+            mCallback.update();
+        }
+!!!10529029.java!!!	addressUpdated(in iface : String, inout address : LinkAddress) : void
+        if (mInterfaceName.equals(iface)) {
+            maybeLog("addressUpdated", iface, address);
+            boolean changed;
+            synchronized (this) {
+                changed = mLinkProperties.addLinkAddress(address);
+            }
+            if (changed) {
+                mCallback.update();
+            }
+        }
+!!!10529157.java!!!	addressRemoved(in iface : String, inout address : LinkAddress) : void
+        if (mInterfaceName.equals(iface)) {
+            maybeLog("addressRemoved", iface, address);
+            boolean changed;
+            synchronized (this) {
+                changed = mLinkProperties.removeLinkAddress(address);
+            }
+            if (changed) {
+                mCallback.update();
+            }
+        }
+!!!10529285.java!!!	routeUpdated(inout route : RouteInfo) : void
+        if (mInterfaceName.equals(route.getInterface())) {
+            maybeLog("routeUpdated", route);
+            boolean changed;
+            synchronized (this) {
+                changed = mLinkProperties.addRoute(route);
+            }
+            if (changed) {
+                mCallback.update();
+            }
+        }
+!!!10529413.java!!!	routeRemoved(inout route : RouteInfo) : void
+        if (mInterfaceName.equals(route.getInterface())) {
+            maybeLog("routeRemoved", route);
+            boolean changed;
+            synchronized (this) {
+                changed = mLinkProperties.removeRoute(route);
+            }
+            if (changed) {
+                mCallback.update();
+            }
+        }
+!!!10529541.java!!!	interfaceDnsServerInfo(in iface : String, in lifetime : long, inout addresses : String [[]]) : void
+        if (mInterfaceName.equals(iface)) {
+            maybeLog("interfaceDnsServerInfo", Arrays.toString(addresses));
+            boolean changed = mDnsServerRepository.addServers(lifetime, addresses);
+            if (changed) {
+                synchronized (this) {
+                    mDnsServerRepository.setDnsServersOn(mLinkProperties);
+                }
+                mCallback.update();
+            }
+        }
+!!!10529669.java!!!	getLinkProperties() : LinkProperties
+        return new LinkProperties(mLinkProperties);
+!!!10529797.java!!!	clearLinkProperties() : void
+        // Clear the repository before clearing mLinkProperties. That way, if a clear() happens
+        // while interfaceDnsServerInfo() is being called, we'll end up with no DNS servers in
+        // mLinkProperties, as desired.
+        mDnsServerRepository = new DnsServerRepository();
+        mLinkProperties.clear();
+        mLinkProperties.setInterfaceName(mInterfaceName);

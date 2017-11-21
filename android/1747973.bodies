@@ -1,0 +1,67 @@
+class ShortcutPackageItem
+!!!12254725.java!!!	ShortcutPackageItem(inout shortcutUser : ShortcutUser, in packageUserId : int, in packageName : String, inout packageInfo : ShortcutPackageInfo)
+        mShortcutUser = shortcutUser;
+        mPackageUserId = packageUserId;
+        mPackageName = Preconditions.checkStringNotEmpty(packageName);
+        mPackageInfo = Preconditions.checkNotNull(packageInfo);
+!!!12254853.java!!!	replaceUser(inout user : ShortcutUser) : void
+        mShortcutUser = user;
+!!!12254981.java!!!	getUser() : ShortcutUser
+        return mShortcutUser;
+!!!12255109.java!!!	getPackageUserId() : int
+        return mPackageUserId;
+!!!12255365.java!!!	getPackageName() : String
+        return mPackageName;
+!!!12255493.java!!!	getPackageInfo() : ShortcutPackageInfo
+        return mPackageInfo;
+!!!12255621.java!!!	refreshPackageSignatureAndSave() : void
+        if (mPackageInfo.isShadow()) {
+            return; // Don't refresh for shadow user.
+        }
+        final ShortcutService s = mShortcutUser.mService;
+        mPackageInfo.refreshSignature(s, this);
+        s.scheduleSaveUser(getOwnerUserId());
+!!!12255749.java!!!	attemptToRestoreIfNeededAndSave() : void
+        if (!mPackageInfo.isShadow()) {
+            return; // Already installed, nothing to do.
+        }
+        final ShortcutService s = mShortcutUser.mService;
+        if (!s.isPackageInstalled(mPackageName, mPackageUserId)) {
+            if (ShortcutService.DEBUG) {
+                Slog.d(TAG, String.format("Package still not installed: %s user=%d",
+                        mPackageName, mPackageUserId));
+            }
+            return; // Not installed, no need to restore yet.
+        }
+        boolean blockRestore = false;
+        if (!mPackageInfo.hasSignatures()) {
+            s.wtf("Attempted to restore package " + mPackageName + ", user=" + mPackageUserId
+                    + " but signatures not found in the restore data.");
+            blockRestore = true;
+        }
+        if (!blockRestore) {
+            final PackageInfo pi = s.getPackageInfoWithSignatures(mPackageName, mPackageUserId);
+            if (!mPackageInfo.canRestoreTo(s, pi)) {
+                // Package is now installed, but can't restore.  Let the subclass do the cleanup.
+                blockRestore = true;
+            }
+        }
+        if (blockRestore) {
+            onRestoreBlocked();
+        } else {
+            if (ShortcutService.DEBUG) {
+                Slog.d(TAG, String.format("Restored package: %s/%d on user %d", mPackageName,
+                        mPackageUserId, getOwnerUserId()));
+            }
+
+            onRestored();
+        }
+
+        // Either way, it's no longer a shadow.
+        mPackageInfo.setShadow(false);
+
+        s.scheduleSaveUser(mPackageUserId);
+!!!12256261.java!!!	dumpCheckin(inout clear : boolean) : JSONObject
+        final JSONObject result = new JSONObject();
+        result.put(KEY_NAME, mPackageName);
+        return result;

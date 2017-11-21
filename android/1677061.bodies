@@ -1,0 +1,254 @@
+class PersistentDataStore
+!!!11514629.java!!!	PersistentDataStore()
+        mAtomicFile = new AtomicFile(new File("/data/system/display-manager-state.xml"));
+!!!11514757.java!!!	saveIfNeeded() : void
+        if (mDirty) {
+            save();
+            mDirty = false;
+        }
+!!!11514885.java!!!	getRememberedWifiDisplay(in deviceAddress : String) : WifiDisplay
+        loadIfNeeded();
+        int index = findRememberedWifiDisplay(deviceAddress);
+        if (index >= 0) {
+            return mRememberedWifiDisplays.get(index);
+        }
+        return null;
+!!!11515013.java!!!	getRememberedWifiDisplays() : WifiDisplay
+        loadIfNeeded();
+        return mRememberedWifiDisplays.toArray(new WifiDisplay[mRememberedWifiDisplays.size()]);
+!!!11515141.java!!!	applyWifiDisplayAlias(inout display : WifiDisplay) : WifiDisplay
+        if (display != null) {
+            loadIfNeeded();
+
+            String alias = null;
+            int index = findRememberedWifiDisplay(display.getDeviceAddress());
+            if (index >= 0) {
+                alias = mRememberedWifiDisplays.get(index).getDeviceAlias();
+            }
+            if (!Objects.equal(display.getDeviceAlias(), alias)) {
+                return new WifiDisplay(display.getDeviceAddress(), display.getDeviceName(),
+                        alias, display.isAvailable(), display.canConnect(), display.isRemembered());
+            }
+        }
+        return display;
+!!!11515269.java!!!	applyWifiDisplayAliases(inout displays : WifiDisplay [[]]) : WifiDisplay
+        WifiDisplay[] results = displays;
+        if (results != null) {
+            int count = displays.length;
+            for (int i = 0; i < count; i++) {
+                WifiDisplay result = applyWifiDisplayAlias(displays[i]);
+                if (result != displays[i]) {
+                    if (results == displays) {
+                        results = new WifiDisplay[count];
+                        System.arraycopy(displays, 0, results, 0, count);
+                    }
+                    results[i] = result;
+                }
+            }
+        }
+        return results;
+!!!11515397.java!!!	rememberWifiDisplay(inout display : WifiDisplay) : boolean
+        loadIfNeeded();
+
+        int index = findRememberedWifiDisplay(display.getDeviceAddress());
+        if (index >= 0) {
+            WifiDisplay other = mRememberedWifiDisplays.get(index);
+            if (other.equals(display)) {
+                return false; // already remembered without change
+            }
+            mRememberedWifiDisplays.set(index, display);
+        } else {
+            mRememberedWifiDisplays.add(display);
+        }
+        setDirty();
+        return true;
+!!!11515525.java!!!	forgetWifiDisplay(in deviceAddress : String) : boolean
+        int index = findRememberedWifiDisplay(deviceAddress);
+        if (index >= 0) {
+            mRememberedWifiDisplays.remove(index);
+            setDirty();
+            return true;
+        }
+        return false;
+!!!11515653.java!!!	findRememberedWifiDisplay(in deviceAddress : String) : int
+        int count = mRememberedWifiDisplays.size();
+        for (int i = 0; i < count; i++) {
+            if (mRememberedWifiDisplays.get(i).getDeviceAddress().equals(deviceAddress)) {
+                return i;
+            }
+        }
+        return -1;
+!!!11515781.java!!!	getColorMode(inout device : DisplayDevice) : int
+        if (!device.hasStableUniqueId()) {
+            return Display.COLOR_MODE_INVALID;
+        }
+        DisplayState state = getDisplayState(device.getUniqueId(), false);
+        if (state == null) {
+            return Display.COLOR_MODE_INVALID;
+        }
+        return state.getColorMode();
+!!!11515909.java!!!	setColorMode(inout device : DisplayDevice, in colorMode : int) : boolean
+        if (!device.hasStableUniqueId()) {
+            return false;
+        }
+        DisplayState state = getDisplayState(device.getUniqueId(), true);
+        if (state.setColorMode(colorMode)) {
+            setDirty();
+            return true;
+        }
+        return false;
+!!!11516037.java!!!	getDisplayState(in uniqueId : String, inout createIfAbsent : boolean) : PersistentDataStore::DisplayState
+        loadIfNeeded();
+        DisplayState state = mDisplayStates.get(uniqueId);
+        if (state == null && createIfAbsent) {
+            state = new DisplayState();
+            mDisplayStates.put(uniqueId, state);
+            setDirty();
+        }
+        return state;
+!!!11516165.java!!!	loadIfNeeded() : void
+        if (!mLoaded) {
+            load();
+            mLoaded = true;
+        }
+!!!11516293.java!!!	setDirty() : void
+        mDirty = true;
+!!!11516421.java!!!	clearState() : void
+        mRememberedWifiDisplays.clear();
+!!!11516549.java!!!	load() : void
+        clearState();
+
+        final InputStream is;
+        try {
+            is = mAtomicFile.openRead();
+        } catch (FileNotFoundException ex) {
+            return;
+        }
+
+        XmlPullParser parser;
+        try {
+            parser = Xml.newPullParser();
+            parser.setInput(new BufferedInputStream(is), StandardCharsets.UTF_8.name());
+            loadFromXml(parser);
+        } catch (IOException ex) {
+            Slog.w(TAG, "Failed to load display manager persistent store data.", ex);
+            clearState();
+        } catch (XmlPullParserException ex) {
+            Slog.w(TAG, "Failed to load display manager persistent store data.", ex);
+            clearState();
+        } finally {
+            IoUtils.closeQuietly(is);
+        }
+!!!11516677.java!!!	save() : void
+        final FileOutputStream os;
+        try {
+            os = mAtomicFile.startWrite();
+            boolean success = false;
+            try {
+                XmlSerializer serializer = new FastXmlSerializer();
+                serializer.setOutput(new BufferedOutputStream(os), StandardCharsets.UTF_8.name());
+                saveToXml(serializer);
+                serializer.flush();
+                success = true;
+            } finally {
+                if (success) {
+                    mAtomicFile.finishWrite(os);
+                } else {
+                    mAtomicFile.failWrite(os);
+                }
+            }
+        } catch (IOException ex) {
+            Slog.w(TAG, "Failed to save display manager persistent store data.", ex);
+        }
+!!!11516805.java!!!	loadFromXml(inout parser : XmlPullParser) : void
+        XmlUtils.beginDocument(parser, "display-manager-state");
+        final int outerDepth = parser.getDepth();
+        while (XmlUtils.nextElementWithin(parser, outerDepth)) {
+            if (parser.getName().equals("remembered-wifi-displays")) {
+                loadRememberedWifiDisplaysFromXml(parser);
+            }
+            if (parser.getName().equals("display-states")) {
+                loadDisplaysFromXml(parser);
+            }
+        }
+!!!11516933.java!!!	loadRememberedWifiDisplaysFromXml(inout parser : XmlPullParser) : void
+        final int outerDepth = parser.getDepth();
+        while (XmlUtils.nextElementWithin(parser, outerDepth)) {
+            if (parser.getName().equals("wifi-display")) {
+                String deviceAddress = parser.getAttributeValue(null, "deviceAddress");
+                String deviceName = parser.getAttributeValue(null, "deviceName");
+                String deviceAlias = parser.getAttributeValue(null, "deviceAlias");
+                if (deviceAddress == null || deviceName == null) {
+                    throw new XmlPullParserException(
+                            "Missing deviceAddress or deviceName attribute on wifi-display.");
+                }
+                if (findRememberedWifiDisplay(deviceAddress) >= 0) {
+                    throw new XmlPullParserException(
+                            "Found duplicate wifi display device address.");
+                }
+
+                mRememberedWifiDisplays.add(
+                        new WifiDisplay(deviceAddress, deviceName, deviceAlias,
+                                false, false, false));
+            }
+        }
+!!!11517061.java!!!	loadDisplaysFromXml(inout parser : XmlPullParser) : void
+        final int outerDepth = parser.getDepth();
+        while (XmlUtils.nextElementWithin(parser, outerDepth)) {
+            if (parser.getName().equals("display")) {
+                String uniqueId = parser.getAttributeValue(null, "unique-id");
+                if (uniqueId == null) {
+                    throw new XmlPullParserException(
+                            "Missing unique-id attribute on display.");
+                }
+                if (mDisplayStates.containsKey(uniqueId)) {
+                    throw new XmlPullParserException("Found duplicate display.");
+                }
+
+                DisplayState state = new DisplayState();
+                state.loadFromXml(parser);
+                mDisplayStates.put(uniqueId, state);
+            }
+        }
+!!!11517189.java!!!	saveToXml(inout serializer : XmlSerializer) : void
+        serializer.startDocument(null, true);
+        serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
+        serializer.startTag(null, "display-manager-state");
+        serializer.startTag(null, "remembered-wifi-displays");
+        for (WifiDisplay display : mRememberedWifiDisplays) {
+            serializer.startTag(null, "wifi-display");
+            serializer.attribute(null, "deviceAddress", display.getDeviceAddress());
+            serializer.attribute(null, "deviceName", display.getDeviceName());
+            if (display.getDeviceAlias() != null) {
+                serializer.attribute(null, "deviceAlias", display.getDeviceAlias());
+            }
+            serializer.endTag(null, "wifi-display");
+        }
+        serializer.endTag(null, "remembered-wifi-displays");
+        serializer.startTag(null, "display-states");
+        for (Map.Entry<String, DisplayState> entry : mDisplayStates.entrySet()) {
+            final String uniqueId = entry.getKey();
+            final DisplayState state = entry.getValue();
+            serializer.startTag(null, "display");
+            serializer.attribute(null, "unique-id", uniqueId);
+            state.saveToXml(serializer);
+            serializer.endTag(null, "display");
+        }
+        serializer.endTag(null, "display-states");
+        serializer.endTag(null, "display-manager-state");
+        serializer.endDocument();
+!!!11517317.java!!!	dump(inout pw : PrintWriter) : void
+        pw.println("PersistentDataStore");
+        pw.println("  mLoaded=" + mLoaded);
+        pw.println("  mDirty=" + mDirty);
+        pw.println("  RememberedWifiDisplays:");
+        int i = 0;
+        for (WifiDisplay display : mRememberedWifiDisplays) {
+            pw.println("    " + i++ + ": " + display);
+        }
+        pw.println("  DisplayStates:");
+        i = 0;
+        for (Map.Entry<String, DisplayState> entry : mDisplayStates.entrySet()) {
+            pw.println("    " + i++ + ": " + entry.getKey());
+            entry.getValue().dump(pw, "      ");
+        }

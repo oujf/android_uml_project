@@ -1,0 +1,38 @@
+class LatencyTracker
+!!!4374789.java!!!	getInstance(inout context : Context) : LatencyTracker
+        if (sLatencyTracker == null) {
+            sLatencyTracker = new LatencyTracker(context);
+        }
+        return sLatencyTracker;
+!!!4374917.java!!!	LatencyTracker(inout context : Context)
+        context.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                reloadProperty();
+            }
+        }, new IntentFilter(ACTION_RELOAD_PROPERTY));
+        reloadProperty();
+!!!4375045.java!!!	reloadProperty() : void
+        mEnabled = SystemProperties.getBoolean("debug.systemui.latency_tracking", false);
+!!!4375173.java!!!	isEnabled(inout ctx : Context) : boolean
+        return Build.IS_DEBUGGABLE && getInstance(ctx).mEnabled;
+!!!4375301.java!!!	onActionStart(in action : int) : void
+        if (!mEnabled) {
+            return;
+        }
+        Trace.asyncTraceBegin(Trace.TRACE_TAG_APP, NAMES[action], 0);
+        mStartRtc.put(action, SystemClock.elapsedRealtime());
+!!!4375429.java!!!	onActionEnd(in action : int) : void
+        if (!mEnabled) {
+            return;
+        }
+        long endRtc = SystemClock.elapsedRealtime();
+        long startRtc = mStartRtc.get(action, -1);
+        if (startRtc == -1) {
+            return;
+        }
+        mStartRtc.delete(action);
+        Trace.asyncTraceEnd(Trace.TRACE_TAG_APP, NAMES[action], 0);
+        long duration = endRtc - startRtc;
+        Log.i(TAG, "action=" + action + " latency=" + duration);
+        EventLog.writeEvent(EventLogTags.SYSUI_LATENCY, action, (int) duration);

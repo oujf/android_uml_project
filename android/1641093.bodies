@@ -1,0 +1,42 @@
+class DumpStackFileObserver
+!!!10997381.java!!!	DumpStackFileObserver(in tracesPath : String)
+            super(tracesPath, FileObserver.CLOSE_WRITE);
+            mTracesPath = tracesPath;
+!!!10997509.java!!!	onEvent(in event : int, in path : String) : void
+            mClosed = true;
+            notify();
+!!!10997637.java!!!	dumpWithTimeout(in pid : int, in timeout : long) : long
+            sendSignal(pid, SIGNAL_QUIT);
+            final long start = SystemClock.elapsedRealtime();
+
+            final long waitTime = Math.min(timeout, TRACE_DUMP_TIMEOUT_MS);
+            synchronized (this) {
+                try {
+                    wait(waitTime); // Wait for traces file to be closed.
+                } catch (InterruptedException e) {
+                    Slog.wtf(TAG, e);
+                }
+            }
+
+            // This avoids a corner case of passing a negative time to the native
+            // trace in case we've already hit the overall timeout.
+            final long timeWaited = SystemClock.elapsedRealtime() - start;
+            if (timeWaited >= timeout) {
+                return timeWaited;
+            }
+
+            if (!mClosed) {
+                Slog.w(TAG, "Didn't see close of " + mTracesPath + " for pid " + pid +
+                       ". Attempting native stack collection.");
+
+                final long nativeDumpTimeoutMs = Math.min(
+                        NATIVE_DUMP_TIMEOUT_MS, timeout - timeWaited);
+
+                Debug.dumpNativeBacktraceToFileTimeout(pid, mTracesPath,
+                        (int) (nativeDumpTimeoutMs / 1000));
+            }
+
+            final long end = SystemClock.elapsedRealtime();
+            mClosed = false;
+
+            return (end - start);

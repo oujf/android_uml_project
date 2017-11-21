@@ -1,0 +1,121 @@
+class StatusBarIconControllerImpl
+!!!4084997.java!!!	StatusBarIconControllerImpl(inout context : Context)
+        super(context.getResources().getStringArray(
+                com.android.internal.R.array.config_statusBarIcons));
+        Dependency.get(ConfigurationController.class).addCallback(this);
+        mDarkIconDispatcher = Dependency.get(DarkIconDispatcher.class);
+        mContext = context;
+
+        loadDimens();
+
+        SysUiServiceProvider.getComponent(context, CommandQueue.class)
+                .addCallbacks(this);
+        Dependency.get(TunerService.class).addTunable(this, ICON_BLACKLIST);
+!!!4085125.java!!!	addIconGroup(inout group : StatusBarIconController::IconManager) : void
+        mIconGroups.add(group);
+        for (int i = 0; i < mIcons.size(); i++) {
+            StatusBarIcon icon = mIcons.get(i);
+            if (icon != null) {
+                String slot = mSlots.get(i);
+                boolean blocked = mIconBlacklist.contains(slot);
+                group.onIconAdded(getViewIndex(getSlotIndex(slot)), slot, blocked, icon);
+            }
+        }
+!!!4085253.java!!!	removeIconGroup(inout group : StatusBarIconController::IconManager) : void
+        group.destroy();
+        mIconGroups.remove(group);
+!!!4085381.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        if (!ICON_BLACKLIST.equals(key)) {
+            return;
+        }
+        mIconBlacklist.clear();
+        mIconBlacklist.addAll(StatusBarIconController.getIconBlacklist(newValue));
+        ArrayList<StatusBarIcon> current = new ArrayList<>(mIcons);
+        ArrayList<String> currentSlots = new ArrayList<>(mSlots);
+        // Remove all the icons.
+        for (int i = current.size() - 1; i >= 0; i--) {
+            removeIcon(currentSlots.get(i));
+        }
+        // Add them all back
+        for (int i = 0; i < current.size(); i++) {
+            setIcon(currentSlots.get(i), current.get(i));
+        }
+!!!4085637.java!!!	addSystemIcon(in index : int, inout icon : StatusBarIcon) : void
+        String slot = getSlot(index);
+        int viewIndex = getViewIndex(index);
+        boolean blocked = mIconBlacklist.contains(slot);
+
+        mIconGroups.forEach(l -> l.onIconAdded(viewIndex, slot, blocked, icon));
+!!!4085765.java!!!	setIcon(in slot : String, in resourceId : int, inout contentDescription : CharSequence) : void
+        int index = getSlotIndex(slot);
+        StatusBarIcon icon = getIcon(index);
+        if (icon == null) {
+            icon = new StatusBarIcon(UserHandle.SYSTEM, mContext.getPackageName(),
+                    Icon.createWithResource(mContext, resourceId), 0, 0, contentDescription);
+            setIcon(slot, icon);
+        } else {
+            icon.icon = Icon.createWithResource(mContext, resourceId);
+            icon.contentDescription = contentDescription;
+            handleSet(index, icon);
+        }
+!!!4085893.java!!!	setExternalIcon(in slot : String) : void
+        int viewIndex = getViewIndex(getSlotIndex(slot));
+        int height = mContext.getResources().getDimensionPixelSize(
+                R.dimen.status_bar_icon_drawing_size);
+        mIconGroups.forEach(l -> l.onIconExternal(viewIndex, height));
+!!!4086021.java!!!	setIcon(in slot : String, inout icon : StatusBarIcon) : void
+        setIcon(getSlotIndex(slot), icon);
+!!!4086149.java!!!	removeIcon(in slot : String) : void
+        int index = getSlotIndex(slot);
+        removeIcon(index);
+!!!4086277.java!!!	setIconVisibility(in slot : String, inout visibility : boolean) : void
+        int index = getSlotIndex(slot);
+        StatusBarIcon icon = getIcon(index);
+        if (icon == null || icon.visible == visibility) {
+            return;
+        }
+        icon.visible = visibility;
+        handleSet(index, icon);
+!!!4086405.java!!!	removeIcon(in index : int) : void
+        if (getIcon(index) == null) {
+            return;
+        }
+        super.removeIcon(index);
+        int viewIndex = getViewIndex(index);
+        mIconGroups.forEach(l -> l.onRemoveIcon(viewIndex));
+!!!4086533.java!!!	setIcon(in index : int, inout icon : StatusBarIcon) : void
+        if (icon == null) {
+            removeIcon(index);
+            return;
+        }
+        boolean isNew = getIcon(index) == null;
+        super.setIcon(index, icon);
+        if (isNew) {
+            addSystemIcon(index, icon);
+        } else {
+            handleSet(index, icon);
+        }
+!!!4086661.java!!!	handleSet(in index : int, inout icon : StatusBarIcon) : void
+        int viewIndex = getViewIndex(index);
+        mIconGroups.forEach(l -> l.onSetIcon(viewIndex, icon));
+!!!4086789.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        // TODO: Dump info about all icon groups?
+        ViewGroup statusIcons = mIconGroups.get(0).mGroup;
+        int N = statusIcons.getChildCount();
+        pw.println("  icon views: " + N);
+        for (int i = 0; i < N; i++) {
+            StatusBarIconView ic = (StatusBarIconView) statusIcons.getChildAt(i);
+            pw.println("    [" + i + "] icon=" + ic);
+        }
+        super.dump(pw);
+!!!4086917.java!!!	dispatchDemoCommand(in command : String, inout args : Bundle) : void
+        if (mDemoStatusIcons == null) {
+            // TODO: Rework how we handle demo mode.
+            int iconSize = mContext.getResources().getDimensionPixelSize(
+                    com.android.internal.R.dimen.status_bar_icon_size);
+            mDemoStatusIcons = new DemoStatusIcons((LinearLayout) mIconGroups.get(0).mGroup,
+                    iconSize);
+        }
+        mDemoStatusIcons.dispatchDemoCommand(command, args);
+!!!4087045.java!!!	onDensityOrFontScaleChanged() : void
+        loadDimens();

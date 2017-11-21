@@ -1,0 +1,45 @@
+class NetworkScorerPackageMonitor
+!!!10794501.java!!!	NetworkScorerPackageMonitor(in packageToWatch : String)
+            mPackageToWatch = packageToWatch;
+!!!10794629.java!!!	onPackageAdded(in packageName : String, in uid : int) : void
+            evaluateBinding(packageName, true /* forceUnbind */);
+!!!10794757.java!!!	onPackageRemoved(in packageName : String, in uid : int) : void
+            evaluateBinding(packageName, true /* forceUnbind */);
+!!!10794885.java!!!	onPackageModified(in packageName : String) : void
+            evaluateBinding(packageName, false /* forceUnbind */);
+!!!10795013.java!!!	onHandleForceStop(inout intent : Intent, inout packages : String [[]], in uid : int, inout doit : boolean) : boolean
+            if (doit) { // "doit" means the force stop happened instead of just being queried for.
+                for (String packageName : packages) {
+                    evaluateBinding(packageName, true /* forceUnbind */);
+                }
+            }
+            return super.onHandleForceStop(intent, packages, uid, doit);
+!!!10795141.java!!!	onPackageUpdateFinished(in packageName : String, in uid : int) : void
+            evaluateBinding(packageName, true /* forceUnbind */);
+!!!10795269.java!!!	evaluateBinding(in changedPackageName : String, inout forceUnbind : boolean) : void
+            if (!mPackageToWatch.equals(changedPackageName)) {
+                // Early exit when we don't care about the package that has changed.
+                return;
+            }
+
+            if (DBG) {
+                Log.d(TAG, "Evaluating binding for: " + changedPackageName
+                        + ", forceUnbind=" + forceUnbind);
+            }
+
+            final NetworkScorerAppData activeScorer = mNetworkScorerAppManager.getActiveScorer();
+            if (activeScorer == null) {
+                // Package change has invalidated a scorer, this will also unbind any service
+                // connection.
+                if (DBG) Log.d(TAG, "No active scorers available.");
+                refreshBinding();
+            } else { // The scoring service changed in some way.
+                if (forceUnbind) {
+                    unbindFromScoringServiceIfNeeded();
+                }
+                if (DBG) {
+                    Log.d(TAG, "Binding to " + activeScorer.getRecommendationServiceComponent()
+                            + " if needed.");
+                }
+                bindToScoringServiceIfNeeded(activeScorer);
+            }

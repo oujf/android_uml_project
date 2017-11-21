@@ -1,0 +1,38 @@
+class AAudioThread
+!!!543493.cpp!!!	AAudioThread()
+    // mThread is a pthread_t of unknown size so we need memset().
+    memset(&mThread, 0, sizeof(mThread));
+!!!543877.cpp!!!	start(inout runnable : Runnable = nullptr) : aaudio_result_t
+    if (mHasThread) {
+        ALOGE("AAudioThread::start() - mHasThread.load() already true");
+        return AAUDIO_ERROR_INVALID_STATE;
+    }
+    // mRunnable will be read by the new thread when it starts.
+    // pthread_create() forces a memory synchronization so mRunnable does not need to be atomic.
+    mRunnable = runnable;
+    int err = pthread_create(&mThread, nullptr, AAudioThread_internalThreadProc, this);
+    if (err != 0) {
+        ALOGE("AAudioThread::start() - pthread_create() returned %d %s", err, strerror(err));
+        return AAudioConvert_androidToAAudioResult(-err);
+    } else {
+        mHasThread = true;
+        return AAUDIO_OK;
+    }
+!!!544005.cpp!!!	stop() : aaudio_result_t
+    if (!mHasThread) {
+        return AAUDIO_ERROR_INVALID_STATE;
+    }
+    int err = pthread_join(mThread, nullptr);
+    mHasThread = false;
+    if (err != 0) {
+        ALOGE("AAudioThread::stop() - pthread_join() returned %d %s", err, strerror(err));
+        return AAudioConvert_androidToAAudioResult(-err);
+    } else {
+        return AAUDIO_OK;
+    }
+!!!544261.cpp!!!	dispatch() : void
+    if (mRunnable != nullptr) {
+        mRunnable->run();
+    } else {
+        run();
+    }

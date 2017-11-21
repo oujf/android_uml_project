@@ -1,0 +1,100 @@
+class PhoneStatusBarView
+!!!4064261.java!!!	PhoneStatusBarView(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+
+        mBarTransitions = new PhoneStatusBarTransitions(this);
+!!!4064389.java!!!	getBarTransitions() : BarTransitions
+        return mBarTransitions;
+!!!4064517.java!!!	setBar(inout bar : StatusBar) : void
+        mBar = bar;
+!!!4064645.java!!!	setScrimController(inout scrimController : ScrimController) : void
+        mScrimController = scrimController;
+!!!4064773.java!!!	onFinishInflate() : void
+        mBarTransitions.init();
+        mBattery = findViewById(R.id.battery);
+!!!4064901.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        // Always have Battery meters in the status bar observe the dark/light modes.
+        Dependency.get(DarkIconDispatcher.class).addDarkReceiver(mBattery);
+!!!4065029.java!!!	onDetachedFromWindow() : void
+        super.onDetachedFromWindow();
+        Dependency.get(DarkIconDispatcher.class).removeDarkReceiver(mBattery);
+!!!4065157.java!!!	panelEnabled() : boolean
+        return mBar.panelsEnabled();
+!!!4065285.java!!!	onRequestSendAccessibilityEventInternal(inout child : View, inout event : AccessibilityEvent) : boolean
+        if (super.onRequestSendAccessibilityEventInternal(child, event)) {
+            // The status bar is very small so augment the view that the user is touching
+            // with the content of the status bar a whole. This way an accessibility service
+            // may announce the current item as well as the entire content if appropriate.
+            AccessibilityEvent record = AccessibilityEvent.obtain();
+            onInitializeAccessibilityEvent(record);
+            dispatchPopulateAccessibilityEvent(record);
+            event.appendRecord(record);
+            return true;
+        }
+        return false;
+!!!4065413.java!!!	onPanelPeeked() : void
+        super.onPanelPeeked();
+        mBar.makeExpandedVisible(false);
+!!!4065541.java!!!	onPanelCollapsed() : void
+        super.onPanelCollapsed();
+        // Close the status bar in the next frame so we can show the end of the animation.
+        post(mHideExpandedRunnable);
+        mIsFullyOpenedPanel = false;
+!!!4065669.java!!!	removePendingHideExpandedRunnables() : void
+        removeCallbacks(mHideExpandedRunnable);
+!!!4065797.java!!!	onPanelFullyOpened() : void
+        super.onPanelFullyOpened();
+        if (!mIsFullyOpenedPanel) {
+            mPanel.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+        }
+        mIsFullyOpenedPanel = true;
+!!!4065925.java!!!	onTouchEvent(inout event : MotionEvent) : boolean
+        boolean barConsumedEvent = mBar.interceptTouchEvent(event);
+
+        if (DEBUG_GESTURES) {
+            if (event.getActionMasked() != MotionEvent.ACTION_MOVE) {
+                EventLog.writeEvent(EventLogTags.SYSUI_PANELBAR_TOUCH,
+                        event.getActionMasked(), (int) event.getX(), (int) event.getY(),
+                        barConsumedEvent ? 1 : 0);
+            }
+        }
+
+        return barConsumedEvent || super.onTouchEvent(event);
+!!!4066053.java!!!	onTrackingStarted() : void
+        super.onTrackingStarted();
+        mBar.onTrackingStarted();
+        mScrimController.onTrackingStarted();
+        removePendingHideExpandedRunnables();
+!!!4066181.java!!!	onClosingFinished() : void
+        super.onClosingFinished();
+        mBar.onClosingFinished();
+!!!4066309.java!!!	onTrackingStopped(inout expand : boolean) : void
+        super.onTrackingStopped(expand);
+        mBar.onTrackingStopped(expand);
+!!!4066437.java!!!	onExpandingFinished() : void
+        super.onExpandingFinished();
+        mScrimController.onExpandingFinished();
+!!!4066565.java!!!	onInterceptTouchEvent(inout event : MotionEvent) : boolean
+        return mBar.interceptTouchEvent(event) || super.onInterceptTouchEvent(event);
+!!!4066693.java!!!	panelScrimMinFractionChanged(in minFraction : float) : void
+        if (mMinFraction != minFraction) {
+            mMinFraction = minFraction;
+            updateScrimFraction();
+        }
+!!!4066821.java!!!	panelExpansionChanged(in frac : float, inout expanded : boolean) : void
+        super.panelExpansionChanged(frac, expanded);
+        mPanelFraction = frac;
+        updateScrimFraction();
+!!!4066949.java!!!	updateScrimFraction() : void
+        float scrimFraction = mPanelFraction;
+        if (mMinFraction < 1.0f) {
+            scrimFraction = Math.max((mPanelFraction - mMinFraction) / (1.0f - mMinFraction),
+                    0);
+        }
+        mScrimController.setPanelExpansion(scrimFraction);
+!!!4067077.java!!!	onDensityOrFontScaleChanged() : void
+        ViewGroup.LayoutParams layoutParams = getLayoutParams();
+        layoutParams.height = getResources().getDimensionPixelSize(
+                R.dimen.status_bar_height);
+        setLayoutParams(layoutParams);

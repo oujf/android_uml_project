@@ -1,0 +1,179 @@
+class PluginManagerImpl
+!!!3307525.java!!!	PluginManagerImpl(inout context : Context)
+        this(context, new PluginInstanceManagerFactory(),
+                Build.IS_DEBUGGABLE, Thread.getDefaultUncaughtExceptionHandler());
+!!!3307653.java!!!	PluginManagerImpl(inout context : Context, inout factory : PluginManagerImpl::PluginInstanceManagerFactory, inout debuggable : boolean, inout defaultHandler : UncaughtExceptionHandler)
+        mContext = context;
+        mFactory = factory;
+        mLooper = Dependency.get(Dependency.BG_LOOPER);
+        isDebuggable = debuggable;
+        mPluginPrefs = new PluginPrefs(mContext);
+
+        PluginExceptionHandler uncaughtExceptionHandler = new PluginExceptionHandler(
+                defaultHandler);
+        Thread.setDefaultUncaughtExceptionHandler(uncaughtExceptionHandler);
+        if (isDebuggable) {
+            new Handler(mLooper).post(() -> {
+                // Plugin dependencies that don't have another good home can go here, but
+                // dependencies that have better places to init can happen elsewhere.
+                Dependency.get(PluginDependencyProvider.class)
+                        .allowPluginDependency(ActivityStarter.class);
+            });
+        }
+!!!3307781.java!!!	getOneShotPlugin(inout cls : Class<T>) : T
+        ProvidesInterface info = cls.getDeclaredAnnotation(ProvidesInterface.class);
+        if (info == null) {
+            throw new RuntimeException(cls + " doesn't provide an interface");
+        }
+        if (TextUtils.isEmpty(info.action())) {
+            throw new RuntimeException(cls + " doesn't provide an action");
+        }
+        return getOneShotPlugin(info.action(), cls);
+!!!3307909.java!!!	getOneShotPlugin(in action : String, inout cls : Class<?>) : T
+        if (!isDebuggable) {
+            // Never ever ever allow these on production builds, they are only for prototyping.
+            return null;
+        }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            throw new RuntimeException("Must be called from UI thread");
+        }
+        PluginInstanceManager<T> p = mFactory.createPluginInstanceManager(mContext, action, null,
+                false, mLooper, cls, this);
+        mPluginPrefs.addAction(action);
+        PluginInfo<T> info = p.getPlugin();
+        if (info != null) {
+            mOneShotPackages.add(info.mPackage);
+            mHasOneShot = true;
+            startListening();
+            return info.mPlugin;
+        }
+        return null;
+!!!3308037.java!!!	addPluginListener(inout listener : PluginListener<T>, inout cls : Class<?>) : void
+        addPluginListener(listener, cls, false);
+!!!3308165.java!!!	addPluginListener(inout listener : PluginListener<T>, inout cls : Class<?>, inout allowMultiple : boolean) : void
+        addPluginListener(PluginManager.getAction(cls), listener, cls, allowMultiple);
+!!!3308293.java!!!	addPluginListener(in action : String, inout listener : PluginListener<T>, inout cls : Class<?>) : void
+        addPluginListener(action, listener, cls, false);
+!!!3308421.java!!!	addPluginListener(in action : String, inout listener : PluginListener<T>, inout cls : Class, inout allowMultiple : boolean) : void
+        if (!isDebuggable) {
+            // Never ever ever allow these on production builds, they are only for prototyping.
+            return;
+        }
+        mPluginPrefs.addAction(action);
+        PluginInstanceManager p = mFactory.createPluginInstanceManager(mContext, action, listener,
+                allowMultiple, mLooper, cls, this);
+        p.loadAll();
+        mPluginMap.put(listener, p);
+        startListening();
+!!!3308549.java!!!	removePluginListener(inout listener : PluginListener<?>) : void
+        if (!isDebuggable) {
+            // Never ever ever allow these on production builds, they are only for prototyping.
+            return;
+        }
+        if (!mPluginMap.containsKey(listener)) return;
+        mPluginMap.remove(listener).destroy();
+        if (mPluginMap.size() == 0) {
+            stopListening();
+        }
+!!!3308677.java!!!	startListening() : void
+        if (mListening) return;
+        mListening = true;
+        IntentFilter filter = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addAction(PLUGIN_CHANGED);
+        filter.addAction(DISABLE_PLUGIN);
+        filter.addDataScheme("package");
+        mContext.registerReceiver(this, filter);
+        filter = new IntentFilter(Intent.ACTION_USER_UNLOCKED);
+        mContext.registerReceiver(this, filter);
+!!!3308805.java!!!	stopListening() : void
+        // Never stop listening if a one-shot is present.
+        if (!mListening || mHasOneShot) return;
+        mListening = false;
+        mContext.unregisterReceiver(this);
+!!!3308933.java!!!	onReceive(inout context : Context, inout intent : Intent) : void
+        if (Intent.ACTION_USER_UNLOCKED.equals(intent.getAction())) {
+            for (PluginInstanceManager manager : mPluginMap.values()) {
+                manager.loadAll();
+            }
+        } else if (DISABLE_PLUGIN.equals(intent.getAction())) {
+            Uri uri = intent.getData();
+            ComponentName component = ComponentName.unflattenFromString(
+                    uri.toString().substring(10));
+            mContext.getPackageManager().setComponentEnabledSetting(component,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP);
+            mContext.getSystemService(NotificationManager.class).cancel(component.getClassName(),
+                    SystemMessage.NOTE_PLUGIN);
+        } else {
+            Uri data = intent.getData();
+            String pkg = data.getEncodedSchemeSpecificPart();
+            if (mOneShotPackages.contains(pkg)) {
+                int icon = mContext.getResources().getIdentifier("tuner", "drawable",
+                        mContext.getPackageName());
+                int color = Resources.getSystem().getIdentifier(
+                        "system_notification_accent_color", "color", "android");
+                String label = pkg;
+                try {
+                    PackageManager pm = mContext.getPackageManager();
+                    label = pm.getApplicationInfo(pkg, 0).loadLabel(pm).toString();
+                } catch (NameNotFoundException e) {
+                }
+                // Localization not required as this will never ever appear in a user build.
+                final Notification.Builder nb =
+                        new Notification.Builder(mContext, NOTIFICATION_CHANNEL_ID)
+                                .setSmallIcon(icon)
+                                .setWhen(0)
+                                .setShowWhen(false)
+                                .setPriority(Notification.PRIORITY_MAX)
+                                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                                .setColor(mContext.getColor(color))
+                                .setContentTitle("Plugin \"" + label + "\" has updated")
+                                .setContentText("Restart SysUI for changes to take effect.");
+                Intent i = new Intent("com.android.systemui.action.RESTART").setData(
+                            Uri.parse("package://" + pkg));
+                PendingIntent pi = PendingIntent.getBroadcast(mContext, 0, i, 0);
+                nb.addAction(new Action.Builder(null, "Restart SysUI", pi).build());
+                mContext.getSystemService(NotificationManager.class).notifyAsUser(pkg,
+                        SystemMessage.NOTE_PLUGIN, nb.build(), UserHandle.ALL);
+            }
+            if (clearClassLoader(pkg)) {
+                Toast.makeText(mContext, "Reloading " + pkg, Toast.LENGTH_LONG).show();
+            }
+            if (!Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())) {
+                for (PluginInstanceManager manager : mPluginMap.values()) {
+                    manager.onPackageChange(pkg);
+                }
+            } else {
+                for (PluginInstanceManager manager : mPluginMap.values()) {
+                    manager.onPackageRemoved(pkg);
+                }
+            }
+        }
+!!!3309061.java!!!	getClassLoader(in sourceDir : String, in pkg : String) : ClassLoader
+        if (mClassLoaders.containsKey(pkg)) {
+            return mClassLoaders.get(pkg);
+        }
+        ClassLoader classLoader = new PathClassLoader(sourceDir, getParentClassLoader());
+        mClassLoaders.put(pkg, classLoader);
+        return classLoader;
+!!!3309189.java!!!	clearClassLoader(in pkg : String) : boolean
+        return mClassLoaders.remove(pkg) != null;
+!!!3309317.java!!!	getParentClassLoader() : ClassLoader
+        if (mParentClassLoader == null) {
+            // Lazily load this so it doesn't have any effect on devices without plugins.
+            mParentClassLoader = new ClassLoaderFilter(getClass().getClassLoader(),
+                    "com.android.systemui.plugin");
+        }
+        return mParentClassLoader;
+!!!3309445.java!!!	getContext(inout info : ApplicationInfo, in pkg : String) : Context
+        ClassLoader classLoader = getClassLoader(info.sourceDir, pkg);
+        return new PluginContextWrapper(mContext.createApplicationContext(info, 0), classLoader);
+!!!3309573.java!!!	dependsOn(inout p : Plugin, inout cls : Class<T>) : boolean
+        for (int i = 0; i < mPluginMap.size(); i++) {
+            if (mPluginMap.valueAt(i).dependsOn(p, cls)) {
+                return true;
+            }
+        }
+        return false;

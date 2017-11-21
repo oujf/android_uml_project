@@ -1,0 +1,67 @@
+class RemovalClient
+!!!11560837.java!!!	RemovalClient(inout context : Context, in halDeviceId : long, inout token : IBinder, inout receiver : IFingerprintServiceReceiver, in fingerId : int, in groupId : int, in userId : int, inout restricted : boolean, in owner : String)
+        super(context, halDeviceId, token, receiver, userId, groupId, restricted, owner);
+        mFingerId = fingerId;
+!!!11560965.java!!!	start() : int
+        IBiometricsFingerprint daemon = getFingerprintDaemon();
+        // The fingerprint template ids will be removed when we get confirmation from the HAL
+        try {
+            final int result = daemon.remove(getGroupId(), mFingerId);
+            if (result != 0) {
+                Slog.w(TAG, "startRemove with id = " + mFingerId + " failed, result=" + result);
+                MetricsLogger.histogram(getContext(), "fingerprintd_remove_start_error", result);
+                onError(FingerprintManager.FINGERPRINT_ERROR_HW_UNAVAILABLE, 0 /* vendorCode */);
+                return result;
+            }
+        } catch (RemoteException e) {
+            Slog.e(TAG, "startRemove failed", e);
+        }
+        return 0;
+!!!11561093.java!!!	stop(inout initiatedByClient : boolean) : int
+        if (mAlreadyCancelled) {
+            Slog.w(TAG, "stopRemove: already cancelled!");
+            return 0;
+        }
+        IBiometricsFingerprint daemon = getFingerprintDaemon();
+        if (daemon == null) {
+            Slog.w(TAG, "stopRemoval: no fingerprint HAL!");
+            return ERROR_ESRCH;
+        }
+        try {
+            final int result = daemon.cancel();
+            if (result != 0) {
+                Slog.w(TAG, "stopRemoval failed, result=" + result);
+                return result;
+            }
+            if (DEBUG) Slog.w(TAG, "client " + getOwnerString() + " is no longer removing");
+        } catch (RemoteException e) {
+            Slog.e(TAG, "stopRemoval failed", e);
+            return ERROR_ESRCH;
+        }
+        mAlreadyCancelled = true;
+        return 0; // success
+!!!11561221.java!!!	sendRemoved(in fingerId : int, in groupId : int, in remaining : int) : boolean
+        IFingerprintServiceReceiver receiver = getReceiver();
+        try {
+            if (receiver != null) {
+                receiver.onRemoved(getHalDeviceId(), fingerId, groupId, remaining);
+            }
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to notify Removed:", e);
+        }
+        return remaining == 0;
+!!!11561349.java!!!	onRemoved(in fingerId : int, in groupId : int, in remaining : int) : boolean
+        if (fingerId != 0) {
+            FingerprintUtils.getInstance().removeFingerprintIdForUser(getContext(), fingerId,
+                    getTargetUserId());
+        }
+        return sendRemoved(fingerId, getGroupId(), remaining);
+!!!11561477.java!!!	onEnrollResult(in fingerId : int, in groupId : int, in rem : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onEnrollResult() called for remove!");
+        return true; // Invalid for Remove
+!!!11561605.java!!!	onAuthenticated(in fingerId : int, in groupId : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onAuthenticated() called for remove!");
+        return true; // Invalid for Remove.
+!!!11561733.java!!!	onEnumerationResult(in fingerId : int, in groupId : int, in remaining : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onEnumerationResult() called for remove!");
+        return true; // Invalid for Remove.

@@ -1,0 +1,95 @@
+class FrameEventsDelta
+!!!14279685.cpp!!!	FrameEventsDelta(in index : size_t, in frameTimestamps : FrameEvents, in dirtyFields : FrameEventDirtyFields)
+    if (dirtyFields.isDirty<FrameEvent::GPU_COMPOSITION_DONE>()) {
+        mGpuCompositionDoneFence =
+                frameTimestamps.gpuCompositionDoneFence->getSnapshot();
+    }
+    if (dirtyFields.isDirty<FrameEvent::DISPLAY_PRESENT>()) {
+        mDisplayPresentFence =
+                frameTimestamps.displayPresentFence->getSnapshot();
+    }
+    if (dirtyFields.isDirty<FrameEvent::RELEASE>()) {
+        mReleaseFence = frameTimestamps.releaseFence->getSnapshot();
+    }
+!!!14280325.cpp!!!	getFlattenedSize() : size_t
+    auto fences = allFences(this);
+    return minFlattenedSize() +
+            std::accumulate(fences.begin(), fences.end(), size_t(0),
+                    [](size_t a, const FenceTime::Snapshot* fence) {
+                            return a + fence->getFlattenedSize();
+                    });
+!!!14280453.cpp!!!	getFdCount() : size_t
+    auto fences = allFences(this);
+    return std::accumulate(fences.begin(), fences.end(), size_t(0),
+            [](size_t a, const FenceTime::Snapshot* fence) {
+                return a + fence->getFdCount();
+            });
+!!!14280581.cpp!!!	flatten(inout buffer : void, inout size : size_t, inout fds : int, inout count : size_t) : status_t
+    if (size < getFlattenedSize() || count < getFdCount()) {
+        return NO_MEMORY;
+    }
+
+    if (mIndex >= FrameEventHistory::MAX_FRAME_HISTORY ||
+            mIndex > std::numeric_limits<uint16_t>::max()) {
+        return BAD_VALUE;
+    }
+
+    FlattenableUtils::write(buffer, size, mFrameNumber);
+
+    // These are static_cast to uint16_t/uint8_t for alignment.
+    FlattenableUtils::write(buffer, size, static_cast<uint16_t>(mIndex));
+    FlattenableUtils::write(
+            buffer, size, static_cast<uint8_t>(mAddPostCompositeCalled));
+    FlattenableUtils::write(
+            buffer, size, static_cast<uint8_t>(mAddReleaseCalled));
+
+    FlattenableUtils::write(buffer, size, mPostedTime);
+    FlattenableUtils::write(buffer, size, mRequestedPresentTime);
+    FlattenableUtils::write(buffer, size, mLatchTime);
+    FlattenableUtils::write(buffer, size, mFirstRefreshStartTime);
+    FlattenableUtils::write(buffer, size, mLastRefreshStartTime);
+    FlattenableUtils::write(buffer, size, mDequeueReadyTime);
+
+    // Fences
+    for (auto fence : allFences(this)) {
+        status_t status = fence->flatten(buffer, size, fds, count);
+        if (status != NO_ERROR) {
+            return status;
+        }
+    }
+    return NO_ERROR;
+!!!14280709.cpp!!!	unflatten(in buffer : void, inout size : size_t, in fds : int, inout count : size_t) : status_t
+    if (size < minFlattenedSize()) {
+        return NO_MEMORY;
+    }
+
+    FlattenableUtils::read(buffer, size, mFrameNumber);
+
+    // These were written as uint16_t/uint8_t for alignment.
+    uint16_t temp16 = 0;
+    FlattenableUtils::read(buffer, size, temp16);
+    mIndex = temp16;
+    if (mIndex >= FrameEventHistory::MAX_FRAME_HISTORY) {
+        return BAD_VALUE;
+    }
+    uint8_t temp8 = 0;
+    FlattenableUtils::read(buffer, size, temp8);
+    mAddPostCompositeCalled = static_cast<bool>(temp8);
+    FlattenableUtils::read(buffer, size, temp8);
+    mAddReleaseCalled = static_cast<bool>(temp8);
+
+    FlattenableUtils::read(buffer, size, mPostedTime);
+    FlattenableUtils::read(buffer, size, mRequestedPresentTime);
+    FlattenableUtils::read(buffer, size, mLatchTime);
+    FlattenableUtils::read(buffer, size, mFirstRefreshStartTime);
+    FlattenableUtils::read(buffer, size, mLastRefreshStartTime);
+    FlattenableUtils::read(buffer, size, mDequeueReadyTime);
+
+    // Fences
+    for (auto fence : allFences(this)) {
+        status_t status = fence->unflatten(buffer, size, fds, count);
+        if (status != NO_ERROR) {
+            return status;
+        }
+    }
+    return NO_ERROR;

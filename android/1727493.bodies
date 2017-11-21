@@ -1,0 +1,152 @@
+class ZenModeFiltering
+!!!11996165.java!!!	ZenModeFiltering(inout context : Context)
+        mContext = context;
+!!!11996293.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.print(prefix); pw.print("mDefaultPhoneApp="); pw.println(mDefaultPhoneApp);
+        pw.print(prefix); pw.print("RepeatCallers.mThresholdMinutes=");
+        pw.println(REPEAT_CALLERS.mThresholdMinutes);
+        synchronized (REPEAT_CALLERS) {
+            if (!REPEAT_CALLERS.mCalls.isEmpty()) {
+                pw.print(prefix); pw.println("RepeatCallers.mCalls=");
+                for (int i = 0; i < REPEAT_CALLERS.mCalls.size(); i++) {
+                    pw.print(prefix); pw.print("  ");
+                    pw.print(REPEAT_CALLERS.mCalls.keyAt(i));
+                    pw.print(" at ");
+                    pw.println(ts(REPEAT_CALLERS.mCalls.valueAt(i)));
+                }
+            }
+        }
+!!!11996421.java!!!	ts(in time : long) : String
+        return new Date(time) + " (" + time + ")";
+!!!11996549.java!!!	matchesCallFilter(inout context : Context, in zen : int, inout config : ZenModeConfig, inout userHandle : UserHandle, inout extras : Bundle, inout validator : ValidateNotificationPeople, in contactsTimeoutMs : int, in timeoutAffinity : float) : boolean
+        if (zen == Global.ZEN_MODE_NO_INTERRUPTIONS) return false; // nothing gets through
+        if (zen == Global.ZEN_MODE_ALARMS) return false; // not an alarm
+        if (zen == Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS) {
+            if (config.allowRepeatCallers && REPEAT_CALLERS.isRepeat(context, extras)) {
+                return true;
+            }
+            if (!config.allowCalls) return false; // no other calls get through
+            if (validator != null) {
+                final float contactAffinity = validator.getContactAffinity(userHandle, extras,
+                        contactsTimeoutMs, timeoutAffinity);
+                return audienceMatches(config.allowCallsFrom, contactAffinity);
+            }
+        }
+        return true;
+!!!11996677.java!!!	extras(inout record : NotificationRecord) : Bundle
+        return record != null && record.sbn != null && record.sbn.getNotification() != null
+                ? record.sbn.getNotification().extras : null;
+!!!11996805.java!!!	recordCall(inout record : NotificationRecord) : void
+        REPEAT_CALLERS.recordCall(mContext, extras(record));
+!!!11996933.java!!!	shouldIntercept(in zen : int, inout config : ZenModeConfig, inout record : NotificationRecord) : boolean
+        if (isSystem(record)) {
+            return false;
+        }
+        switch (zen) {
+            case Global.ZEN_MODE_NO_INTERRUPTIONS:
+                // #notevenalarms
+                ZenLog.traceIntercepted(record, "none");
+                return true;
+            case Global.ZEN_MODE_ALARMS:
+                if (isAlarm(record)) {
+                    // Alarms only
+                    return false;
+                }
+                ZenLog.traceIntercepted(record, "alarmsOnly");
+                return true;
+            case Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS:
+                if (isAlarm(record)) {
+                    // Alarms are always priority
+                    return false;
+                }
+                // allow user-prioritized packages through in priority mode
+                if (record.getPackagePriority() == Notification.PRIORITY_MAX) {
+                    ZenLog.traceNotIntercepted(record, "priorityApp");
+                    return false;
+                }
+                if (isCall(record)) {
+                    if (config.allowRepeatCallers
+                            && REPEAT_CALLERS.isRepeat(mContext, extras(record))) {
+                        ZenLog.traceNotIntercepted(record, "repeatCaller");
+                        return false;
+                    }
+                    if (!config.allowCalls) {
+                        ZenLog.traceIntercepted(record, "!allowCalls");
+                        return true;
+                    }
+                    return shouldInterceptAudience(config.allowCallsFrom, record);
+                }
+                if (isMessage(record)) {
+                    if (!config.allowMessages) {
+                        ZenLog.traceIntercepted(record, "!allowMessages");
+                        return true;
+                    }
+                    return shouldInterceptAudience(config.allowMessagesFrom, record);
+                }
+                if (isEvent(record)) {
+                    if (!config.allowEvents) {
+                        ZenLog.traceIntercepted(record, "!allowEvents");
+                        return true;
+                    }
+                    return false;
+                }
+                if (isReminder(record)) {
+                    if (!config.allowReminders) {
+                        ZenLog.traceIntercepted(record, "!allowReminders");
+                        return true;
+                    }
+                    return false;
+                }
+                ZenLog.traceIntercepted(record, "!priority");
+                return true;
+            default:
+                return false;
+        }
+!!!11997061.java!!!	shouldInterceptAudience(in source : int, inout record : NotificationRecord) : boolean
+        if (!audienceMatches(source, record.getContactAffinity())) {
+            ZenLog.traceIntercepted(record, "!audienceMatches");
+            return true;
+        }
+        return false;
+!!!11997189.java!!!	isSystem(inout record : NotificationRecord) : boolean
+        return record.isCategory(Notification.CATEGORY_SYSTEM);
+!!!11997317.java!!!	isAlarm(inout record : NotificationRecord) : boolean
+        return record.isCategory(Notification.CATEGORY_ALARM)
+                || record.isAudioStream(AudioManager.STREAM_ALARM)
+                || record.isAudioAttributesUsage(AudioAttributes.USAGE_ALARM);
+!!!11997445.java!!!	isEvent(inout record : NotificationRecord) : boolean
+        return record.isCategory(Notification.CATEGORY_EVENT);
+!!!11997573.java!!!	isReminder(inout record : NotificationRecord) : boolean
+        return record.isCategory(Notification.CATEGORY_REMINDER);
+!!!11997701.java!!!	isCall(inout record : NotificationRecord) : boolean
+        return record != null && (isDefaultPhoneApp(record.sbn.getPackageName())
+                || record.isCategory(Notification.CATEGORY_CALL));
+!!!11997829.java!!!	isDefaultPhoneApp(in pkg : String) : boolean
+        if (mDefaultPhoneApp == null) {
+            final TelecomManager telecomm =
+                    (TelecomManager) mContext.getSystemService(Context.TELECOM_SERVICE);
+            mDefaultPhoneApp = telecomm != null ? telecomm.getDefaultPhoneApp() : null;
+            if (DEBUG) Slog.d(TAG, "Default phone app: " + mDefaultPhoneApp);
+        }
+        return pkg != null && mDefaultPhoneApp != null
+                && pkg.equals(mDefaultPhoneApp.getPackageName());
+!!!11997957.java!!!	isDefaultMessagingApp(inout record : NotificationRecord) : boolean
+        final int userId = record.getUserId();
+        if (userId == UserHandle.USER_NULL || userId == UserHandle.USER_ALL) return false;
+        final String defaultApp = Secure.getStringForUser(mContext.getContentResolver(),
+                Secure.SMS_DEFAULT_APPLICATION, userId);
+        return Objects.equals(defaultApp, record.sbn.getPackageName());
+!!!11998085.java!!!	isMessage(inout record : NotificationRecord) : boolean
+        return record.isCategory(Notification.CATEGORY_MESSAGE) || isDefaultMessagingApp(record);
+!!!11998213.java!!!	audienceMatches(in source : int, in contactAffinity : float) : boolean
+        switch (source) {
+            case ZenModeConfig.SOURCE_ANYONE:
+                return true;
+            case ZenModeConfig.SOURCE_CONTACT:
+                return contactAffinity >= ValidateNotificationPeople.VALID_CONTACT;
+            case ZenModeConfig.SOURCE_STAR:
+                return contactAffinity >= ValidateNotificationPeople.STARRED_CONTACT;
+            default:
+                Slog.w(TAG, "Encountered unknown source: " + source);
+                return true;
+        }

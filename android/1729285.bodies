@@ -1,0 +1,110 @@
+class PackageReceiver
+!!!12011909.java!!!	onReceive(in context : Context, in intent : Intent) : void
+            final Uri data = intent.getData();
+            if (data == null) {
+                Slog.e(TAG, "Cannot handle package broadcast with null data");
+                return;
+            }
+            final String packageName = data.getSchemeSpecificPart();
+
+            final boolean replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false);
+
+            final int[] userIds;
+            final int extraUid = intent.getIntExtra(Intent.EXTRA_UID, UserHandle.USER_NULL);
+            if (extraUid == UserHandle.USER_NULL) {
+                userIds = mUserManager.getUserIds();
+            } else {
+                userIds = new int[] { UserHandle.getUserId(extraUid) };
+            }
+
+            switch (intent.getAction()) {
+                case ACTION_PACKAGE_ADDED:
+                    if (replacing) {
+                        onPackageUpgraded(packageName, userIds);
+                    } else {
+                        onPackageAdded(packageName, userIds);
+                    }
+                    break;
+                case ACTION_PACKAGE_CHANGED:
+                    onPackageChanged(packageName, userIds);
+                    break;
+                case ACTION_PACKAGE_REMOVED:
+                    if (replacing) {
+                        onPackageUpgrading(packageName, userIds);
+                    } else {
+                        onPackageRemoved(packageName, userIds);
+                    }
+                    break;
+                default:
+                    // do nothing
+                    break;
+            }
+!!!12012037.java!!!	onPackageAdded(in packageName : String, in userIds : int [[]]) : void
+            for (final int userId : userIds) {
+                synchronized (mLock) {
+                    final PackageInfo pi = mPackageManager.getPackageInfo(packageName, userId,
+                            false);
+                    if (pi != null) {
+                        mPackageManager.cachePackageInfo(packageName, userId, pi);
+                        if (!isOverlayPackage(pi)) {
+                            mImpl.onTargetPackageAdded(packageName, userId);
+                        } else {
+                            mImpl.onOverlayPackageAdded(packageName, userId);
+                        }
+                    }
+                }
+            }
+!!!12012165.java!!!	onPackageChanged(in packageName : String, in userIds : int [[]]) : void
+            for (int userId : userIds) {
+                synchronized (mLock) {
+                    final PackageInfo pi = mPackageManager.getPackageInfo(packageName, userId,
+                            false);
+                    if (pi != null) {
+                        mPackageManager.cachePackageInfo(packageName, userId, pi);
+                        if (!isOverlayPackage(pi)) {
+                            mImpl.onTargetPackageChanged(packageName, userId);
+                        } else {
+                            mImpl.onOverlayPackageChanged(packageName, userId);
+                        }
+                    }
+                }
+            }
+!!!12012293.java!!!	onPackageUpgrading(in packageName : String, in userIds : int [[]]) : void
+            for (int userId : userIds) {
+                synchronized (mLock) {
+                    mPackageManager.forgetPackageInfo(packageName, userId);
+                    final OverlayInfo oi = mImpl.getOverlayInfo(packageName, userId);
+                    if (oi == null) {
+                        mImpl.onTargetPackageUpgrading(packageName, userId);
+                    } else {
+                        mImpl.onOverlayPackageUpgrading(packageName, userId);
+                    }
+                }
+            }
+!!!12012421.java!!!	onPackageUpgraded(in packageName : String, in userIds : int [[]]) : void
+            for (int userId : userIds) {
+                synchronized (mLock) {
+                    final PackageInfo pi = mPackageManager.getPackageInfo(packageName, userId,
+                            false);
+                    if (pi != null) {
+                        mPackageManager.cachePackageInfo(packageName, userId, pi);
+                        if (!isOverlayPackage(pi)) {
+                            mImpl.onTargetPackageUpgraded(packageName, userId);
+                        } else {
+                            mImpl.onOverlayPackageUpgraded(packageName, userId);
+                        }
+                    }
+                }
+            }
+!!!12012549.java!!!	onPackageRemoved(in packageName : String, in userIds : int [[]]) : void
+            for (int userId : userIds) {
+                synchronized (mLock) {
+                    mPackageManager.forgetPackageInfo(packageName, userId);
+                    final OverlayInfo oi = mImpl.getOverlayInfo(packageName, userId);
+                    if (oi == null) {
+                        mImpl.onTargetPackageRemoved(packageName, userId);
+                    } else {
+                        mImpl.onOverlayPackageRemoved(packageName, userId);
+                    }
+                }
+            }

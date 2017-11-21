@@ -1,0 +1,57 @@
+class SnoozeNotificationRunnable
+!!!11935237.java!!!	SnoozeNotificationRunnable(in key : String, in duration : long, in snoozeCriterionId : String)
+            mKey = key;
+            mDuration = duration;
+            mSnoozeCriterionId = snoozeCriterionId;
+!!!11935365.java!!!	run() : void
+            synchronized (mNotificationLock) {
+                final NotificationRecord r = findNotificationByKeyLocked(mKey);
+                if (r != null) {
+                    snoozeLocked(r);
+                }
+            }
+!!!11935493.java!!!	snoozeLocked(inout r : NotificationRecord) : void
+            if (r.sbn.isGroup()) {
+                final List<NotificationRecord> groupNotifications = findGroupNotificationsLocked(
+                        r.sbn.getPackageName(), r.sbn.getGroupKey(), r.sbn.getUserId());
+                if (r.getNotification().isGroupSummary()) {
+                    // snooze summary and all children
+                    for (int i = 0; i < groupNotifications.size(); i++) {
+                        snoozeNotificationLocked(groupNotifications.get(i));
+                    }
+                } else {
+                    // if there is a valid summary for this group, and we are snoozing the only
+                    // child, also snooze the summary
+                    if (mSummaryByGroupKey.containsKey(r.sbn.getGroupKey())) {
+                        if (groupNotifications.size() != 2) {
+                            snoozeNotificationLocked(r);
+                        } else {
+                            // snooze summary and the one child
+                            for (int i = 0; i < groupNotifications.size(); i++) {
+                                snoozeNotificationLocked(groupNotifications.get(i));
+                            }
+                        }
+                    } else {
+                        snoozeNotificationLocked(r);
+                    }
+                }
+            } else {
+                // just snooze the one notification
+                snoozeNotificationLocked(r);
+            }
+!!!11935621.java!!!	snoozeNotificationLocked(inout r : NotificationRecord) : void
+            MetricsLogger.action(r.getLogMaker()
+                    .setCategory(MetricsEvent.NOTIFICATION_SNOOZED)
+                    .setType(MetricsEvent.TYPE_CLOSE)
+                    .addTaggedData(MetricsEvent.NOTIFICATION_SNOOZED_CRITERIA,
+                            mSnoozeCriterionId == null ? 0 : 1));
+            boolean wasPosted = removeFromNotificationListsLocked(r);
+            cancelNotificationLocked(r, false, REASON_SNOOZED, wasPosted);
+            updateLightsLocked();
+            if (mSnoozeCriterionId != null) {
+                mNotificationAssistants.notifyAssistantSnoozedLocked(r.sbn, mSnoozeCriterionId);
+                mSnoozeHelper.snooze(r);
+            } else {
+                mSnoozeHelper.snooze(r, mDuration);
+            }
+            savePolicyFile();

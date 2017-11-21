@@ -1,0 +1,196 @@
+class AbstractCursor
+!!!6445829.java!!!	getType(in column : int) : int
+        // Reflects the assumption that all commonly used field types (meaning everything
+        // but blobs) are convertible to strings so it should be safe to call
+        // getString to retrieve them.
+        return FIELD_TYPE_STRING;
+!!!6445957.java!!!	getBlob(in column : int) : byte
+        throw new UnsupportedOperationException("getBlob is not supported");
+!!!6446085.java!!!	getWindow() : CursorWindow
+        return null;
+!!!6446213.java!!!	getColumnCount() : int
+        return getColumnNames().length;
+!!!6446341.java!!!	deactivate() : void
+        onDeactivateOrClose();
+!!!6446469.java!!!	onDeactivateOrClose() : void
+        if (mSelfObserver != null) {
+            mContentResolver.unregisterContentObserver(mSelfObserver);
+            mSelfObserverRegistered = false;
+        }
+        mDataSetObservable.notifyInvalidated();
+!!!6446597.java!!!	requery() : boolean
+        if (mSelfObserver != null && mSelfObserverRegistered == false) {
+            mContentResolver.registerContentObserver(mNotifyUri, true, mSelfObserver);
+            mSelfObserverRegistered = true;
+        }
+        mDataSetObservable.notifyChanged();
+        return true;
+!!!6446725.java!!!	isClosed() : boolean
+        return mClosed;
+!!!6446853.java!!!	close() : void
+        mClosed = true;
+        mContentObservable.unregisterAll();
+        onDeactivateOrClose();
+!!!6446981.java!!!	onMove(in oldPosition : int, in newPosition : int) : boolean
+        return true;
+!!!6447109.java!!!	copyStringToBuffer(in columnIndex : int, inout buffer : CharArrayBuffer) : void
+        // Default implementation, uses getString
+        String result = getString(columnIndex);
+        if (result != null) {
+            char[] data = buffer.data;
+            if (data == null || data.length < result.length()) {
+                buffer.data = result.toCharArray();
+            } else {
+                result.getChars(0, result.length(), data, 0);
+            }
+            buffer.sizeCopied = result.length();
+        } else {
+            buffer.sizeCopied = 0;
+        }
+!!!6447237.java!!!	AbstractCursor()
+        mPos = -1;
+!!!6447365.java!!!	getPosition() : int
+        return mPos;
+!!!6447493.java!!!	moveToPosition(in position : int) : boolean
+        // Make sure position isn't past the end of the cursor
+        final int count = getCount();
+        if (position >= count) {
+            mPos = count;
+            return false;
+        }
+
+        // Make sure position isn't before the beginning of the cursor
+        if (position < 0) {
+            mPos = -1;
+            return false;
+        }
+
+        // Check for no-op moves, and skip the rest of the work for them
+        if (position == mPos) {
+            return true;
+        }
+
+        boolean result = onMove(mPos, position);
+        if (result == false) {
+            mPos = -1;
+        } else {
+            mPos = position;
+        }
+
+        return result;
+!!!6447621.java!!!	fillWindow(in position : int, inout window : CursorWindow) : void
+        DatabaseUtils.cursorFillWindow(this, position, window);
+!!!6447749.java!!!	move(in offset : int) : boolean
+        return moveToPosition(mPos + offset);
+!!!6447877.java!!!	moveToFirst() : boolean
+        return moveToPosition(0);
+!!!6448005.java!!!	moveToLast() : boolean
+        return moveToPosition(getCount() - 1);
+!!!6448133.java!!!	moveToNext() : boolean
+        return moveToPosition(mPos + 1);
+!!!6448261.java!!!	moveToPrevious() : boolean
+        return moveToPosition(mPos - 1);
+!!!6448389.java!!!	isFirst() : boolean
+        return mPos == 0 && getCount() != 0;
+!!!6448517.java!!!	isLast() : boolean
+        int cnt = getCount();
+        return mPos == (cnt - 1) && cnt != 0;
+!!!6448645.java!!!	isBeforeFirst() : boolean
+        if (getCount() == 0) {
+            return true;
+        }
+        return mPos == -1;
+!!!6448773.java!!!	isAfterLast() : boolean
+        if (getCount() == 0) {
+            return true;
+        }
+        return mPos == getCount();
+!!!6448901.java!!!	getColumnIndex(in columnName : String) : int
+        // Hack according to bug 903852
+        final int periodIndex = columnName.lastIndexOf('.');
+        if (periodIndex != -1) {
+            Exception e = new Exception();
+            Log.e(TAG, "requesting column name with table name -- " + columnName, e);
+            columnName = columnName.substring(periodIndex + 1);
+        }
+
+        String columnNames[] = getColumnNames();
+        int length = columnNames.length;
+        for (int i = 0; i < length; i++) {
+            if (columnNames[i].equalsIgnoreCase(columnName)) {
+                return i;
+            }
+        }
+
+        if (false) {
+            if (getCount() > 0) {
+                Log.w("AbstractCursor", "Unknown column " + columnName);
+            }
+        }
+        return -1;
+!!!6449029.java!!!	getColumnIndexOrThrow(in columnName : String) : int
+        final int index = getColumnIndex(columnName);
+        if (index < 0) {
+            throw new IllegalArgumentException("column '" + columnName + "' does not exist");
+        }
+        return index;
+!!!6449157.java!!!	getColumnName(in columnIndex : int) : String
+        return getColumnNames()[columnIndex];
+!!!6449285.java!!!	registerContentObserver(inout observer : ContentObserver) : void
+        mContentObservable.registerObserver(observer);
+!!!6449413.java!!!	unregisterContentObserver(inout observer : ContentObserver) : void
+        // cursor will unregister all observers when it close
+        if (!mClosed) {
+            mContentObservable.unregisterObserver(observer);
+        }
+!!!6449541.java!!!	registerDataSetObserver(inout observer : DataSetObserver) : void
+        mDataSetObservable.registerObserver(observer);
+!!!6449669.java!!!	unregisterDataSetObserver(inout observer : DataSetObserver) : void
+        mDataSetObservable.unregisterObserver(observer);
+!!!6449797.java!!!	onChange(inout selfChange : boolean) : void
+        synchronized (mSelfObserverLock) {
+            mContentObservable.dispatchChange(selfChange, null);
+            if (mNotifyUri != null && selfChange) {
+                mContentResolver.notifyChange(mNotifyUri, mSelfObserver);
+            }
+        }
+!!!6449925.java!!!	setNotificationUri(inout cr : ContentResolver, inout notifyUri : Uri) : void
+        setNotificationUri(cr, notifyUri, UserHandle.myUserId());
+!!!6450053.java!!!	setNotificationUri(inout cr : ContentResolver, inout notifyUri : Uri, in userHandle : int) : void
+        synchronized (mSelfObserverLock) {
+            mNotifyUri = notifyUri;
+            mContentResolver = cr;
+            if (mSelfObserver != null) {
+                mContentResolver.unregisterContentObserver(mSelfObserver);
+            }
+            mSelfObserver = new SelfContentObserver(this);
+            mContentResolver.registerContentObserver(mNotifyUri, true, mSelfObserver, userHandle);
+            mSelfObserverRegistered = true;
+        }
+!!!6450181.java!!!	getNotificationUri() : Uri
+        synchronized (mSelfObserverLock) {
+            return mNotifyUri;
+        }
+!!!6450309.java!!!	getWantsAllOnMoveCalls() : boolean
+        return false;
+!!!6450437.java!!!	setExtras(inout extras : Bundle) : void
+        mExtras = (extras == null) ? Bundle.EMPTY : extras;
+!!!6450565.java!!!	getExtras() : Bundle
+        return mExtras;
+!!!6450693.java!!!	respond(inout extras : Bundle) : Bundle
+        return Bundle.EMPTY;
+!!!6450821.java!!!	isFieldUpdated(in columnIndex : int) : boolean
+        return false;
+!!!6450949.java!!!	getUpdatedField(in columnIndex : int) : Object
+        return null;
+!!!6451077.java!!!	checkPosition() : void
+        if (-1 == mPos || getCount() == mPos) {
+            throw new CursorIndexOutOfBoundsException(mPos, getCount());
+        }
+!!!6451205.java!!!	finalize() : void
+        if (mSelfObserver != null && mSelfObserverRegistered == true) {
+            mContentResolver.unregisterContentObserver(mSelfObserver);
+        }
+        try {
+            if (!mClosed) close();
+        } catch(Exception e) { }

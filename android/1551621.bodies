@@ -1,0 +1,89 @@
+class Bucket
+!!!10292357.java!!!	set(in index : int) : void
+            if (index >= BITS_PER_WORD) {
+                ensureNext();
+                mNext.set(index - BITS_PER_WORD);
+            } else {
+                mData |= 1L << index;
+            }
+!!!10292485.java!!!	ensureNext() : void
+            if (mNext == null) {
+                mNext = new Bucket();
+            }
+!!!10292613.java!!!	clear(in index : int) : void
+            if (index >= BITS_PER_WORD) {
+                if (mNext != null) {
+                    mNext.clear(index - BITS_PER_WORD);
+                }
+            } else {
+                mData &= ~(1L << index);
+            }
+
+!!!10292741.java!!!	get(in index : int) : boolean
+            if (index >= BITS_PER_WORD) {
+                ensureNext();
+                return mNext.get(index - BITS_PER_WORD);
+            } else {
+                return (mData & (1L << index)) != 0;
+            }
+!!!10292869.java!!!	reset() : void
+            mData = 0;
+            if (mNext != null) {
+                mNext.reset();
+            }
+!!!10292997.java!!!	insert(in index : int, inout value : boolean) : void
+            if (index >= BITS_PER_WORD) {
+                ensureNext();
+                mNext.insert(index - BITS_PER_WORD, value);
+            } else {
+                final boolean lastBit = (mData & LAST_BIT) != 0;
+                long mask = (1L << index) - 1;
+                final long before = mData & mask;
+                final long after = ((mData & ~mask)) << 1;
+                mData = before | after;
+                if (value) {
+                    set(index);
+                } else {
+                    clear(index);
+                }
+                if (lastBit || mNext != null) {
+                    ensureNext();
+                    mNext.insert(0, lastBit);
+                }
+            }
+!!!10293125.java!!!	remove(in index : int) : boolean
+            if (index >= BITS_PER_WORD) {
+                ensureNext();
+                return mNext.remove(index - BITS_PER_WORD);
+            } else {
+                long mask = (1L << index);
+                final boolean value = (mData & mask) != 0;
+                mData &= ~mask;
+                mask = mask - 1;
+                final long before = mData & mask;
+                // cannot use >> because it adds one.
+                final long after = Long.rotateRight(mData & ~mask, 1);
+                mData = before | after;
+                if (mNext != null) {
+                    if (mNext.get(0)) {
+                        set(BITS_PER_WORD - 1);
+                    }
+                    mNext.remove(0);
+                }
+                return value;
+            }
+!!!10293253.java!!!	countOnesBefore(in index : int) : int
+            if (mNext == null) {
+                if (index >= BITS_PER_WORD) {
+                    return Long.bitCount(mData);
+                }
+                return Long.bitCount(mData & ((1L << index) - 1));
+            }
+            if (index < BITS_PER_WORD) {
+                return Long.bitCount(mData & ((1L << index) - 1));
+            } else {
+                return mNext.countOnesBefore(index - BITS_PER_WORD) + Long.bitCount(mData);
+            }
+!!!10293381.java!!!	toString() : String
+            return mNext == null ? Long.toBinaryString(mData)
+                    : mNext.toString() + "xx" + Long.toBinaryString(mData);

@@ -1,0 +1,100 @@
+class FloatPropertyValuesHolder
+!!!4952069.java!!!	FloatPropertyValuesHolder(in propertyName : String, inout keyframes : Keyframes::FloatKeyframes)
+            super(propertyName);
+            mValueType = float.class;
+            mKeyframes = keyframes;
+            mFloatKeyframes = keyframes;
+!!!4952197.java!!!	FloatPropertyValuesHolder(inout property : Property, inout keyframes : Keyframes::FloatKeyframes)
+            super(property);
+            mValueType = float.class;
+            mKeyframes = keyframes;
+            mFloatKeyframes = keyframes;
+            if (property instanceof FloatProperty) {
+                mFloatProperty = (FloatProperty) mProperty;
+            }
+!!!4952325.java!!!	FloatPropertyValuesHolder(in propertyName : String, inout  : float...values)
+            super(propertyName);
+            setFloatValues(values);
+!!!4952453.java!!!	FloatPropertyValuesHolder(inout property : Property, inout  : float...values)
+            super(property);
+            setFloatValues(values);
+            if (property instanceof  FloatProperty) {
+                mFloatProperty = (FloatProperty) mProperty;
+            }
+!!!4952581.java!!!	setProperty(inout property : Property) : void
+            if (property instanceof FloatProperty) {
+                mFloatProperty = (FloatProperty) property;
+            } else {
+                super.setProperty(property);
+            }
+!!!4952709.java!!!	setFloatValues(inout  : float...values) : void
+            super.setFloatValues(values);
+            mFloatKeyframes = (Keyframes.FloatKeyframes) mKeyframes;
+!!!4952837.java!!!	calculateValue(in fraction : float) : void
+            mFloatAnimatedValue = mFloatKeyframes.getFloatValue(fraction);
+!!!4952965.java!!!	getAnimatedValue() : Object
+            return mFloatAnimatedValue;
+!!!4953093.java!!!	clone() : PropertyValuesHolder::FloatPropertyValuesHolder
+            FloatPropertyValuesHolder newPVH = (FloatPropertyValuesHolder) super.clone();
+            newPVH.mFloatKeyframes = (Keyframes.FloatKeyframes) newPVH.mKeyframes;
+            return newPVH;
+!!!4953221.java!!!	setAnimatedValue(inout target : Object) : void
+            if (mFloatProperty != null) {
+                mFloatProperty.setValue(target, mFloatAnimatedValue);
+                return;
+            }
+            if (mProperty != null) {
+                mProperty.set(target, mFloatAnimatedValue);
+                return;
+            }
+            if (mJniSetter != 0) {
+                nCallFloatMethod(target, mJniSetter, mFloatAnimatedValue);
+                return;
+            }
+            if (mSetter != null) {
+                try {
+                    mTmpValueArray[0] = mFloatAnimatedValue;
+                    mSetter.invoke(target, mTmpValueArray);
+                } catch (InvocationTargetException e) {
+                    Log.e("PropertyValuesHolder", e.toString());
+                } catch (IllegalAccessException e) {
+                    Log.e("PropertyValuesHolder", e.toString());
+                }
+            }
+!!!4953349.java!!!	setupSetter(inout targetClass : Class) : void
+            if (mProperty != null) {
+                return;
+            }
+            // Check new static hashmap<propName, int> for setter method
+            synchronized (sJNISetterPropertyMap) {
+                HashMap<String, Long> propertyMap = sJNISetterPropertyMap.get(targetClass);
+                boolean wasInMap = false;
+                if (propertyMap != null) {
+                    wasInMap = propertyMap.containsKey(mPropertyName);
+                    if (wasInMap) {
+                        Long jniSetter = propertyMap.get(mPropertyName);
+                        if (jniSetter != null) {
+                            mJniSetter = jniSetter;
+                        }
+                    }
+                }
+                if (!wasInMap) {
+                    String methodName = getMethodName("set", mPropertyName);
+                    try {
+                        mJniSetter = nGetFloatMethod(targetClass, methodName);
+                    } catch (NoSuchMethodError e) {
+                        // Couldn't find it via JNI - try reflection next. Probably means the method
+                        // doesn't exist, or the type is wrong. An error will be logged later if
+                        // reflection fails as well.
+                    }
+                    if (propertyMap == null) {
+                        propertyMap = new HashMap<String, Long>();
+                        sJNISetterPropertyMap.put(targetClass, propertyMap);
+                    }
+                    propertyMap.put(mPropertyName, mJniSetter);
+                }
+            }
+            if (mJniSetter == 0) {
+                // Couldn't find method through fast JNI approach - just use reflection
+                super.setupSetter(targetClass);
+            }

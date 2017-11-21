@@ -1,0 +1,58 @@
+class StateReceiver
+!!!11395205.java!!!	onReceive(inout content : Context, inout intent : Intent) : void
+            final String action = intent.getAction();
+            if (action == null) return;
+
+            if (action.equals(UsbManager.ACTION_USB_STATE)) {
+                handleUsbAction(intent);
+            } else if (action.equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
+                handleConnectivityAction(intent);
+            } else if (action.equals(WifiManager.WIFI_AP_STATE_CHANGED_ACTION)) {
+                handleWifiApAction(intent);
+            } else if (action.equals(Intent.ACTION_CONFIGURATION_CHANGED)) {
+                updateConfiguration();
+            }
+!!!11395333.java!!!	handleConnectivityAction(inout intent : Intent) : void
+            final NetworkInfo networkInfo = (NetworkInfo)intent.getParcelableExtra(
+                    ConnectivityManager.EXTRA_NETWORK_INFO);
+            if (networkInfo == null ||
+                    networkInfo.getDetailedState() == NetworkInfo.DetailedState.FAILED) {
+                return;
+            }
+
+            if (VDBG) Log.d(TAG, "Tethering got CONNECTIVITY_ACTION: " + networkInfo.toString());
+            mTetherMasterSM.sendMessage(TetherMasterSM.CMD_UPSTREAM_CHANGED);
+!!!11395461.java!!!	handleUsbAction(inout intent : Intent) : void
+            final boolean usbConnected = intent.getBooleanExtra(USB_CONNECTED, false);
+            final boolean rndisEnabled = intent.getBooleanExtra(USB_FUNCTION_RNDIS, false);
+            synchronized (Tethering.this.mPublicSync) {
+                mRndisEnabled = rndisEnabled;
+                // start tethering if we have a request pending
+                if (usbConnected && mRndisEnabled && mUsbTetherRequested) {
+                    tetherMatchingInterfaces(
+                            IControlsTethering.STATE_TETHERED,
+                            ConnectivityManager.TETHERING_USB);
+                }
+                mUsbTetherRequested = false;
+            }
+!!!11395589.java!!!	handleWifiApAction(inout intent : Intent) : void
+            final int curState = intent.getIntExtra(EXTRA_WIFI_AP_STATE, WIFI_AP_STATE_DISABLED);
+            final String ifname = intent.getStringExtra(EXTRA_WIFI_AP_INTERFACE_NAME);
+            final int ipmode = intent.getIntExtra(EXTRA_WIFI_AP_MODE, IFACE_IP_MODE_UNSPECIFIED);
+
+            synchronized (Tethering.this.mPublicSync) {
+                switch (curState) {
+                    case WifiManager.WIFI_AP_STATE_ENABLING:
+                        // We can see this state on the way to both enabled and failure states.
+                        break;
+                    case WifiManager.WIFI_AP_STATE_ENABLED:
+                        enableWifiIpServingLocked(ifname, ipmode);
+                        break;
+                    case WifiManager.WIFI_AP_STATE_DISABLED:
+                    case WifiManager.WIFI_AP_STATE_DISABLING:
+                    case WifiManager.WIFI_AP_STATE_FAILED:
+                    default:
+                        disableWifiIpServingLocked(ifname, curState);
+                        break;
+                }
+            }

@@ -1,0 +1,45 @@
+class AudioStreamInSource
+!!!1072773.cpp!!!	AudioStreamInSource(in stream : sp<StreamInHalInterface>)
+    ALOG_ASSERT(stream != 0);
+!!!1072901.cpp!!!	~AudioStreamInSource()
+    mStream.clear();
+!!!1073029.cpp!!!	negotiate(in offers : NBAIO_Format, in numOffers : size_t, in counterOffers : NBAIO_Format, inout numCounterOffers : size_t) : ssize_t
+    if (!Format_isValid(mFormat)) {
+        status_t result;
+        result = mStream->getBufferSize(&mStreamBufferSizeBytes);
+        if (result != OK) return result;
+        audio_format_t streamFormat;
+        uint32_t sampleRate;
+        audio_channel_mask_t channelMask;
+        result = mStream->getAudioProperties(&sampleRate, &channelMask, &streamFormat);
+        if (result != OK) return result;
+        mFormat = Format_from_SR_C(sampleRate,
+                audio_channel_count_from_in_mask(channelMask), streamFormat);
+        mFrameSize = Format_frameSize(mFormat);
+    }
+    return NBAIO_Source::negotiate(offers, numOffers, counterOffers, numCounterOffers);
+!!!1073157.cpp!!!	framesOverrun() : int64_t
+    uint32_t framesOverrun;
+    status_t result = mStream->getInputFramesLost(&framesOverrun);
+    if (result == OK && framesOverrun > 0) {
+        mFramesOverrun += framesOverrun;
+        // FIXME only increment for contiguous ranges
+        ++mOverruns;
+    } else if (result != OK) {
+        ALOGE("Error when retrieving lost frames count from HAL: %d", result);
+    }
+    return mFramesOverrun;
+!!!1073541.cpp!!!	read(inout buffer : void, in count : size_t) : ssize_t
+    if (CC_UNLIKELY(!Format_isValid(mFormat))) {
+        return NEGOTIATE;
+    }
+    size_t bytesRead;
+    status_t result = mStream->read(buffer, count * mFrameSize, &bytesRead);
+    if (result == OK && bytesRead > 0) {
+        size_t framesRead = bytesRead / mFrameSize;
+        mFramesRead += framesRead;
+        return framesRead;
+    } else {
+        ALOGE_IF(result != OK, "Error while reading data from HAL: %d", result);
+        return bytesRead;
+    }

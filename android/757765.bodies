@@ -1,0 +1,56 @@
+class ForegroundServiceControllerImpl
+!!!3125893.java!!!	isDungeonNeededForUser(in userId : int) : boolean
+        synchronized (mMutex) {
+            final UserServices services = mUserServices.get(userId);
+            if (services == null) return false;
+            return services.isDungeonNeeded();
+        }
+!!!3126021.java!!!	addNotification(inout sbn : StatusBarNotification, in importance : int) : void
+        updateNotification(sbn, importance);
+!!!3126149.java!!!	removeNotification(inout sbn : StatusBarNotification) : boolean
+        synchronized (mMutex) {
+            final UserServices userServices = mUserServices.get(sbn.getUserId());
+            if (userServices == null) {
+                if (DBG) {
+                    Log.w(TAG, String.format(
+                            "user %d with no known notifications got removeNotification for %s",
+                            sbn.getUserId(), sbn));
+                }
+                return false;
+            }
+            if (isDungeonNotification(sbn)) {
+                // if you remove the dungeon entirely, we take that to mean there are
+                // no running services
+                userServices.setRunningServices(null);
+                return true;
+            } else {
+                // this is safe to call on any notification, not just FLAG_FOREGROUND_SERVICE
+                return userServices.removeNotification(sbn.getPackageName(), sbn.getKey());
+            }
+        }
+!!!3126277.java!!!	updateNotification(inout sbn : StatusBarNotification, in newImportance : int) : void
+        synchronized (mMutex) {
+            UserServices userServices = mUserServices.get(sbn.getUserId());
+            if (userServices == null) {
+                userServices = new UserServices();
+                mUserServices.put(sbn.getUserId(), userServices);
+            }
+
+            if (isDungeonNotification(sbn)) {
+                final Bundle extras = sbn.getNotification().extras;
+                if (extras != null) {
+                    final String[] svcs = extras.getStringArray(Notification.EXTRA_FOREGROUND_APPS);
+                    userServices.setRunningServices(svcs); // null ok
+                }
+            } else {
+                userServices.removeNotification(sbn.getPackageName(), sbn.getKey());
+                if (0 != (sbn.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE)
+                        && newImportance > NotificationManager.IMPORTANCE_MIN) {
+                    userServices.addNotification(sbn.getPackageName(), sbn.getKey());
+                }
+            }
+        }
+!!!3126405.java!!!	isDungeonNotification(inout sbn : StatusBarNotification) : boolean
+        return sbn.getId() == SystemMessageProto.SystemMessage.NOTE_FOREGROUND_SERVICES
+                && sbn.getTag() == null
+                && sbn.getPackageName().equals("android");

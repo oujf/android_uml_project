@@ -1,0 +1,95 @@
+class ProgressReporter
+!!!10137349.java!!!	ProgressReporter(in id : int)
+        mId = id;
+!!!10137477.java!!!	addListener(inout listener : IProgressListener) : void
+        if (listener == null) return;
+        synchronized (this) {
+            mListeners.register(listener);
+            switch (mState) {
+                case STATE_INIT:
+                    // Nothing has happened yet
+                    break;
+                case STATE_STARTED:
+                    try {
+                        listener.onStarted(mId, null);
+                        listener.onProgress(mId, mProgress, mExtras);
+                    } catch (RemoteException ignored) {
+                    }
+                    break;
+                case STATE_FINISHED:
+                    try {
+                        listener.onFinished(mId, null);
+                    } catch (RemoteException ignored) {
+                    }
+                    break;
+            }
+        }
+!!!10137605.java!!!	setProgress(in progress : int) : void
+        setProgress(progress, 100, null);
+!!!10137733.java!!!	setProgress(in progress : int, inout title : CharSequence) : void
+        setProgress(progress, 100, title);
+!!!10137861.java!!!	setProgress(in n : int, in m : int) : void
+        setProgress(n, m, null);
+!!!10137989.java!!!	setProgress(in n : int, in m : int, inout title : CharSequence) : void
+        synchronized (this) {
+            if (mState != STATE_STARTED) {
+                throw new IllegalStateException("Must be started to change progress");
+            }
+            mProgress = mSegmentRange[0]
+                    + MathUtils.constrain((n * mSegmentRange[1]) / m, 0, mSegmentRange[1]);
+            if (title != null) {
+                mExtras.putCharSequence(Intent.EXTRA_TITLE, title);
+            }
+            notifyProgress(mId, mProgress, mExtras);
+        }
+!!!10138117.java!!!	startSegment(in size : int) : int
+        synchronized (this) {
+            final int[] lastRange = mSegmentRange;
+            mSegmentRange = new int[] { mProgress, (size * mSegmentRange[1] / 100) };
+            return lastRange;
+        }
+!!!10138245.java!!!	endSegment(inout lastRange : int [[]]) : void
+        synchronized (this) {
+            mProgress = mSegmentRange[0] + mSegmentRange[1];
+            mSegmentRange = lastRange;
+        }
+!!!10138373.java!!!	getProgress() : int
+        return mProgress;
+!!!10138501.java!!!	getSegmentRange() : int
+        return mSegmentRange;
+!!!10138629.java!!!	start() : void
+        synchronized (this) {
+            mState = STATE_STARTED;
+            notifyStarted(mId, null);
+            notifyProgress(mId, mProgress, mExtras);
+        }
+!!!10138757.java!!!	finish() : void
+        synchronized (this) {
+            mState = STATE_FINISHED;
+            notifyFinished(mId, null);
+            mListeners.kill();
+        }
+!!!10138885.java!!!	notifyStarted(in id : int, inout extras : Bundle) : void
+        for (int i = mListeners.beginBroadcast() - 1; i >= 0; i--) {
+            try {
+                mListeners.getBroadcastItem(i).onStarted(id, extras);
+            } catch (RemoteException ignored) {
+            }
+        }
+        mListeners.finishBroadcast();
+!!!10139013.java!!!	notifyProgress(in id : int, in progress : int, inout extras : Bundle) : void
+        for (int i = mListeners.beginBroadcast() - 1; i >= 0; i--) {
+            try {
+                mListeners.getBroadcastItem(i).onProgress(id, progress, extras);
+            } catch (RemoteException ignored) {
+            }
+        }
+        mListeners.finishBroadcast();
+!!!10139141.java!!!	notifyFinished(in id : int, inout extras : Bundle) : void
+        for (int i = mListeners.beginBroadcast() - 1; i >= 0; i--) {
+            try {
+                mListeners.getBroadcastItem(i).onFinished(id, extras);
+            } catch (RemoteException ignored) {
+            }
+        }
+        mListeners.finishBroadcast();

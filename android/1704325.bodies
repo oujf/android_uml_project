@@ -1,0 +1,90 @@
+class LightImpl
+!!!11742981.java!!!	LightImpl(in id : int)
+            mId = id;
+!!!11743109.java!!!	setBrightness(in brightness : int) : void
+            setBrightness(brightness, BRIGHTNESS_MODE_USER);
+!!!11743237.java!!!	setBrightness(in brightness : int, in brightnessMode : int) : void
+            synchronized (this) {
+                // LOW_PERSISTENCE cannot be manually set
+                if (brightnessMode == BRIGHTNESS_MODE_LOW_PERSISTENCE) {
+                    Slog.w(TAG, "setBrightness with LOW_PERSISTENCE unexpected #" + mId +
+                            ": brightness=0x" + Integer.toHexString(brightness));
+                    return;
+                }
+
+                int color = brightness & 0x000000ff;
+                color = 0xff000000 | (color << 16) | (color << 8) | color;
+                setLightLocked(color, LIGHT_FLASH_NONE, 0, 0, brightnessMode);
+            }
+!!!11743365.java!!!	setColor(in color : int) : void
+            synchronized (this) {
+                setLightLocked(color, LIGHT_FLASH_NONE, 0, 0, 0);
+            }
+!!!11743493.java!!!	setFlashing(in color : int, in mode : int, in onMS : int, in offMS : int) : void
+            synchronized (this) {
+                setLightLocked(color, mode, onMS, offMS, BRIGHTNESS_MODE_USER);
+            }
+!!!11743621.java!!!	pulse() : void
+            pulse(0x00ffffff, 7);
+!!!11743749.java!!!	pulse(in color : int, in onMS : int) : void
+            synchronized (this) {
+                if (mColor == 0 && !mFlashing) {
+                    setLightLocked(color, LIGHT_FLASH_HARDWARE, onMS, 1000,
+                            BRIGHTNESS_MODE_USER);
+                    mColor = 0;
+                    mH.sendMessageDelayed(Message.obtain(mH, 1, this), onMS);
+                }
+            }
+!!!11743877.java!!!	turnOff() : void
+            synchronized (this) {
+                setLightLocked(0, LIGHT_FLASH_NONE, 0, 0, 0);
+            }
+!!!11744005.java!!!	setVrMode(inout enabled : boolean) : void
+            synchronized (this) {
+                if (mVrModeEnabled != enabled) {
+                    mVrModeEnabled = enabled;
+
+                    mUseLowPersistenceForVR =
+                            (getVrDisplayMode() == Settings.Secure.VR_DISPLAY_MODE_LOW_PERSISTENCE);
+                    if (shouldBeInLowPersistenceMode()) {
+                        mLastBrightnessMode = mBrightnessMode;
+                    }
+
+                    // NOTE: We do not trigger a call to setLightLocked here.  We do not know the
+                    // current brightness or other values when leaving VR so we avoid any incorrect
+                    // jumps. The code that calls this method will immediately issue a brightness
+                    // update which is when the change will occur.
+                }
+            }
+!!!11744133.java!!!	stopFlashing() : void
+            synchronized (this) {
+                setLightLocked(mColor, LIGHT_FLASH_NONE, 0, 0, BRIGHTNESS_MODE_USER);
+            }
+!!!11744261.java!!!	setLightLocked(in color : int, in mode : int, in onMS : int, in offMS : int, in brightnessMode : int) : void
+            if (shouldBeInLowPersistenceMode()) {
+                brightnessMode = BRIGHTNESS_MODE_LOW_PERSISTENCE;
+            } else if (brightnessMode == BRIGHTNESS_MODE_LOW_PERSISTENCE) {
+                brightnessMode = mLastBrightnessMode;
+            }
+
+            if (!mInitialized || color != mColor || mode != mMode || onMS != mOnMS ||
+                    offMS != mOffMS || mBrightnessMode != brightnessMode) {
+                if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
+                        + Integer.toHexString(color) + ": brightnessMode=" + brightnessMode);
+                mInitialized = true;
+                mLastColor = mColor;
+                mColor = color;
+                mMode = mode;
+                mOnMS = onMS;
+                mOffMS = offMS;
+                mBrightnessMode = brightnessMode;
+                Trace.traceBegin(Trace.TRACE_TAG_POWER, "setLight(" + mId + ", 0x"
+                        + Integer.toHexString(color) + ")");
+                try {
+                    setLight_native(mId, color, mode, onMS, offMS, brightnessMode);
+                } finally {
+                    Trace.traceEnd(Trace.TRACE_TAG_POWER);
+                }
+            }
+!!!11744389.java!!!	shouldBeInLowPersistenceMode() : boolean
+            return mVrModeEnabled && mUseLowPersistenceForVR;

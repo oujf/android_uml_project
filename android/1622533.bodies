@@ -1,0 +1,126 @@
+class SpellCheckerBindGroup
+!!!10875781.java!!!	SpellCheckerBindGroup(inout connection : TextServicesManagerService::InternalServiceConnection)
+            mInternalConnection = connection;
+!!!10875909.java!!!	onServiceConnected(inout spellChecker : ISpellCheckerService) : void
+            if (DBG) {
+                Slog.d(TAG, "onServiceConnected");
+            }
+
+            synchronized(mSpellCheckerMap) {
+                mSpellChecker = spellChecker;
+                mConnected = true;
+                // Dispatch pending getISpellCheckerSession requests.
+                mPendingSessionRequests.forEach(this::getISpellCheckerSessionLocked);
+                mPendingSessionRequests.clear();
+            }
+!!!10876037.java!!!	removeListener(inout listener : ISpellCheckerSessionListener) : void
+            if (DBG) {
+                Slog.w(TAG, "remove listener: " + listener.hashCode());
+            }
+            synchronized(mSpellCheckerMap) {
+                final int size = mListeners.size();
+                final ArrayList<InternalDeathRecipient> removeList = new ArrayList<>();
+                for (int i = 0; i < size; ++i) {
+                    final InternalDeathRecipient tempRecipient = mListeners.get(i);
+                    if(tempRecipient.hasSpellCheckerListener(listener)) {
+                        if (DBG) {
+                            Slog.w(TAG, "found existing listener.");
+                        }
+                        removeList.add(tempRecipient);
+                    }
+                }
+                final int removeSize = removeList.size();
+                for (int i = 0; i < removeSize; ++i) {
+                    if (DBG) {
+                        Slog.w(TAG, "Remove " + removeList.get(i));
+                    }
+                    final InternalDeathRecipient idr = removeList.get(i);
+                    idr.mScListener.asBinder().unlinkToDeath(idr, 0);
+                    mListeners.remove(idr);
+                }
+                cleanLocked();
+            }
+!!!10876165.java!!!	cleanLocked() : void
+            if (DBG) {
+                Slog.d(TAG, "cleanLocked");
+            }
+            if (mUnbindCalled) {
+                return;
+            }
+            // If there are no more active listeners, clean up.  Only do this once.
+            if (!mListeners.isEmpty()) {
+                return;
+            }
+            if (!mPendingSessionRequests.isEmpty()) {
+                return;
+            }
+            if (!mOnGoingSessionRequests.isEmpty()) {
+                return;
+            }
+            final String sciId = mInternalConnection.mSciId;
+            final SpellCheckerBindGroup cur = mSpellCheckerBindGroups.get(sciId);
+            if (cur == this) {
+                if (DBG) {
+                    Slog.d(TAG, "Remove bind group.");
+                }
+                mSpellCheckerBindGroups.remove(sciId);
+            }
+            mContext.unbindService(mInternalConnection);
+            mUnbindCalled = true;
+!!!10876293.java!!!	removeAll() : void
+            Slog.e(TAG, "Remove the spell checker bind unexpectedly.");
+            synchronized(mSpellCheckerMap) {
+                final int size = mListeners.size();
+                for (int i = 0; i < size; ++i) {
+                    final InternalDeathRecipient idr = mListeners.get(i);
+                    idr.mScListener.asBinder().unlinkToDeath(idr, 0);
+                }
+                mListeners.clear();
+                mPendingSessionRequests.clear();
+                mOnGoingSessionRequests.clear();
+                cleanLocked();
+            }
+!!!10876421.java!!!	getISpellCheckerSessionOrQueueLocked(inout request : TextServicesManagerService::SessionRequest) : void
+            if (mUnbindCalled) {
+                return;
+            }
+            if (!mConnected) {
+                mPendingSessionRequests.add(request);
+                return;
+            }
+            getISpellCheckerSessionLocked(request);
+!!!10876549.java!!!	getISpellCheckerSessionLocked(inout request : TextServicesManagerService::SessionRequest) : void
+            if (mUnbindCalled) {
+                return;
+            }
+            try {
+                mSpellChecker.getISpellCheckerSession(
+                        request.mLocale, request.mScListener, request.mBundle,
+                        new ISpellCheckerServiceCallbackBinder(this, request));
+                mOnGoingSessionRequests.add(request);
+            } catch(RemoteException e) {
+                // The target spell checker service is not available.  Better to reset the state.
+                removeAll();
+            }
+            cleanLocked();
+!!!10876677.java!!!	onSessionCreated(in newSession : ISpellCheckerSession, in request : TextServicesManagerService::SessionRequest) : void
+            synchronized (mSpellCheckerMap) {
+                if (mUnbindCalled) {
+                    return;
+                }
+                if (mOnGoingSessionRequests.remove(request)) {
+                    final InternalDeathRecipient recipient =
+                            new InternalDeathRecipient(this, request.mScListener);
+                    try {
+                        request.mTsListener.onServiceConnected(newSession);
+                        request.mScListener.asBinder().linkToDeath(recipient, 0);
+                        mListeners.add(recipient);
+                    } catch (RemoteException e) {
+                        // Technically this can happen if the spell checker client app is already
+                        // dead.  We can just forget about this request; the request is already
+                        // removed from mOnGoingSessionRequests and the death recipient listener is
+                        // not yet added to mListeners. There is nothing to release further.
+                    }
+                }
+                cleanLocked();
+            }

@@ -1,0 +1,235 @@
+class TaskViewThumbnail
+!!!3606021.java!!!	TaskViewThumbnail(inout context : Context)
+        this(context, null);
+!!!3606149.java!!!	TaskViewThumbnail(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, 0);
+!!!3606277.java!!!	TaskViewThumbnail(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        this(context, attrs, defStyleAttr, 0);
+!!!3606405.java!!!	TaskViewThumbnail(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+        mDrawPaint.setColorFilter(mLightingColorFilter);
+        mDrawPaint.setFilterBitmap(true);
+        mDrawPaint.setAntiAlias(true);
+        Resources res = getResources();
+        mCornerRadius = res.getDimensionPixelSize(R.dimen.recents_task_view_rounded_corners_radius);
+        mBgFillPaint.setColor(Color.WHITE);
+        mLockedPaint.setColor(Color.WHITE);
+        mTitleBarHeight = res.getDimensionPixelSize(R.dimen.recents_grid_task_view_header_height);
+!!!3606533.java!!!	onTaskViewSizeChanged(in width : int, in height : int) : void
+        // Return early if the bounds have not changed
+        if (mTaskViewRect.width() == width && mTaskViewRect.height() == height) {
+            return;
+        }
+
+        mTaskViewRect.set(0, 0, width, height);
+        setLeftTopRightBottom(0, 0, width, height);
+        updateThumbnailMatrix();
+!!!3606661.java!!!	onDraw(inout canvas : Canvas) : void
+        if (mInvisible) {
+            return;
+        }
+
+        int viewWidth = mTaskViewRect.width();
+        int viewHeight = mTaskViewRect.height();
+        int thumbnailWidth = Math.min(viewWidth,
+                (int) (mThumbnailRect.width() * mThumbnailScale));
+        int thumbnailHeight = Math.min(viewHeight,
+                (int) (mThumbnailRect.height() * mThumbnailScale));
+
+        if (mUserLocked) {
+            canvas.drawRoundRect(0, 0, viewWidth, viewHeight, mCornerRadius, mCornerRadius,
+                    mLockedPaint);
+        } else if (mBitmapShader != null && thumbnailWidth > 0 && thumbnailHeight > 0) {
+            int topOffset = 0;
+            if (mTaskBar != null && mOverlayHeaderOnThumbnailActionBar) {
+                topOffset = mTaskBar.getHeight() - mCornerRadius;
+            }
+
+            // Draw the background, there will be some small overdraw with the thumbnail
+            if (thumbnailWidth < viewWidth) {
+                // Portrait thumbnail on a landscape task view
+                canvas.drawRoundRect(Math.max(0, thumbnailWidth - mCornerRadius), topOffset,
+                        viewWidth, viewHeight,
+                        mCornerRadius, mCornerRadius, mBgFillPaint);
+            }
+            if (thumbnailHeight < viewHeight) {
+                // Landscape thumbnail on a portrait task view
+                canvas.drawRoundRect(0, Math.max(topOffset, thumbnailHeight - mCornerRadius),
+                        viewWidth, viewHeight,
+                        mCornerRadius, mCornerRadius, mBgFillPaint);
+            }
+
+            // Draw the thumbnail
+            canvas.drawRoundRect(0, topOffset, thumbnailWidth, thumbnailHeight,
+                    mCornerRadius, mCornerRadius, mDrawPaint);
+        } else {
+            canvas.drawRoundRect(0, 0, viewWidth, viewHeight, mCornerRadius, mCornerRadius,
+                    mBgFillPaint);
+        }
+!!!3606789.java!!!	setThumbnail(inout thumbnailData : ThumbnailData) : void
+        if (thumbnailData != null && thumbnailData.thumbnail != null) {
+            Bitmap bm = thumbnailData.thumbnail;
+            bm.prepareToDraw();
+            mFullscreenThumbnailScale = thumbnailData.scale;
+            mBitmapShader = new BitmapShader(bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            mDrawPaint.setShader(mBitmapShader);
+            mThumbnailRect.set(0, 0,
+                    bm.getWidth() - thumbnailData.insets.left - thumbnailData.insets.right,
+                    bm.getHeight() - thumbnailData.insets.top - thumbnailData.insets.bottom);
+            mThumbnailData = thumbnailData;
+            updateThumbnailMatrix();
+            updateThumbnailPaintFilter();
+        } else {
+            mBitmapShader = null;
+            mDrawPaint.setShader(null);
+            mThumbnailRect.setEmpty();
+            mThumbnailData = null;
+        }
+!!!3606917.java!!!	updateThumbnailPaintFilter() : void
+        if (mInvisible) {
+            return;
+        }
+        int mul = (int) ((1.0f - mDimAlpha) * 255);
+        if (mBitmapShader != null) {
+            if (mDisabledInSafeMode) {
+                // Brightness: C-new = C-old*(1-amount) + amount
+                TMP_FILTER_COLOR_MATRIX.setSaturation(0);
+                float scale = 1f - mDimAlpha;
+                float[] mat = TMP_BRIGHTNESS_COLOR_MATRIX.getArray();
+                mat[0] = scale;
+                mat[6] = scale;
+                mat[12] = scale;
+                mat[4] = mDimAlpha * 255f;
+                mat[9] = mDimAlpha * 255f;
+                mat[14] = mDimAlpha * 255f;
+                TMP_FILTER_COLOR_MATRIX.preConcat(TMP_BRIGHTNESS_COLOR_MATRIX);
+                ColorMatrixColorFilter filter = new ColorMatrixColorFilter(TMP_FILTER_COLOR_MATRIX);
+                mDrawPaint.setColorFilter(filter);
+                mBgFillPaint.setColorFilter(filter);
+                mLockedPaint.setColorFilter(filter);
+            } else {
+                mLightingColorFilter.setColorMultiply(Color.argb(255, mul, mul, mul));
+                mDrawPaint.setColorFilter(mLightingColorFilter);
+                mDrawPaint.setColor(0xFFffffff);
+                mBgFillPaint.setColorFilter(mLightingColorFilter);
+                mLockedPaint.setColorFilter(mLightingColorFilter);
+            }
+        } else {
+            int grey = mul;
+            mDrawPaint.setColorFilter(null);
+            mDrawPaint.setColor(Color.argb(255, grey, grey, grey));
+        }
+        if (!mInvisible) {
+            invalidate();
+        }
+!!!3607045.java!!!	updateThumbnailMatrix() : void
+        mThumbnailScale = 1f;
+        if (mBitmapShader != null && mThumbnailData != null) {
+            // We consider this a stack task if it is not freeform (ie. has no bounds) or has been
+            // dragged into the stack from the freeform workspace
+            boolean isStackTask = !mTask.isFreeformTask() || mTask.bounds == null;
+            int xOffset, yOffset = 0;
+            if (mTaskViewRect.isEmpty()) {
+                // If we haven't measured , skip the thumbnail drawing and only draw the background
+                // color
+                mThumbnailScale = 0f;
+            } else if (mSizeToFit) {
+                // Make sure we fill the entire space regardless of the orientation.
+                float viewAspectRatio = (float) mTaskViewRect.width() /
+                        (float) (mTaskViewRect.height() - mTitleBarHeight);
+                float thumbnailAspectRatio =
+                        (float) mThumbnailRect.width() / (float) mThumbnailRect.height();
+                if (viewAspectRatio > thumbnailAspectRatio) {
+                    mThumbnailScale =
+                            (float) mTaskViewRect.width() / (float) mThumbnailRect.width();
+                } else {
+                    mThumbnailScale = (float) (mTaskViewRect.height() - mTitleBarHeight)
+                            / (float) mThumbnailRect.height();
+                }
+            } else if (isStackTask) {
+                float invThumbnailScale = 1f / mFullscreenThumbnailScale;
+                if (mDisplayOrientation == Configuration.ORIENTATION_PORTRAIT) {
+                    if (mThumbnailData.orientation == Configuration.ORIENTATION_PORTRAIT) {
+                        // If we are in the same orientation as the screenshot, just scale it to the
+                        // width of the task view
+                        mThumbnailScale = (float) mTaskViewRect.width() / mThumbnailRect.width();
+                    } else {
+                        // Scale the landscape thumbnail up to app size, then scale that to the task
+                        // view size to match other portrait screenshots
+                        mThumbnailScale = invThumbnailScale *
+                                ((float) mTaskViewRect.width() / mDisplayRect.width());
+                    }
+                } else {
+                    // Otherwise, scale the screenshot to fit 1:1 in the current orientation
+                    mThumbnailScale = invThumbnailScale;
+                }
+            } else {
+                // Otherwise, if this is a freeform task with task bounds, then scale the thumbnail
+                // to fit the entire bitmap into the task bounds
+                mThumbnailScale = Math.min(
+                        (float) mTaskViewRect.width() / mThumbnailRect.width(),
+                        (float) mTaskViewRect.height() / mThumbnailRect.height());
+            }
+            mMatrix.setTranslate(-mThumbnailData.insets.left * mFullscreenThumbnailScale,
+                    -mThumbnailData.insets.top * mFullscreenThumbnailScale);
+            mMatrix.postScale(mThumbnailScale, mThumbnailScale);
+            mBitmapShader.setLocalMatrix(mMatrix);
+        }
+        if (!mInvisible) {
+            invalidate();
+        }
+!!!3607173.java!!!	setSizeToFit(inout flag : boolean) : void
+        mSizeToFit = flag;
+!!!3607301.java!!!	setOverlayHeaderOnThumbnailActionBar(inout flag : boolean) : void
+        mOverlayHeaderOnThumbnailActionBar = flag;
+!!!3607429.java!!!	updateClipToTaskBar(inout taskBar : View) : void
+        mTaskBar = taskBar;
+        invalidate();
+!!!3607557.java!!!	updateThumbnailVisibility(in clipBottom : int) : void
+        boolean invisible = mTaskBar != null && (getHeight() - clipBottom) <= mTaskBar.getHeight();
+        if (invisible != mInvisible) {
+            mInvisible = invisible;
+            if (!mInvisible) {
+                updateThumbnailPaintFilter();
+            }
+        }
+!!!3607685.java!!!	setDimAlpha(in dimAlpha : float) : void
+        mDimAlpha = dimAlpha;
+        updateThumbnailPaintFilter();
+!!!3607813.java!!!	getDrawPaint() : Paint
+        if (mUserLocked) {
+            return mLockedPaint;
+        }
+        return mDrawPaint;
+!!!3607941.java!!!	bindToTask(inout t : Task, inout disabledInSafeMode : boolean, in displayOrientation : int, inout displayRect : Rect) : void
+        mTask = t;
+        mDisabledInSafeMode = disabledInSafeMode;
+        mDisplayOrientation = displayOrientation;
+        mDisplayRect.set(displayRect);
+        if (t.colorBackground != 0) {
+            mBgFillPaint.setColor(t.colorBackground);
+        }
+        if (t.colorPrimary != 0) {
+            mLockedPaint.setColor(t.colorPrimary);
+        }
+        mUserLocked = t.isLocked;
+        EventBus.getDefault().register(this);
+!!!3608069.java!!!	onTaskDataLoaded(inout thumbnailData : ThumbnailData) : void
+        setThumbnail(thumbnailData);
+!!!3608197.java!!!	unbindFromTask() : void
+        mTask = null;
+        setThumbnail(null);
+        EventBus.getDefault().unregister(this);
+!!!3608325.java!!!	onBusEvent(inout event : TaskSnapshotChangedEvent) : void
+        if (mTask == null || event.taskId != mTask.key.id || event.thumbnailData == null
+                || event.thumbnailData.thumbnail == null) {
+            return;
+        }
+        setThumbnail(event.thumbnailData);
+!!!3608453.java!!!	dump(in prefix : String, inout writer : PrintWriter) : void
+        writer.print(prefix); writer.print("TaskViewThumbnail");
+        writer.print(" mTaskViewRect="); writer.print(Utilities.dumpRect(mTaskViewRect));
+        writer.print(" mThumbnailRect="); writer.print(Utilities.dumpRect(mThumbnailRect));
+        writer.print(" mThumbnailScale="); writer.print(mThumbnailScale);
+        writer.print(" mDimAlpha="); writer.print(mDimAlpha);
+        writer.println();

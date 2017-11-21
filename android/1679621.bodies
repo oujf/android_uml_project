@@ -1,0 +1,80 @@
+class CustomAutoMode
+!!!11507461.java!!!	CustomAutoMode()
+            mAlarmManager = (AlarmManager) getContext().getSystemService(Context.ALARM_SERVICE);
+            mTimeChangedReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    updateActivated();
+                }
+            };
+!!!11507589.java!!!	updateActivated() : void
+            final Calendar now = Calendar.getInstance();
+            final Calendar startTime = mStartTime.getDateTimeBefore(now);
+            final Calendar endTime = mEndTime.getDateTimeAfter(startTime);
+
+            boolean activate = now.before(endTime);
+            if (mLastActivatedTime != null) {
+                // Convert mLastActivatedTime to the current timezone if needed.
+                final TimeZone currentTimeZone = now.getTimeZone();
+                if (!currentTimeZone.equals(mLastActivatedTime.getTimeZone())) {
+                    final int year = mLastActivatedTime.get(Calendar.YEAR);
+                    final int dayOfYear = mLastActivatedTime.get(Calendar.DAY_OF_YEAR);
+                    final int hourOfDay = mLastActivatedTime.get(Calendar.HOUR_OF_DAY);
+                    final int minute = mLastActivatedTime.get(Calendar.MINUTE);
+
+                    mLastActivatedTime.setTimeZone(currentTimeZone);
+                    mLastActivatedTime.set(Calendar.YEAR, year);
+                    mLastActivatedTime.set(Calendar.DAY_OF_YEAR, dayOfYear);
+                    mLastActivatedTime.set(Calendar.HOUR_OF_DAY, hourOfDay);
+                    mLastActivatedTime.set(Calendar.MINUTE, minute);
+                }
+
+                // Maintain the existing activated state if within the current period.
+                if (mLastActivatedTime.before(now)
+                        && mLastActivatedTime.after(startTime)
+                        && (mLastActivatedTime.after(endTime) || now.before(endTime))) {
+                    activate = mController.isActivated();
+                }
+            }
+
+            if (mIsActivated == null || mIsActivated != activate) {
+                mController.setActivated(activate);
+            }
+            updateNextAlarm(mIsActivated, now);
+!!!11507717.java!!!	updateNextAlarm(inout activated : Boolean, inout now : Calendar) : void
+            if (activated != null) {
+                final Calendar next = activated ? mEndTime.getDateTimeAfter(now)
+                        : mStartTime.getDateTimeAfter(now);
+                mAlarmManager.setExact(AlarmManager.RTC, next.getTimeInMillis(), TAG, this, null);
+            }
+!!!11507845.java!!!	onStart() : void
+            final IntentFilter intentFilter = new IntentFilter(Intent.ACTION_TIME_CHANGED);
+            intentFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            getContext().registerReceiver(mTimeChangedReceiver, intentFilter);
+
+            mStartTime = mController.getCustomStartTime();
+            mEndTime = mController.getCustomEndTime();
+
+            mLastActivatedTime = mController.getLastActivatedTime();
+
+            // Force an update to initialize state.
+            updateActivated();
+!!!11507973.java!!!	onStop() : void
+            getContext().unregisterReceiver(mTimeChangedReceiver);
+
+            mAlarmManager.cancel(this);
+            mLastActivatedTime = null;
+!!!11508101.java!!!	onActivated(inout activated : boolean) : void
+            mLastActivatedTime = mController.getLastActivatedTime();
+            updateNextAlarm(activated, Calendar.getInstance());
+!!!11508229.java!!!	onCustomStartTimeChanged(inout startTime : NightDisplayController::LocalTime) : void
+            mStartTime = startTime;
+            mLastActivatedTime = null;
+            updateActivated();
+!!!11508357.java!!!	onCustomEndTimeChanged(inout endTime : NightDisplayController::LocalTime) : void
+            mEndTime = endTime;
+            mLastActivatedTime = null;
+            updateActivated();
+!!!11508485.java!!!	onAlarm() : void
+            Slog.d(TAG, "onAlarm");
+            updateActivated();

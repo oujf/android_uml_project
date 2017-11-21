@@ -1,0 +1,51 @@
+class EphemeralIntentResolver
+!!!12140933.java!!!	newArray(in size : int) : AuxiliaryResolveInfo
+            return new AuxiliaryResolveInfo[size];
+!!!12141061.java!!!	isPackageForFilter(in packageName : String, inout responseObj : AuxiliaryResolveInfo) : boolean
+            return true;
+!!!12141189.java!!!	newResult(inout responseObj : AuxiliaryResolveInfo, in match : int, in userId : int) : AuxiliaryResolveInfo
+            if (!sUserManager.exists(userId)) {
+                return null;
+            }
+            final String packageName = responseObj.resolveInfo.getPackageName();
+            final Integer order = responseObj.getOrder();
+            final Pair<Integer, InstantAppResolveInfo> lastOrderResult =
+                    mOrderResult.get(packageName);
+            // ordering is enabled and this item's order isn't high enough
+            if (lastOrderResult != null && lastOrderResult.first >= order) {
+                return null;
+            }
+            final InstantAppResolveInfo res = responseObj.resolveInfo;
+            if (order > 0) {
+                // non-zero order, enable ordering
+                mOrderResult.put(packageName, new Pair<>(order, res));
+            }
+            return responseObj;
+!!!12141317.java!!!	filterResults(inout results : List<AuxiliaryResolveInfo>) : void
+            // only do work if ordering is enabled [most of the time it won't be]
+            if (mOrderResult.size() == 0) {
+                return;
+            }
+            int resultSize = results.size();
+            for (int i = 0; i < resultSize; i++) {
+                final InstantAppResolveInfo info = results.get(i).resolveInfo;
+                final String packageName = info.getPackageName();
+                final Pair<Integer, InstantAppResolveInfo> savedInfo = mOrderResult.get(packageName);
+                if (savedInfo == null) {
+                    // package doesn't having ordering
+                    continue;
+                }
+                if (savedInfo.second == info) {
+                    // circled back to the highest ordered item; remove from order list
+                    mOrderResult.remove(savedInfo);
+                    if (mOrderResult.size() == 0) {
+                        // no more ordered items
+                        break;
+                    }
+                    continue;
+                }
+                // item has a worse order, remove it from the result list
+                results.remove(i);
+                resultSize--;
+                i--;
+            }

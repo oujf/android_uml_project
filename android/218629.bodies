@@ -1,0 +1,65 @@
+class SoundTriggerHalLegacy
+!!!567173.cpp!!!	~SoundTriggerHalLegacy()
+    if (mHwDevice != NULL) {
+        sound_trigger_hw_device_close(mHwDevice);
+    }
+!!!567301.cpp!!!	getProperties(inout properties : sound_trigger_properties) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    return mHwDevice->get_properties(mHwDevice, properties);
+!!!567429.cpp!!!	loadSoundModel(inout sound_model : sound_trigger_sound_model, in callback : sound_model_callback_t, inout cookie : void, inout handle : sound_model_handle_t) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    return mHwDevice->load_sound_model(mHwDevice, sound_model, callback, cookie, handle);
+!!!567557.cpp!!!	unloadSoundModel(in handle : sound_model_handle_t) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    return mHwDevice->unload_sound_model(mHwDevice, handle);
+!!!567685.cpp!!!	startRecognition(in handle : sound_model_handle_t, in config : sound_trigger_recognition_config, in callback : recognition_callback_t, inout cookie : void) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    return mHwDevice->start_recognition(mHwDevice, handle, config, callback, cookie);
+!!!567813.cpp!!!	stopRecognition(in handle : sound_model_handle_t) : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    return mHwDevice->stop_recognition(mHwDevice, handle);
+!!!567941.cpp!!!	stopAllRecognitions() : int
+    if (mHwDevice == NULL) {
+        return -ENODEV;
+    }
+    if (mHwDevice->common.version >= SOUND_TRIGGER_DEVICE_API_VERSION_1_1 &&
+     mHwDevice->stop_all_recognitions) {
+        return mHwDevice->stop_all_recognitions(mHwDevice);
+    }
+    return -ENOSYS;
+!!!568069.cpp!!!	onFirstRef() : void
+    const hw_module_t *mod;
+    int rc;
+
+    if (mModuleName == NULL) {
+        mModuleName = "primary";
+    }
+
+    rc = hw_get_module_by_class(SOUND_TRIGGER_HARDWARE_MODULE_ID, mModuleName, &mod);
+    if (rc != 0) {
+        ALOGE("couldn't load sound trigger module %s.%s (%s)",
+              SOUND_TRIGGER_HARDWARE_MODULE_ID, mModuleName, strerror(-rc));
+        return;
+    }
+    rc = sound_trigger_hw_device_open(mod, &mHwDevice);
+    if (rc != 0) {
+        ALOGE("couldn't open sound trigger hw device in %s.%s (%s)",
+              SOUND_TRIGGER_HARDWARE_MODULE_ID, mModuleName, strerror(-rc));
+        mHwDevice = NULL;
+        return;
+    }
+    if (mHwDevice->common.version < SOUND_TRIGGER_DEVICE_API_VERSION_1_0 ||
+            mHwDevice->common.version > SOUND_TRIGGER_DEVICE_API_VERSION_CURRENT) {
+        ALOGE("wrong sound trigger hw device version %04x", mHwDevice->common.version);
+        return;
+    }

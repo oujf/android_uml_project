@@ -1,0 +1,61 @@
+class TaskSnapshotCache
+!!!12752389.java!!!	TaskSnapshotCache(inout service : WindowManagerService, inout loader : TaskSnapshotLoader)
+        mService = service;
+        mLoader = loader;
+!!!12752517.java!!!	putSnapshot(inout task : Task, inout snapshot : ActivityManager::TaskSnapshot) : void
+        final CacheEntry entry = mRunningCache.get(task.mTaskId);
+        if (entry != null) {
+            mAppTaskMap.remove(entry.topApp);
+        }
+        final AppWindowToken top = task.getTopChild();
+        mAppTaskMap.put(top, task.mTaskId);
+        mRunningCache.put(task.mTaskId, new CacheEntry(snapshot, task.getTopChild()));
+!!!12752645.java!!!	getSnapshot(in taskId : int, in userId : int, inout restoreFromDisk : boolean, inout reducedResolution : boolean) : ActivityManager::TaskSnapshot
+
+        synchronized (mService.mWindowMap) {
+            // Try the running cache.
+            final CacheEntry entry = mRunningCache.get(taskId);
+            if (entry != null) {
+                return entry.snapshot;
+            }
+        }
+
+        // Try to restore from disk if asked.
+        if (!restoreFromDisk) {
+            return null;
+        }
+        return tryRestoreFromDisk(taskId, userId, reducedResolution);
+!!!12752773.java!!!	tryRestoreFromDisk(in taskId : int, in userId : int, inout reducedResolution : boolean) : ActivityManager::TaskSnapshot
+        final TaskSnapshot snapshot = mLoader.loadTask(taskId, userId, reducedResolution);
+        if (snapshot == null) {
+            return null;
+        }
+        return snapshot;
+!!!12752901.java!!!	onAppRemoved(inout wtoken : AppWindowToken) : void
+        final Integer taskId = mAppTaskMap.get(wtoken);
+        if (taskId != null) {
+            removeRunningEntry(taskId);
+        }
+!!!12753029.java!!!	onAppDied(inout wtoken : AppWindowToken) : void
+        final Integer taskId = mAppTaskMap.get(wtoken);
+        if (taskId != null) {
+            removeRunningEntry(taskId);
+        }
+!!!12753157.java!!!	onTaskRemoved(in taskId : int) : void
+        removeRunningEntry(taskId);
+!!!12753285.java!!!	removeRunningEntry(in taskId : int) : void
+        final CacheEntry entry = mRunningCache.get(taskId);
+        if (entry != null) {
+            mAppTaskMap.remove(entry.topApp);
+            mRunningCache.remove(taskId);
+        }
+!!!12753413.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        final String doublePrefix = prefix + "  ";
+        final String triplePrefix = doublePrefix + "  ";
+        pw.println(prefix + "SnapshotCache");
+        for (int i = mRunningCache.size() - 1; i >= 0; i--) {
+            final CacheEntry entry = mRunningCache.valueAt(i);
+            pw.println(doublePrefix + "Entry taskId=" + mRunningCache.keyAt(i));
+            pw.println(triplePrefix + "topApp=" + entry.topApp);
+            pw.println(triplePrefix + "snapshot=" + entry.snapshot);
+        }

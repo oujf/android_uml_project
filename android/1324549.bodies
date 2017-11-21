@@ -1,0 +1,324 @@
+class FontsContract
+!!!7898629.java!!!	setApplicationContextForResources(inout context : Context) : void
+        sContext = context.getApplicationContext();
+!!!7900037.java!!!	getFontSync(inout request : FontRequest) : Typeface
+        final String id = request.getIdentifier();
+        Typeface cachedTypeface = sTypefaceCache.get(id);
+        if (cachedTypeface != null) {
+            return cachedTypeface;
+        }
+
+        // Unfortunately the typeface is not available at this time, but requesting from the font
+        // provider takes too much time. For now, request the font data to ensure it is in the cache
+        // next time and return.
+        synchronized (sLock) {
+            if (sHandler == null) {
+                sThread = new HandlerThread("fonts", Process.THREAD_PRIORITY_BACKGROUND);
+                sThread.start();
+                sHandler = new Handler(sThread.getLooper());
+            }
+            final Lock lock = new ReentrantLock();
+            final Condition cond = lock.newCondition();
+            final AtomicReference<Typeface> holder = new AtomicReference<>();
+            final AtomicBoolean waiting = new AtomicBoolean(true);
+            final AtomicBoolean timeout = new AtomicBoolean(false);
+
+            sHandler.post(() -> {
+                try {
+                    FontFamilyResult result = fetchFonts(sContext, null, request);
+                    if (result.getStatusCode() == FontFamilyResult.STATUS_OK) {
+                        Typeface typeface = buildTypeface(sContext, null, result.getFonts());
+                        if (typeface != null) {
+                            sTypefaceCache.put(id, typeface);
+                        }
+                        holder.set(typeface);
+                    }
+                } catch (NameNotFoundException e) {
+                    // Ignore.
+                }
+                lock.lock();
+                try {
+                    if (!timeout.get()) {
+                      waiting.set(false);
+                      cond.signal();
+                    }
+                } finally {
+                    lock.unlock();
+                }
+            });
+            sHandler.removeCallbacks(sReplaceDispatcherThreadRunnable);
+            sHandler.postDelayed(sReplaceDispatcherThreadRunnable, THREAD_RENEWAL_THRESHOLD_MS);
+
+            long remaining = TimeUnit.MILLISECONDS.toNanos(SYNC_FONT_FETCH_TIMEOUT_MS);
+            lock.lock();
+            try {
+                if (!waiting.get()) {
+                    return holder.get();
+                }
+                for (;;) {
+                    try {
+                        remaining = cond.awaitNanos(remaining);
+                    } catch (InterruptedException e) {
+                        // do nothing.
+                    }
+                    if (!waiting.get()) {
+                        return holder.get();
+                    }
+                    if (remaining <= 0) {
+                        timeout.set(true);
+                        Log.w(TAG, "Remote font fetch timed out: " +
+                                request.getProviderAuthority() + "/" + request.getQuery());
+                        return null;
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+!!!7900549.java!!!	requestFonts(inout context : Context, inout request : FontRequest, inout handler : Handler, inout cancellationSignal : CancellationSignal, inout callback : FontsContract::FontRequestCallback) : void
+
+        final Handler callerThreadHandler = new Handler();
+        final Typeface cachedTypeface = sTypefaceCache.get(request.getIdentifier());
+        if (cachedTypeface != null) {
+            callerThreadHandler.post(() -> callback.onTypefaceRetrieved(cachedTypeface));
+            return;
+        }
+
+        handler.post(() -> {
+            FontFamilyResult result;
+            try {
+                result = fetchFonts(context, cancellationSignal, request);
+            } catch (NameNotFoundException e) {
+                callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                        FontRequestCallback.FAIL_REASON_PROVIDER_NOT_FOUND));
+                return;
+            }
+
+            // Same request might be dispatched during fetchFonts. Check the cache again.
+            final Typeface anotherCachedTypeface = sTypefaceCache.get(request.getIdentifier());
+            if (anotherCachedTypeface != null) {
+                callerThreadHandler.post(() -> callback.onTypefaceRetrieved(anotherCachedTypeface));
+                return;
+            }
+
+            if (result.getStatusCode() != FontFamilyResult.STATUS_OK) {
+                switch (result.getStatusCode()) {
+                    case FontFamilyResult.STATUS_WRONG_CERTIFICATES:
+                        callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                                FontRequestCallback.FAIL_REASON_WRONG_CERTIFICATES));
+                        return;
+                    case FontFamilyResult.STATUS_UNEXPECTED_DATA_PROVIDED:
+                        callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                                FontRequestCallback.FAIL_REASON_FONT_LOAD_ERROR));
+                        return;
+                    default:
+                        // fetchFont returns unexpected status type. Fallback to load error.
+                        callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                                FontRequestCallback.FAIL_REASON_FONT_LOAD_ERROR));
+                        return;
+                }
+            }
+
+            final FontInfo[] fonts = result.getFonts();
+            if (fonts == null || fonts.length == 0) {
+                callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                        FontRequestCallback.FAIL_REASON_FONT_NOT_FOUND));
+                return;
+            }
+            for (final FontInfo font : fonts) {
+                if (font.getResultCode() != Columns.RESULT_CODE_OK) {
+                    // We proceed if all font entry is ready to use. Otherwise report the first
+                    // error.
+                    final int resultCode = font.getResultCode();
+                    if (resultCode < 0) {
+                        // Negative values are reserved for internal errors. Fallback to load error.
+                        callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                                FontRequestCallback.FAIL_REASON_FONT_LOAD_ERROR));
+                    } else {
+                        callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                                resultCode));
+                    }
+                    return;
+                }
+            }
+
+            final Typeface typeface = buildTypeface(context, cancellationSignal, fonts);
+            if (typeface == null) {
+                // Something went wrong during reading font files. This happens if the given font
+                // file is an unsupported font type.
+                callerThreadHandler.post(() -> callback.onTypefaceRequestFailed(
+                        FontRequestCallback.FAIL_REASON_FONT_LOAD_ERROR));
+                return;
+            }
+
+            sTypefaceCache.put(request.getIdentifier(), typeface);
+            callerThreadHandler.post(() -> callback.onTypefaceRetrieved(typeface));
+        });
+!!!7900677.java!!!	fetchFonts(inout context : Context, inout cancellationSignal : CancellationSignal, inout request : FontRequest) : FontsContract::FontFamilyResult
+        if (context.isRestricted()) {
+            // TODO: Should we allow if the peer process is system or myself?
+            return new FontFamilyResult(FontFamilyResult.STATUS_REJECTED, null);
+        }
+        ProviderInfo providerInfo = getProvider(context.getPackageManager(), request);
+        if (providerInfo == null) {
+            return new FontFamilyResult(FontFamilyResult.STATUS_WRONG_CERTIFICATES, null);
+
+        }
+        try {
+            FontInfo[] fonts = getFontFromProvider(
+                    context, request, providerInfo.authority, cancellationSignal);
+            return new FontFamilyResult(FontFamilyResult.STATUS_OK, fonts);
+        } catch (IllegalArgumentException e) {
+            return new FontFamilyResult(FontFamilyResult.STATUS_UNEXPECTED_DATA_PROVIDED, null);
+        }
+!!!7900805.java!!!	buildTypeface(inout context : Context, inout cancellationSignal : CancellationSignal, inout fonts : FontsContract::FontInfo [[]]) : Typeface
+        if (context.isRestricted()) {
+            // TODO: Should we allow if the peer process is system or myself?
+            return null;
+        }
+        final Map<Uri, ByteBuffer> uriBuffer =
+                prepareFontData(context, fonts, cancellationSignal);
+        if (uriBuffer.isEmpty()) {
+            return null;
+        }
+        return new Typeface.Builder(fonts, uriBuffer).build();
+!!!7900933.java!!!	prepareFontData(inout context : Context, inout fonts : FontsContract::FontInfo [[]], inout cancellationSignal : CancellationSignal) : Uri
+        final HashMap<Uri, ByteBuffer> out = new HashMap<>();
+        final ContentResolver resolver = context.getContentResolver();
+
+        for (FontInfo font : fonts) {
+            if (font.getResultCode() != Columns.RESULT_CODE_OK) {
+                continue;
+            }
+
+            final Uri uri = font.getUri();
+            if (out.containsKey(uri)) {
+                continue;
+            }
+
+            ByteBuffer buffer = null;
+            try (final ParcelFileDescriptor pfd =
+                    resolver.openFileDescriptor(uri, "r", cancellationSignal)) {
+                if (pfd != null) {
+                    try (final FileInputStream fis =
+                            new FileInputStream(pfd.getFileDescriptor())) {
+                        final FileChannel fileChannel = fis.getChannel();
+                        final long size = fileChannel.size();
+                        buffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, size);
+                    } catch (IOException e) {
+                        // ignore
+                    }
+                }
+            } catch (IOException e) {
+                // ignore
+            }
+
+            // TODO: try other approach?, e.g. read all contents instead of mmap.
+
+            out.put(uri, buffer);
+        }
+        return Collections.unmodifiableMap(out);
+!!!7901061.java!!!	getProvider(inout packageManager : PackageManager, inout request : FontRequest) : ProviderInfo
+        String providerAuthority = request.getProviderAuthority();
+        ProviderInfo info = packageManager.resolveContentProvider(providerAuthority, 0);
+        if (info == null) {
+            throw new NameNotFoundException("No package found for authority: " + providerAuthority);
+        }
+
+        if (!info.packageName.equals(request.getProviderPackage())) {
+            throw new NameNotFoundException("Found content provider " + providerAuthority
+                    + ", but package was not " + request.getProviderPackage());
+        }
+        // Trust system apps without signature checks
+        if (info.applicationInfo.isSystemApp()) {
+            return info;
+        }
+
+        List<byte[]> signatures;
+        PackageInfo packageInfo = packageManager.getPackageInfo(info.packageName,
+                PackageManager.GET_SIGNATURES);
+        signatures = convertToByteArrayList(packageInfo.signatures);
+        Collections.sort(signatures, sByteArrayComparator);
+
+        List<List<byte[]>> requestCertificatesList = request.getCertificates();
+        for (int i = 0; i < requestCertificatesList.size(); ++i) {
+            // Make a copy so we can sort it without modifying the incoming data.
+            List<byte[]> requestSignatures = new ArrayList<>(requestCertificatesList.get(i));
+            Collections.sort(requestSignatures, sByteArrayComparator);
+            if (equalsByteArrayList(signatures, requestSignatures)) {
+                return info;
+            }
+        }
+        return null;
+!!!7901189.java!!!	equalsByteArrayList(inout signatures : List<byte[]>, inout requestSignatures : List<byte[]>) : boolean
+        if (signatures.size() != requestSignatures.size()) {
+            return false;
+        }
+        for (int i = 0; i < signatures.size(); ++i) {
+            if (!Arrays.equals(signatures.get(i), requestSignatures.get(i))) {
+                return false;
+            }
+        }
+        return true;
+!!!7901317.java!!!	convertToByteArrayList(inout signatures : Signature [[]]) : List<byte[]>
+        List<byte[]> shas = new ArrayList<>();
+        for (int i = 0; i < signatures.length; ++i) {
+            shas.add(signatures[i].toByteArray());
+        }
+        return shas;
+!!!7901445.java!!!	getFontFromProvider(inout context : Context, inout request : FontRequest, in authority : String, inout cancellationSignal : CancellationSignal) : FontsContract::FontInfo
+        ArrayList<FontInfo> result = new ArrayList<>();
+        final Uri uri = new Uri.Builder().scheme(ContentResolver.SCHEME_CONTENT)
+                .authority(authority)
+                .build();
+        final Uri fileBaseUri = new Uri.Builder().scheme(ContentResolver.SCHEME_CONTENT)
+                .authority(authority)
+                .appendPath("file")
+                .build();
+        try (Cursor cursor = context.getContentResolver().query(uri, new String[] { Columns._ID,
+                        Columns.FILE_ID, Columns.TTC_INDEX, Columns.VARIATION_SETTINGS,
+                        Columns.WEIGHT, Columns.ITALIC, Columns.RESULT_CODE },
+                "query = ?", new String[] { request.getQuery() }, null, cancellationSignal);) {
+            // TODO: Should we restrict the amount of fonts that can be returned?
+            // TODO: Write documentation explaining that all results should be from the same family.
+            if (cursor != null && cursor.getCount() > 0) {
+                final int resultCodeColumnIndex = cursor.getColumnIndex(Columns.RESULT_CODE);
+                result = new ArrayList<>();
+                final int idColumnIndex = cursor.getColumnIndexOrThrow(Columns._ID);
+                final int fileIdColumnIndex = cursor.getColumnIndex(Columns.FILE_ID);
+                final int ttcIndexColumnIndex = cursor.getColumnIndex(Columns.TTC_INDEX);
+                final int vsColumnIndex = cursor.getColumnIndex(Columns.VARIATION_SETTINGS);
+                final int weightColumnIndex = cursor.getColumnIndex(Columns.WEIGHT);
+                final int italicColumnIndex = cursor.getColumnIndex(Columns.ITALIC);
+                while (cursor.moveToNext()) {
+                    int resultCode = resultCodeColumnIndex != -1
+                            ? cursor.getInt(resultCodeColumnIndex) : Columns.RESULT_CODE_OK;
+                    final int ttcIndex = ttcIndexColumnIndex != -1
+                            ? cursor.getInt(ttcIndexColumnIndex) : 0;
+                    final String variationSettings = vsColumnIndex != -1
+                            ? cursor.getString(vsColumnIndex) : null;
+
+                    Uri fileUri;
+                    if (fileIdColumnIndex == -1) {
+                        long id = cursor.getLong(idColumnIndex);
+                        fileUri = ContentUris.withAppendedId(uri, id);
+                    } else {
+                        long id = cursor.getLong(fileIdColumnIndex);
+                        fileUri = ContentUris.withAppendedId(fileBaseUri, id);
+                    }
+                    int weight;
+                    boolean italic;
+                    if (weightColumnIndex != -1 && italicColumnIndex != -1) {
+                        weight = cursor.getInt(weightColumnIndex);
+                        italic = cursor.getInt(italicColumnIndex) == 1;
+                    } else {
+                        weight = Typeface.Builder.NORMAL_WEIGHT;
+                        italic = false;
+                    }
+                    FontVariationAxis[] axes =
+                            FontVariationAxis.fromFontVariationSettings(variationSettings);
+                    result.add(new FontInfo(fileUri, ttcIndex, axes, weight, italic, resultCode));
+                }
+            }
+        }
+        return result.toArray(new FontInfo[0]);

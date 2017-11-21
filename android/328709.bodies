@@ -1,0 +1,49 @@
+class MidiIoWrapper
+!!!906501.cpp!!!	MidiIoWrapper(in path : char)
+    ALOGV("MidiIoWrapper(%s)", path);
+    mFd = open(path, O_RDONLY | O_LARGEFILE);
+    mBase = 0;
+    mLength = lseek(mFd, 0, SEEK_END);
+!!!906629.cpp!!!	MidiIoWrapper(in fd : int, in offset : off64_t, in size : int64_t)
+    ALOGV("MidiIoWrapper(fd=%d)", fd);
+    mFd = fd < 0 ? -1 : dup(fd);
+    mBase = offset;
+    mLength = size;
+!!!906757.cpp!!!	MidiIoWrapper(in source : sp<DataSource>)
+    ALOGV("MidiIoWrapper(DataSource)");
+    mFd = -1;
+    mDataSource = source;
+    off64_t l;
+    if (mDataSource->getSize(&l) == OK) {
+        mLength = l;
+    } else {
+        mLength = 0;
+    }
+!!!906885.cpp!!!	~MidiIoWrapper()
+    ALOGV("~MidiIoWrapper");
+    if (mFd >= 0) {
+        close(mFd);
+    }
+!!!907013.cpp!!!	readAt(inout buffer : void, in offset : int, in size : int) : int
+    ALOGV("readAt(%p, %d, %d)", buffer, offset, size);
+
+    if (mDataSource != NULL) {
+        return mDataSource->readAt(offset, buffer, size);
+    }
+    if (mFd < 0) {
+        errno = EBADF;
+        return -1; // as per failed read.
+    }
+    lseek(mFd, mBase + offset, SEEK_SET);
+    if (offset + size > mLength) {
+        size = mLength - offset;
+    }
+    return read(mFd, buffer, size);
+!!!907141.cpp!!!	size() : int
+    ALOGV("size() = %d", int(mLength));
+    return mLength;
+!!!907269.cpp!!!	getLocator() : EAS_FILE_LOCATOR
+    mEasFile.handle = this;
+    mEasFile.readAt = ::readAt;
+    mEasFile.size = ::size;
+    return &mEasFile;

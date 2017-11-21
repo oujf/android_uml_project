@@ -1,0 +1,85 @@
+class BinderProxy
+!!!5550981.java!!!	queryLocalInterface(in descriptor : String) : IInterface
+        return null;
+!!!5551109.java!!!	transact(in code : int, inout data : Parcel, inout reply : Parcel, in flags : int) : boolean
+        Binder.checkParcel(this, code, data, "Unreasonably large binder buffer");
+
+        if (mWarnOnBlocking && ((flags & FLAG_ONEWAY) == 0)) {
+            // For now, avoid spamming the log by disabling after we've logged
+            // about this interface at least once
+            mWarnOnBlocking = false;
+            Log.w(Binder.TAG, "Outgoing transactions from this process must be FLAG_ONEWAY",
+                    new Throwable());
+        }
+
+        final boolean tracingEnabled = Binder.isTracingEnabled();
+        if (tracingEnabled) {
+            final Throwable tr = new Throwable();
+            Binder.getTransactionTracker().addTrace(tr);
+            StackTraceElement stackTraceElement = tr.getStackTrace()[1];
+            Trace.traceBegin(Trace.TRACE_TAG_ALWAYS,
+                    stackTraceElement.getClassName() + "." + stackTraceElement.getMethodName());
+        }
+        try {
+            return transactNative(code, data, reply, flags);
+        } finally {
+            if (tracingEnabled) {
+                Trace.traceEnd(Trace.TRACE_TAG_ALWAYS);
+            }
+        }
+!!!5551749.java!!!	dump(inout fd : FileDescriptor, inout args : String [[]]) : void
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeFileDescriptor(fd);
+        data.writeStringArray(args);
+        try {
+            transact(DUMP_TRANSACTION, data, reply, 0);
+            reply.readException();
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+!!!5551877.java!!!	dumpAsync(inout fd : FileDescriptor, inout args : String [[]]) : void
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeFileDescriptor(fd);
+        data.writeStringArray(args);
+        try {
+            transact(DUMP_TRANSACTION, data, reply, FLAG_ONEWAY);
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+!!!5552005.java!!!	shellCommand(inout in : FileDescriptor, inout out : FileDescriptor, inout err : FileDescriptor, inout args : String [[]], inout callback : ShellCallback, inout resultReceiver : ResultReceiver) : void
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeFileDescriptor(in);
+        data.writeFileDescriptor(out);
+        data.writeFileDescriptor(err);
+        data.writeStringArray(args);
+        ShellCallback.writeToParcel(callback, data);
+        resultReceiver.writeToParcel(data, 0);
+        try {
+            transact(SHELL_COMMAND_TRANSACTION, data, reply, 0);
+            reply.readException();
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+!!!5552133.java!!!	BinderProxy()
+        mSelf = new WeakReference(this);
+!!!5552261.java!!!	finalize() : void
+        try {
+            destroy();
+        } finally {
+            super.finalize();
+        }
+!!!5552517.java!!!	sendDeathNotice(inout recipient : IBinder::DeathRecipient) : void
+        if (false) Log.v("JavaBinder", "sendDeathNotice to " + recipient);
+        try {
+            recipient.binderDied();
+        }
+        catch (RuntimeException exc) {
+            Log.w("BinderNative", "Uncaught exception from death notification",
+                    exc);
+        }

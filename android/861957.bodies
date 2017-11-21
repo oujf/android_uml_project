@@ -1,0 +1,172 @@
+class CarStatusBar
+!!!3847941.java!!!	start() : void
+        super.start();
+        mTaskStackListener = new TaskStackListenerImpl();
+        SystemServicesProxy.getInstance(mContext).registerTaskStackListener(mTaskStackListener);
+        registerPackageChangeReceivers();
+
+        mStackScroller.setScrollingEnabled(true);
+
+        createBatteryController();
+        mCarBatteryController.startListening();
+!!!3848069.java!!!	destroy() : void
+        mCarBatteryController.stopListening();
+        mConnectedDeviceSignalController.stopListening();
+
+        super.destroy();
+!!!3848197.java!!!	makeStatusBarView() : void
+        super.makeStatusBarView();
+
+        FragmentHostManager manager = FragmentHostManager.get(mStatusBarWindow);
+        manager.addTagListener(CollapsedStatusBarFragment.TAG, (tag, fragment) -> {
+            mBatteryMeterView = ((BatteryMeterView) fragment.getView().findViewById(
+                    R.id.battery));
+
+            // By default, the BatteryMeterView should not be visible. It will be toggled
+            // when a device has connected by bluetooth.
+            mBatteryMeterView.setVisibility(View.GONE);
+
+            ViewStub stub = (ViewStub) fragment.getView().findViewById(
+                    R.id.connected_device_signals_stub);
+            View signalsView = stub.inflate();
+
+            // When a ViewStub if inflated, it does not respect the margins on the
+            // inflated view.
+            // As a result, manually add the ending margin.
+            ((LinearLayout.LayoutParams) signalsView.getLayoutParams()).setMarginEnd(
+                    mContext.getResources().getDimensionPixelOffset(
+                            R.dimen.status_bar_connected_device_signal_margin_end));
+
+            if (mConnectedDeviceSignalController != null) {
+                mConnectedDeviceSignalController.stopListening();
+            }
+            mConnectedDeviceSignalController = new ConnectedDeviceSignalController(mContext,
+                    signalsView);
+            mConnectedDeviceSignalController.startListening();
+
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "makeStatusBarView(). mBatteryMeterView: " + mBatteryMeterView);
+            }
+        });
+!!!3848325.java!!!	createBatteryController() : BatteryController
+        mCarBatteryController = new CarBatteryController(mContext);
+        mCarBatteryController.addBatteryViewHandler(this);
+        return mCarBatteryController;
+!!!3848453.java!!!	createNavigationBar() : void
+        if (mNavigationBarView != null) {
+            return;
+        }
+
+        // SystemUI requires that the navigation bar view have a parent. Since the regular
+        // StatusBar inflates navigation_bar_window as this parent view, use the same view for the
+        // CarNavigationBarView.
+        ViewGroup navigationBarWindow = (ViewGroup) View.inflate(mContext,
+                R.layout.navigation_bar_window, null);
+        View.inflate(mContext, R.layout.car_navigation_bar, navigationBarWindow);
+        mNavigationBarView = (CarNavigationBarView) navigationBarWindow.getChildAt(0);
+
+        mController = new CarNavigationBarController(mContext, mNavigationBarView,
+                this /* ActivityStarter*/);
+        mNavigationBarView.getBarTransitions().setAlwaysOpaque(true);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_NAVIGATION_BAR,
+                WindowManager.LayoutParams.FLAG_TOUCHABLE_WHEN_WAKING
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                        | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT);
+        lp.setTitle("CarNavigationBar");
+        lp.windowAnimations = 0;
+
+        mWindowManager.addView(navigationBarWindow, lp);
+!!!3848581.java!!!	getNavigationBarView() : NavigationBarView
+        return mNavigationBarView;
+!!!3848709.java!!!	getStatusBarWindowTouchListener() : View.OnTouchListener
+        // Usually, a touch on the background window will dismiss the notification shade. However,
+        // for the car use-case, the shade should remain unless the user switches to a different
+        // facet (e.g. phone).
+        return null;
+!!!3848837.java!!!	getNotificationLongClicker() : SwipeHelper::LongPressListener
+        // For the automative use case, we do not want to the user to be able to interact with
+        // a notification other than a regular click. As a result, just return null for the
+        // long click listener.
+        return null;
+!!!3848965.java!!!	showBatteryView() : void
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "showBatteryView(). mBatteryMeterView: " + mBatteryMeterView);
+        }
+
+        if (mBatteryMeterView != null) {
+            mBatteryMeterView.setVisibility(View.VISIBLE);
+        }
+!!!3849093.java!!!	hideBatteryView() : void
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "hideBatteryView(). mBatteryMeterView: " + mBatteryMeterView);
+        }
+
+        if (mBatteryMeterView != null) {
+            mBatteryMeterView.setVisibility(View.GONE);
+        }
+!!!3849221.java!!!	registerPackageChangeReceivers() : void
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addDataScheme("package");
+        mContext.registerReceiver(mPackageChangeReceiver, filter);
+!!!3849349.java!!!	hasDockedTask() : boolean
+        return Recents.getSystemServices().hasDockedTask();
+!!!3849605.java!!!	createUserSwitcher() : void
+        UserSwitcherController userSwitcherController =
+                Dependency.get(UserSwitcherController.class);
+        if (userSwitcherController.useFullscreenUserSwitcher()) {
+            mFullscreenUserSwitcher = new FullscreenUserSwitcher(this,
+                    userSwitcherController,
+                    (ViewStub) mStatusBarWindow.findViewById(R.id.fullscreen_user_switcher_stub));
+        } else {
+            super.createUserSwitcher();
+        }
+!!!3849733.java!!!	userSwitched(in newUserId : int) : void
+        super.userSwitched(newUserId);
+        if (mFullscreenUserSwitcher != null) {
+            mFullscreenUserSwitcher.onUserSwitched(newUserId);
+        }
+!!!3849861.java!!!	updateKeyguardState(inout goingToFullShade : boolean, inout fromShadeLocked : boolean) : void
+        super.updateKeyguardState(goingToFullShade, fromShadeLocked);
+        if (mFullscreenUserSwitcher != null) {
+            if (mState == StatusBarState.FULLSCREEN_USER_SWITCHER) {
+                mFullscreenUserSwitcher.show();
+            } else {
+                mFullscreenUserSwitcher.hide();
+            }
+        }
+!!!3849989.java!!!	updateMediaMetaData(inout metaDataChanged : boolean, inout allowEnterAnimation : boolean) : void
+        // Do nothing, we don't want to display media art in the lock screen for a car.
+!!!3850117.java!!!	startActivityWithOptions(inout intent : Intent, inout options : Bundle) : int
+        int result = ActivityManager.START_CANCELED;
+        try {
+            result = ActivityManager.getService().startActivityAsUser(null /* caller */,
+                    mContext.getBasePackageName(),
+                    intent,
+                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
+                    null /* resultTo*/,
+                    null /* resultWho*/,
+                    0 /* requestCode*/,
+                    Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP,
+                    null /* profilerInfo*/,
+                    options,
+                    UserHandle.CURRENT.getIdentifier());
+        } catch (RemoteException e) {
+            Log.w(TAG, "Unable to start activity", e);
+        }
+
+        return result;
+!!!3850245.java!!!	startActivityOnStack(inout intent : Intent, in stackId : int) : int
+        ActivityOptions options = ActivityOptions.makeBasic();
+        options.setLaunchStackId(stackId);
+        return startActivityWithOptions(intent, options.toBundle());
+!!!3850373.java!!!	onDensityOrFontScaleChanged() : void
+        super.onDensityOrFontScaleChanged();
+        mController.onDensityOrFontScaleChanged();

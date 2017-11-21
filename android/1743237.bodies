@@ -1,0 +1,98 @@
+class PackageRemovedInfo
+!!!12165381.java!!!	PackageRemovedInfo(inout packageSender : PackageSender)
+            this.packageSender = packageSender;
+!!!12165509.java!!!	sendPackageRemovedBroadcasts(inout killApp : boolean) : void
+            sendPackageRemovedBroadcastInternal(killApp);
+            final int childCount = removedChildPackages != null ? removedChildPackages.size() : 0;
+            for (int i = 0; i < childCount; i++) {
+                PackageRemovedInfo childInfo = removedChildPackages.valueAt(i);
+                childInfo.sendPackageRemovedBroadcastInternal(killApp);
+            }
+!!!12165637.java!!!	sendSystemPackageUpdatedBroadcasts() : void
+            if (isRemovedPackageSystemUpdate) {
+                sendSystemPackageUpdatedBroadcastsInternal();
+                final int childCount = (removedChildPackages != null)
+                        ? removedChildPackages.size() : 0;
+                for (int i = 0; i < childCount; i++) {
+                    PackageRemovedInfo childInfo = removedChildPackages.valueAt(i);
+                    if (childInfo.isRemovedPackageSystemUpdate) {
+                        childInfo.sendSystemPackageUpdatedBroadcastsInternal();
+                    }
+                }
+            }
+!!!12165765.java!!!	sendSystemPackageAppearedBroadcasts() : void
+            final int packageCount = (appearedChildPackages != null)
+                    ? appearedChildPackages.size() : 0;
+            for (int i = 0; i < packageCount; i++) {
+                PackageInstalledInfo installedInfo = appearedChildPackages.valueAt(i);
+                packageSender.sendPackageAddedForNewUsers(installedInfo.name,
+                    true, UserHandle.getAppId(installedInfo.uid),
+                    installedInfo.newUsers);
+            }
+!!!12165893.java!!!	sendSystemPackageUpdatedBroadcastsInternal() : void
+            Bundle extras = new Bundle(2);
+            extras.putInt(Intent.EXTRA_UID, removedAppId >= 0 ? removedAppId : uid);
+            extras.putBoolean(Intent.EXTRA_REPLACING, true);
+            packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,
+                removedPackage, extras, 0, null /*targetPackage*/, null, null);
+            packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,
+                removedPackage, extras, 0, null /*targetPackage*/, null, null);
+            packageSender.sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,
+                null, null, 0, removedPackage, null, null);
+            if (installerPackageName != null) {
+                packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,
+                        removedPackage, extras, 0 /*flags*/,
+                        installerPackageName, null, null);
+                packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,
+                        removedPackage, extras, 0 /*flags*/,
+                        installerPackageName, null, null);
+            }
+!!!12166021.java!!!	sendPackageRemovedBroadcastInternal(inout killApp : boolean) : void
+            // Don't send static shared library removal broadcasts as these
+            // libs are visible only the the apps that depend on them an one
+            // cannot remove the library if it has a dependency.
+            if (isStaticSharedLib) {
+                return;
+            }
+            Bundle extras = new Bundle(2);
+            extras.putInt(Intent.EXTRA_UID, removedAppId >= 0  ? removedAppId : uid);
+            extras.putBoolean(Intent.EXTRA_DATA_REMOVED, dataRemoved);
+            extras.putBoolean(Intent.EXTRA_DONT_KILL_APP, !killApp);
+            if (isUpdate || isRemovedPackageSystemUpdate) {
+                extras.putBoolean(Intent.EXTRA_REPLACING, true);
+            }
+            extras.putBoolean(Intent.EXTRA_REMOVED_FOR_ALL_USERS, removedForAllUsers);
+            if (removedPackage != null) {
+                packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_REMOVED,
+                    removedPackage, extras, 0, null /*targetPackage*/, null, broadcastUsers);
+                if (installerPackageName != null) {
+                    packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_REMOVED,
+                            removedPackage, extras, 0 /*flags*/,
+                            installerPackageName, null, broadcastUsers);
+                }
+                if (dataRemoved && !isRemovedPackageSystemUpdate) {
+                    packageSender.sendPackageBroadcast(Intent.ACTION_PACKAGE_FULLY_REMOVED,
+                        removedPackage, extras,
+                        Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND,
+                        null, null, broadcastUsers);
+                }
+            }
+            if (removedAppId >= 0) {
+                packageSender.sendPackageBroadcast(Intent.ACTION_UID_REMOVED, null, extras,
+                        Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND, null, null, broadcastUsers);
+            }
+!!!12166149.java!!!	populateUsers(inout userIds : int [[]], inout deletedPackageSetting : PackageSetting) : void
+            removedUsers = userIds;
+            if (removedUsers == null) {
+                broadcastUsers = null;
+                return;
+            }
+
+            broadcastUsers = EMPTY_INT_ARRAY;
+            for (int i = userIds.length - 1; i >= 0; --i) {
+                final int userId = userIds[i];
+                if (deletedPackageSetting.getInstantApp(userId)) {
+                    continue;
+                }
+                broadcastUsers = ArrayUtils.appendInt(broadcastUsers, userId);
+            }

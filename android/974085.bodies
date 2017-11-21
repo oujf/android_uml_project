@@ -1,0 +1,350 @@
+class Animation
+!!!8982789.java!!!	Animation()
+        ensureInterpolator();
+!!!8982917.java!!!	Animation(inout context : Context, inout attrs : AttributeSet)
+        TypedArray a = context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.Animation);
+
+        setDuration((long) a.getInt(com.android.internal.R.styleable.Animation_duration, 0));
+        setStartOffset((long) a.getInt(com.android.internal.R.styleable.Animation_startOffset, 0));
+
+        setFillEnabled(a.getBoolean(com.android.internal.R.styleable.Animation_fillEnabled, mFillEnabled));
+        setFillBefore(a.getBoolean(com.android.internal.R.styleable.Animation_fillBefore, mFillBefore));
+        setFillAfter(a.getBoolean(com.android.internal.R.styleable.Animation_fillAfter, mFillAfter));
+
+        setRepeatCount(a.getInt(com.android.internal.R.styleable.Animation_repeatCount, mRepeatCount));
+        setRepeatMode(a.getInt(com.android.internal.R.styleable.Animation_repeatMode, RESTART));
+
+        setZAdjustment(a.getInt(com.android.internal.R.styleable.Animation_zAdjustment, ZORDER_NORMAL));
+
+        setBackgroundColor(a.getInt(com.android.internal.R.styleable.Animation_background, 0));
+
+        setDetachWallpaper(a.getBoolean(com.android.internal.R.styleable.Animation_detachWallpaper, false));
+
+        final int resID = a.getResourceId(com.android.internal.R.styleable.Animation_interpolator, 0);
+
+        a.recycle();
+
+        if (resID > 0) {
+            setInterpolator(context, resID);
+        }
+
+        ensureInterpolator();
+!!!8983045.java!!!	clone() : Animation
+        final Animation animation = (Animation) super.clone();
+        animation.mPreviousRegion = new RectF();
+        animation.mRegion = new RectF();
+        animation.mTransformation = new Transformation();
+        animation.mPreviousTransformation = new Transformation();
+        return animation;
+!!!8983173.java!!!	reset() : void
+        mPreviousRegion.setEmpty();
+        mPreviousTransformation.clear();
+        mInitialized = false;
+        mCycleFlip = false;
+        mRepeated = 0;
+        mMore = true;
+        mOneMoreTime = true;
+        mListenerHandler = null;
+!!!8983301.java!!!	cancel() : void
+        if (mStarted && !mEnded) {
+            fireAnimationEnd();
+            mEnded = true;
+            guard.close();
+        }
+        // Make sure we move the animation to the end
+        mStartTime = Long.MIN_VALUE;
+        mMore = mOneMoreTime = false;
+!!!8983429.java!!!	detach() : void
+        if (mStarted && !mEnded) {
+            mEnded = true;
+            guard.close();
+            fireAnimationEnd();
+        }
+!!!8983557.java!!!	isInitialized() : boolean
+        return mInitialized;
+!!!8983685.java!!!	initialize(in width : int, in height : int, in parentWidth : int, in parentHeight : int) : void
+        reset();
+        mInitialized = true;
+!!!8983813.java!!!	setListenerHandler(inout handler : Handler) : void
+        if (mListenerHandler == null) {
+            mOnStart = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationStart(Animation.this);
+                    }
+                }
+            };
+            mOnRepeat = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationRepeat(Animation.this);
+                    }
+                }
+            };
+            mOnEnd = new Runnable() {
+                public void run() {
+                    if (mListener != null) {
+                        mListener.onAnimationEnd(Animation.this);
+                    }
+                }
+            };
+        }
+        mListenerHandler = handler;
+!!!8983941.java!!!	setInterpolator(inout context : Context, in resID : int) : void
+        setInterpolator(AnimationUtils.loadInterpolator(context, resID));
+!!!8984069.java!!!	setInterpolator(inout i : Interpolator) : void
+        mInterpolator = i;
+!!!8984197.java!!!	setStartOffset(in startOffset : long) : void
+        mStartOffset = startOffset;
+!!!8984325.java!!!	setDuration(in durationMillis : long) : void
+        if (durationMillis < 0) {
+            throw new IllegalArgumentException("Animation duration cannot be negative");
+        }
+        mDuration = durationMillis;
+!!!8984453.java!!!	restrictDuration(in durationMillis : long) : void
+        // If we start after the duration, then we just won't run.
+        if (mStartOffset > durationMillis) {
+            mStartOffset = durationMillis;
+            mDuration = 0;
+            mRepeatCount = 0;
+            return;
+        }
+
+        long dur = mDuration + mStartOffset;
+        if (dur > durationMillis) {
+            mDuration = durationMillis-mStartOffset;
+            dur = durationMillis;
+        }
+        // If the duration is 0 or less, then we won't run.
+        if (mDuration <= 0) {
+            mDuration = 0;
+            mRepeatCount = 0;
+            return;
+        }
+        // Reduce the number of repeats to keep below the maximum duration.
+        // The comparison between mRepeatCount and duration is to catch
+        // overflows after multiplying them.
+        if (mRepeatCount < 0 || mRepeatCount > durationMillis
+                || (dur*mRepeatCount) > durationMillis) {
+            // Figure out how many times to do the animation.  Subtract 1 since
+            // repeat count is the number of times to repeat so 0 runs once.
+            mRepeatCount = (int)(durationMillis/dur) - 1;
+            if (mRepeatCount < 0) {
+                mRepeatCount = 0;
+            }
+        }
+!!!8984581.java!!!	scaleCurrentDuration(in scale : float) : void
+        mDuration = (long) (mDuration * scale);
+        mStartOffset = (long) (mStartOffset * scale);
+!!!8984709.java!!!	setStartTime(in startTimeMillis : long) : void
+        mStartTime = startTimeMillis;
+        mStarted = mEnded = false;
+        mCycleFlip = false;
+        mRepeated = 0;
+        mMore = true;
+!!!8984837.java!!!	start() : void
+        setStartTime(-1);
+!!!8984965.java!!!	startNow() : void
+        setStartTime(AnimationUtils.currentAnimationTimeMillis());
+!!!8985093.java!!!	setRepeatMode(in repeatMode : int) : void
+        mRepeatMode = repeatMode;
+!!!8985221.java!!!	setRepeatCount(in repeatCount : int) : void
+        if (repeatCount < 0) {
+            repeatCount = INFINITE;
+        }
+        mRepeatCount = repeatCount;
+!!!8985349.java!!!	isFillEnabled() : boolean
+        return mFillEnabled;
+!!!8985477.java!!!	setFillEnabled(inout fillEnabled : boolean) : void
+        mFillEnabled = fillEnabled;
+!!!8985605.java!!!	setFillBefore(inout fillBefore : boolean) : void
+        mFillBefore = fillBefore;
+!!!8985733.java!!!	setFillAfter(inout fillAfter : boolean) : void
+        mFillAfter = fillAfter;
+!!!8985861.java!!!	setZAdjustment(in zAdjustment : int) : void
+        mZAdjustment = zAdjustment;
+!!!8985989.java!!!	setBackgroundColor(in bg : int) : void
+        mBackgroundColor = bg;
+!!!8986117.java!!!	getScaleFactor() : float
+        return mScaleFactor;
+!!!8986245.java!!!	setDetachWallpaper(inout detachWallpaper : boolean) : void
+        mDetachWallpaper = detachWallpaper;
+!!!8986373.java!!!	getInterpolator() : Interpolator
+        return mInterpolator;
+!!!8986501.java!!!	getStartTime() : long
+        return mStartTime;
+!!!8986629.java!!!	getDuration() : long
+        return mDuration;
+!!!8986757.java!!!	getStartOffset() : long
+        return mStartOffset;
+!!!8986885.java!!!	getRepeatMode() : int
+        return mRepeatMode;
+!!!8987013.java!!!	getRepeatCount() : int
+        return mRepeatCount;
+!!!8987141.java!!!	getFillBefore() : boolean
+        return mFillBefore;
+!!!8987269.java!!!	getFillAfter() : boolean
+        return mFillAfter;
+!!!8987397.java!!!	getZAdjustment() : int
+        return mZAdjustment;
+!!!8987525.java!!!	getBackgroundColor() : int
+        return mBackgroundColor;
+!!!8987653.java!!!	getDetachWallpaper() : boolean
+        return mDetachWallpaper;
+!!!8987781.java!!!	willChangeTransformationMatrix() : boolean
+        // assume we will change the matrix
+        return true;
+!!!8987909.java!!!	willChangeBounds() : boolean
+        // assume we will change the bounds
+        return true;
+!!!8988037.java!!!	setAnimationListener(inout listener : Animation::AnimationListener) : void
+        mListener = listener;
+!!!8988165.java!!!	ensureInterpolator() : void
+        if (mInterpolator == null) {
+            mInterpolator = new AccelerateDecelerateInterpolator();
+        }
+!!!8988293.java!!!	computeDurationHint() : long
+        return (getStartOffset() + getDuration()) * (getRepeatCount() + 1);
+!!!8988421.java!!!	getTransformation(in currentTime : long, inout outTransformation : Transformation) : boolean
+        if (mStartTime == -1) {
+            mStartTime = currentTime;
+        }
+
+        final long startOffset = getStartOffset();
+        final long duration = mDuration;
+        float normalizedTime;
+        if (duration != 0) {
+            normalizedTime = ((float) (currentTime - (mStartTime + startOffset))) /
+                    (float) duration;
+        } else {
+            // time is a step-change with a zero duration
+            normalizedTime = currentTime < mStartTime ? 0.0f : 1.0f;
+        }
+
+        final boolean expired = normalizedTime >= 1.0f || isCanceled();
+        mMore = !expired;
+
+        if (!mFillEnabled) normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
+
+        if ((normalizedTime >= 0.0f || mFillBefore) && (normalizedTime <= 1.0f || mFillAfter)) {
+            if (!mStarted) {
+                fireAnimationStart();
+                mStarted = true;
+                if (NoImagePreloadHolder.USE_CLOSEGUARD) {
+                    guard.open("cancel or detach or getTransformation");
+                }
+            }
+
+            if (mFillEnabled) normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
+
+            if (mCycleFlip) {
+                normalizedTime = 1.0f - normalizedTime;
+            }
+
+            final float interpolatedTime = mInterpolator.getInterpolation(normalizedTime);
+            applyTransformation(interpolatedTime, outTransformation);
+        }
+
+        if (expired) {
+            if (mRepeatCount == mRepeated || isCanceled()) {
+                if (!mEnded) {
+                    mEnded = true;
+                    guard.close();
+                    fireAnimationEnd();
+                }
+            } else {
+                if (mRepeatCount > 0) {
+                    mRepeated++;
+                }
+
+                if (mRepeatMode == REVERSE) {
+                    mCycleFlip = !mCycleFlip;
+                }
+
+                mStartTime = -1;
+                mMore = true;
+
+                fireAnimationRepeat();
+            }
+        }
+
+        if (!mMore && mOneMoreTime) {
+            mOneMoreTime = false;
+            return true;
+        }
+
+        return mMore;
+!!!8988549.java!!!	isCanceled() : boolean
+        return mStartTime == Long.MIN_VALUE;
+!!!8988677.java!!!	fireAnimationStart() : void
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationStart(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnStart);
+        }
+!!!8988805.java!!!	fireAnimationRepeat() : void
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationRepeat(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnRepeat);
+        }
+!!!8988933.java!!!	fireAnimationEnd() : void
+        if (mListener != null) {
+            if (mListenerHandler == null) mListener.onAnimationEnd(this);
+            else mListenerHandler.postAtFrontOfQueue(mOnEnd);
+        }
+!!!8989061.java!!!	getTransformation(in currentTime : long, inout outTransformation : Transformation, in scale : float) : boolean
+        mScaleFactor = scale;
+        return getTransformation(currentTime, outTransformation);
+!!!8989189.java!!!	hasStarted() : boolean
+        return mStarted;
+!!!8989317.java!!!	hasEnded() : boolean
+        return mEnded;
+!!!8989573.java!!!	resolveSize(in type : int, in value : float, in size : int, in parentSize : int) : float
+        switch (type) {
+            case ABSOLUTE:
+                return value;
+            case RELATIVE_TO_SELF:
+                return size * value;
+            case RELATIVE_TO_PARENT:
+                return parentSize * value;
+            default:
+                return value;
+        }
+!!!8989701.java!!!	getInvalidateRegion(in left : int, in top : int, in right : int, in bottom : int, inout invalidate : RectF, inout transformation : Transformation) : void
+
+        final RectF tempRegion = mRegion;
+        final RectF previousRegion = mPreviousRegion;
+
+        invalidate.set(left, top, right, bottom);
+        transformation.getMatrix().mapRect(invalidate);
+        // Enlarge the invalidate region to account for rounding errors
+        invalidate.inset(-1.0f, -1.0f);
+        tempRegion.set(invalidate);
+        invalidate.union(previousRegion);
+
+        previousRegion.set(tempRegion);
+
+        final Transformation tempTransformation = mTransformation;
+        final Transformation previousTransformation = mPreviousTransformation;
+
+        tempTransformation.set(transformation);
+        transformation.set(previousTransformation);
+        previousTransformation.set(tempTransformation);
+!!!8989829.java!!!	initializeInvalidateRegion(in left : int, in top : int, in right : int, in bottom : int) : void
+        final RectF region = mPreviousRegion;
+        region.set(left, top, right, bottom);
+        // Enlarge the invalidate region to account for rounding errors
+        region.inset(-1.0f, -1.0f);
+        if (mFillBefore) {
+            final Transformation previousTransformation = mPreviousTransformation;
+            applyTransformation(mInterpolator.getInterpolation(0.0f), previousTransformation);
+        }
+!!!8989957.java!!!	finalize() : void
+        try {
+            if (guard != null) {
+                guard.warnIfOpen();
+            }
+        } finally {
+            super.finalize();
+        }
+!!!8990085.java!!!	hasAlpha() : boolean
+        return false;

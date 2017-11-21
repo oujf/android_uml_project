@@ -1,0 +1,75 @@
+class InstantAppDigest
+!!!6246661.java!!!	InstantAppDigest(in hostName : String)
+            this(hostName, -1 /*maxDigests*/);
+!!!6246789.java!!!	InstantAppDigest(in hostName : String, in maxDigests : int)
+            if (hostName == null) {
+                throw new IllegalArgumentException();
+            }
+            mDigestBytes = generateDigest(hostName.toLowerCase(Locale.ENGLISH), maxDigests);
+            mDigestPrefix = new int[mDigestBytes.length];
+            for (int i = 0; i < mDigestBytes.length; i++) {
+                mDigestPrefix[i] =
+                        ((mDigestBytes[i][0] & 0xFF) << 24
+                                | (mDigestBytes[i][1] & 0xFF) << 16
+                                | (mDigestBytes[i][2] & 0xFF) << 8
+                                | (mDigestBytes[i][3] & 0xFF) << 0)
+                        & DIGEST_MASK;
+            }
+!!!6246917.java!!!	generateDigest(in hostName : String, in maxDigests : int) : byte
+            ArrayList<byte[]> digests = new ArrayList<>();
+            try {
+                final MessageDigest digest = MessageDigest.getInstance(SHA_ALGORITHM);
+                if (maxDigests <= 0) {
+                    final byte[] hostBytes = hostName.getBytes();
+                    digests.add(digest.digest(hostBytes));
+                } else {
+                    int prevDot = hostName.lastIndexOf('.');
+                    prevDot = hostName.lastIndexOf('.', prevDot - 1);
+                    // shortcut for short URLs
+                    if (prevDot < 0) {
+                        digests.add(digest.digest(hostName.getBytes()));
+                    } else {
+                        byte[] hostBytes =
+                                hostName.substring(prevDot + 1, hostName.length()).getBytes();
+                        digests.add(digest.digest(hostBytes));
+                        int digestCount = 1;
+                        while (prevDot >= 0 && digestCount < maxDigests) {
+                            prevDot = hostName.lastIndexOf('.', prevDot - 1);
+                            hostBytes =
+                                    hostName.substring(prevDot + 1, hostName.length()).getBytes();
+                            digests.add(digest.digest(hostBytes));
+                            digestCount++;
+                        }
+                    }
+                }
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException("could not find digest algorithm");
+            }
+            return digests.toArray(new byte[digests.size()][]);
+!!!6247045.java!!!	InstantAppDigest(inout in : Parcel)
+            final int digestCount = in.readInt();
+            if (digestCount == -1) {
+                mDigestBytes = null;
+            } else {
+                mDigestBytes = new byte[digestCount][];
+                for (int i = 0; i < digestCount; i++) {
+                    mDigestBytes[i] = in.createByteArray();
+                }
+            }
+            mDigestPrefix = in.createIntArray();
+!!!6247173.java!!!	getDigestBytes() : byte
+            return mDigestBytes;
+!!!6247301.java!!!	getDigestPrefix() : int
+            return mDigestPrefix;
+!!!6247429.java!!!	describeContents() : int
+            return 0;
+!!!6247557.java!!!	writeToParcel(inout out : Parcel, in flags : int) : void
+            if (mDigestBytes == null) {
+                out.writeInt(-1);
+            } else {
+                out.writeInt(mDigestBytes.length);
+                for (int i = 0; i < mDigestBytes.length; i++) {
+                    out.writeByteArray(mDigestBytes[i]);
+                }
+            }
+            out.writeIntArray(mDigestPrefix);

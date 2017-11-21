@@ -1,0 +1,317 @@
+class ExpandableViewState
+!!!3674757.java!!!	copyFrom(inout viewState : ViewState) : void
+        super.copyFrom(viewState);
+        if (viewState instanceof ExpandableViewState) {
+            ExpandableViewState svs = (ExpandableViewState) viewState;
+            height = svs.height;
+            dimmed = svs.dimmed;
+            shadowAlpha = svs.shadowAlpha;
+            dark = svs.dark;
+            hideSensitive = svs.hideSensitive;
+            belowSpeedBump = svs.belowSpeedBump;
+            clipTopAmount = svs.clipTopAmount;
+            notGoneIndex = svs.notGoneIndex;
+            location = svs.location;
+        }
+!!!3674885.java!!!	applyToView(inout view : View) : void
+        super.applyToView(view);
+        if (view instanceof ExpandableView) {
+            ExpandableView expandableView = (ExpandableView) view;
+
+            int height = expandableView.getActualHeight();
+            int newHeight = this.height;
+
+            // apply height
+            if (height != newHeight) {
+                expandableView.setActualHeight(newHeight, false /* notifyListeners */);
+            }
+
+            float shadowAlpha = expandableView.getShadowAlpha();
+            float newShadowAlpha = this.shadowAlpha;
+
+            // apply shadowAlpha
+            if (shadowAlpha != newShadowAlpha) {
+                expandableView.setShadowAlpha(newShadowAlpha);
+            }
+
+            // apply dimming
+            expandableView.setDimmed(this.dimmed, false /* animate */);
+
+            // apply hiding sensitive
+            expandableView.setHideSensitive(
+                    this.hideSensitive, false /* animated */, 0 /* delay */, 0 /* duration */);
+
+            // apply below shelf speed bump
+            expandableView.setBelowSpeedBump(this.belowSpeedBump);
+
+            // apply dark
+            expandableView.setDark(this.dark, false /* animate */, 0 /* delay */);
+
+            // apply clipping
+            float oldClipTopAmount = expandableView.getClipTopAmount();
+            if (oldClipTopAmount != this.clipTopAmount) {
+                expandableView.setClipTopAmount(this.clipTopAmount);
+            }
+
+            expandableView.setTransformingInShelf(false);
+            expandableView.setInShelf(inShelf);
+        }
+!!!3675013.java!!!	animateTo(inout child : View, inout properties : AnimationProperties) : void
+        super.animateTo(child, properties);
+        if (!(child instanceof ExpandableView)) {
+            return;
+        }
+        ExpandableView expandableView = (ExpandableView) child;
+        AnimationFilter animationFilter = properties.getAnimationFilter();
+
+        // start height animation
+        if (this.height != expandableView.getActualHeight()) {
+            startHeightAnimation(expandableView, properties);
+        }  else {
+            abortAnimation(child, TAG_ANIMATOR_HEIGHT);
+        }
+
+        // start shadow alpha animation
+        if (this.shadowAlpha != expandableView.getShadowAlpha()) {
+            startShadowAlphaAnimation(expandableView, properties);
+        } else {
+            abortAnimation(child, TAG_ANIMATOR_SHADOW_ALPHA);
+        }
+
+        // start top inset animation
+        if (this.clipTopAmount != expandableView.getClipTopAmount()) {
+            startInsetAnimation(expandableView, properties);
+        } else {
+            abortAnimation(child, TAG_ANIMATOR_TOP_INSET);
+        }
+
+        // start dimmed animation
+        expandableView.setDimmed(this.dimmed, animationFilter.animateDimmed);
+
+        // apply below the speed bump
+        expandableView.setBelowSpeedBump(this.belowSpeedBump);
+
+        // start hiding sensitive animation
+        expandableView.setHideSensitive(this.hideSensitive, animationFilter.animateHideSensitive,
+                properties.delay, properties.duration);
+
+        // start dark animation
+        expandableView.setDark(this.dark, animationFilter.animateDark, properties.delay);
+
+        if (properties.wasAdded(child) && !hidden) {
+            expandableView.performAddAnimation(properties.delay, properties.duration);
+        }
+
+        if (!expandableView.isInShelf() && this.inShelf) {
+            expandableView.setTransformingInShelf(true);
+        }
+        expandableView.setInShelf(this.inShelf);
+!!!3675141.java!!!	startHeightAnimation(in child : ExpandableView, inout properties : AnimationProperties) : void
+        Integer previousStartValue = getChildTag(child, TAG_START_HEIGHT);
+        Integer previousEndValue = getChildTag(child, TAG_END_HEIGHT);
+        int newEndValue = this.height;
+        if (previousEndValue != null && previousEndValue == newEndValue) {
+            return;
+        }
+        ValueAnimator previousAnimator = getChildTag(child, TAG_ANIMATOR_HEIGHT);
+        AnimationFilter filter = properties.getAnimationFilter();
+        if (!filter.animateHeight) {
+            // just a local update was performed
+            if (previousAnimator != null) {
+                // we need to increase all animation keyframes of the previous animator by the
+                // relative change to the end value
+                PropertyValuesHolder[] values = previousAnimator.getValues();
+                int relativeDiff = newEndValue - previousEndValue;
+                int newStartValue = previousStartValue + relativeDiff;
+                values[0].setIntValues(newStartValue, newEndValue);
+                child.setTag(TAG_START_HEIGHT, newStartValue);
+                child.setTag(TAG_END_HEIGHT, newEndValue);
+                previousAnimator.setCurrentPlayTime(previousAnimator.getCurrentPlayTime());
+                return;
+            } else {
+                // no new animation needed, let's just apply the value
+                child.setActualHeight(newEndValue, false);
+                return;
+            }
+        }
+
+        ValueAnimator animator = ValueAnimator.ofInt(child.getActualHeight(), newEndValue);
+        animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                child.setActualHeight((int) animation.getAnimatedValue(),
+                        false /* notifyListeners */);
+            }
+        });
+        animator.setInterpolator(Interpolators.FAST_OUT_SLOW_IN);
+        long newDuration = cancelAnimatorAndGetNewDuration(properties.duration, previousAnimator);
+        animator.setDuration(newDuration);
+        if (properties.delay > 0 && (previousAnimator == null
+                || previousAnimator.getAnimatedFraction() == 0)) {
+            animator.setStartDelay(properties.delay);
+        }
+        AnimatorListenerAdapter listener = properties.getAnimationFinishListener();
+        if (listener != null) {
+            animator.addListener(listener);
+        }
+        // remove the tag when the animation is finished
+        animator.addListener(new AnimatorListenerAdapter() {
+            boolean mWasCancelled;
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                child.setTag(TAG_ANIMATOR_HEIGHT, null);
+                child.setTag(TAG_START_HEIGHT, null);
+                child.setTag(TAG_END_HEIGHT, null);
+                child.setActualHeightAnimating(false);
+                if (!mWasCancelled && child instanceof ExpandableNotificationRow) {
+                    ((ExpandableNotificationRow) child).setGroupExpansionChanging(
+                            false /* isExpansionChanging */);
+                }
+            }
+
+            @Override
+            public void onAnimationStart(Animator animation) {
+                mWasCancelled = false;
+            }
+
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                mWasCancelled = true;
+            }
+        });
+        startAnimator(animator, listener);
+        child.setTag(TAG_ANIMATOR_HEIGHT, animator);
+        child.setTag(TAG_START_HEIGHT, child.getActualHeight());
+        child.setTag(TAG_END_HEIGHT, newEndValue);
+        child.setActualHeightAnimating(true);
+!!!3675269.java!!!	startShadowAlphaAnimation(in child : ExpandableView, inout properties : AnimationProperties) : void
+        Float previousStartValue = getChildTag(child, TAG_START_SHADOW_ALPHA);
+        Float previousEndValue = getChildTag(child, TAG_END_SHADOW_ALPHA);
+        float newEndValue = this.shadowAlpha;
+        if (previousEndValue != null && previousEndValue == newEndValue) {
+            return;
+        }
+        ValueAnimator previousAnimator = getChildTag(child, TAG_ANIMATOR_SHADOW_ALPHA);
+        AnimationFilter filter = properties.getAnimationFilter();
+        if (!filter.animateShadowAlpha) {
+            // just a local update was performed
+            if (previousAnimator != null) {
+                // we need to increase all animation keyframes of the previous animator by the
+                // relative change to the end value
+                PropertyValuesHolder[] values = previousAnimator.getValues();
+                float relativeDiff = newEndValue - previousEndValue;
+                float newStartValue = previousStartValue + relativeDiff;
+                values[0].setFloatValues(newStartValue, newEndValue);
+                child.setTag(TAG_START_SHADOW_ALPHA, newStartValue);
+                child.setTag(TAG_END_SHADOW_ALPHA, newEndValue);
+                previousAnimator.setCurrentPlayTime(previousAnimator.getCurrentPlayTime());
+                return;
+            } else {
+                // no new animation needed, let's just apply the value
+                child.setShadowAlpha(newEndValue);
+                return;
+            }
+        }
+
+        ValueAnimator animator = ValueAnimator.ofFloat(child.getShadowAlpha(), newEndValue);
+        animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                child.setShadowAlpha((float) animation.getAnimatedValue());
+            }
+        });
+        animator.setInterpolator(Interpolators.FAST_OUT_SLOW_IN);
+        long newDuration = cancelAnimatorAndGetNewDuration(properties.duration, previousAnimator);
+        animator.setDuration(newDuration);
+        if (properties.delay > 0 && (previousAnimator == null
+                || previousAnimator.getAnimatedFraction() == 0)) {
+            animator.setStartDelay(properties.delay);
+        }
+        AnimatorListenerAdapter listener = properties.getAnimationFinishListener();
+        if (listener != null) {
+            animator.addListener(listener);
+        }
+        // remove the tag when the animation is finished
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                child.setTag(TAG_ANIMATOR_SHADOW_ALPHA, null);
+                child.setTag(TAG_START_SHADOW_ALPHA, null);
+                child.setTag(TAG_END_SHADOW_ALPHA, null);
+            }
+        });
+        startAnimator(animator, listener);
+        child.setTag(TAG_ANIMATOR_SHADOW_ALPHA, animator);
+        child.setTag(TAG_START_SHADOW_ALPHA, child.getShadowAlpha());
+        child.setTag(TAG_END_SHADOW_ALPHA, newEndValue);
+!!!3675397.java!!!	startInsetAnimation(in child : ExpandableView, inout properties : AnimationProperties) : void
+        Integer previousStartValue = getChildTag(child, TAG_START_TOP_INSET);
+        Integer previousEndValue = getChildTag(child, TAG_END_TOP_INSET);
+        int newEndValue = this.clipTopAmount;
+        if (previousEndValue != null && previousEndValue == newEndValue) {
+            return;
+        }
+        ValueAnimator previousAnimator = getChildTag(child, TAG_ANIMATOR_TOP_INSET);
+        AnimationFilter filter = properties.getAnimationFilter();
+        if (!filter.animateTopInset) {
+            // just a local update was performed
+            if (previousAnimator != null) {
+                // we need to increase all animation keyframes of the previous animator by the
+                // relative change to the end value
+                PropertyValuesHolder[] values = previousAnimator.getValues();
+                int relativeDiff = newEndValue - previousEndValue;
+                int newStartValue = previousStartValue + relativeDiff;
+                values[0].setIntValues(newStartValue, newEndValue);
+                child.setTag(TAG_START_TOP_INSET, newStartValue);
+                child.setTag(TAG_END_TOP_INSET, newEndValue);
+                previousAnimator.setCurrentPlayTime(previousAnimator.getCurrentPlayTime());
+                return;
+            } else {
+                // no new animation needed, let's just apply the value
+                child.setClipTopAmount(newEndValue);
+                return;
+            }
+        }
+
+        ValueAnimator animator = ValueAnimator.ofInt(child.getClipTopAmount(), newEndValue);
+        animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                child.setClipTopAmount((int) animation.getAnimatedValue());
+            }
+        });
+        animator.setInterpolator(Interpolators.FAST_OUT_SLOW_IN);
+        long newDuration = cancelAnimatorAndGetNewDuration(properties.duration, previousAnimator);
+        animator.setDuration(newDuration);
+        if (properties.delay > 0 && (previousAnimator == null
+                || previousAnimator.getAnimatedFraction() == 0)) {
+            animator.setStartDelay(properties.delay);
+        }
+        AnimatorListenerAdapter listener = properties.getAnimationFinishListener();
+        if (listener != null) {
+            animator.addListener(listener);
+        }
+        // remove the tag when the animation is finished
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                child.setTag(TAG_ANIMATOR_TOP_INSET, null);
+                child.setTag(TAG_START_TOP_INSET, null);
+                child.setTag(TAG_END_TOP_INSET, null);
+            }
+        });
+        startAnimator(animator, listener);
+        child.setTag(TAG_ANIMATOR_TOP_INSET, animator);
+        child.setTag(TAG_START_TOP_INSET, child.getClipTopAmount());
+        child.setTag(TAG_END_TOP_INSET, newEndValue);
+!!!3675525.java!!!	getFinalActualHeight(inout view : ExpandableView) : int
+        if (view == null) {
+            return 0;
+        }
+        ValueAnimator heightAnimator = getChildTag(view, TAG_ANIMATOR_HEIGHT);
+        if (heightAnimator == null) {
+            return view.getActualHeight();
+        } else {
+            return getChildTag(view, TAG_END_HEIGHT);
+        }

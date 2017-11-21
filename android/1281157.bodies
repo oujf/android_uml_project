@@ -1,0 +1,93 @@
+class Builder
+!!!7590405.java!!!	Builder()
+                mMask = 0;
+!!!7590533.java!!!	Builder(inout base : StrictMode::VmPolicy)
+                mMask = base.mask;
+                mClassInstanceLimitNeedCow = true;
+                mClassInstanceLimit = base.classInstanceLimit;
+!!!7590661.java!!!	setClassInstanceLimit(inout klass : Class, in instanceLimit : int) : StrictMode::VmPolicy::Builder
+                if (klass == null) {
+                    throw new NullPointerException("klass == null");
+                }
+                if (mClassInstanceLimitNeedCow) {
+                    if (mClassInstanceLimit.containsKey(klass) &&
+                        mClassInstanceLimit.get(klass) == instanceLimit) {
+                        // no-op; don't break COW
+                        return this;
+                    }
+                    mClassInstanceLimitNeedCow = false;
+                    mClassInstanceLimit = (HashMap<Class, Integer>) mClassInstanceLimit.clone();
+                } else if (mClassInstanceLimit == null) {
+                    mClassInstanceLimit = new HashMap<Class, Integer>();
+                }
+                mMask |= DETECT_VM_INSTANCE_LEAKS;
+                mClassInstanceLimit.put(klass, instanceLimit);
+                return this;
+!!!7590789.java!!!	detectActivityLeaks() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_ACTIVITY_LEAKS);
+!!!7590917.java!!!	detectAll() : StrictMode::VmPolicy::Builder
+                detectLeakedSqlLiteObjects();
+
+                final int targetSdk = VMRuntime.getRuntime().getTargetSdkVersion();
+                if (targetSdk >= Build.VERSION_CODES.HONEYCOMB) {
+                    detectActivityLeaks();
+                    detectLeakedClosableObjects();
+                }
+                if (targetSdk >= Build.VERSION_CODES.JELLY_BEAN) {
+                    detectLeakedRegistrationObjects();
+                }
+                if (targetSdk >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                    detectFileUriExposure();
+                }
+                if (targetSdk >= Build.VERSION_CODES.M) {
+                    // TODO: always add DETECT_VM_CLEARTEXT_NETWORK once we have
+                    // facility for apps to mark sockets that should be ignored
+                    if (SystemProperties.getBoolean(CLEARTEXT_PROPERTY, false)) {
+                        detectCleartextNetwork();
+                    }
+                }
+                if (targetSdk >= Build.VERSION_CODES.O) {
+                    detectContentUriWithoutPermission();
+                    detectUntaggedSockets();
+                }
+                return this;
+!!!7591045.java!!!	detectLeakedSqlLiteObjects() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_CURSOR_LEAKS);
+!!!7591173.java!!!	detectLeakedClosableObjects() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_CLOSABLE_LEAKS);
+!!!7591301.java!!!	detectLeakedRegistrationObjects() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_REGISTRATION_LEAKS);
+!!!7591429.java!!!	detectFileUriExposure() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_FILE_URI_EXPOSURE);
+!!!7591557.java!!!	detectCleartextNetwork() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_CLEARTEXT_NETWORK);
+!!!7591685.java!!!	detectContentUriWithoutPermission() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_CONTENT_URI_WITHOUT_PERMISSION);
+!!!7591813.java!!!	detectUntaggedSockets() : StrictMode::VmPolicy::Builder
+                return enable(DETECT_VM_UNTAGGED_SOCKET);
+!!!7591941.java!!!	penaltyDeath() : StrictMode::VmPolicy::Builder
+                return enable(PENALTY_DEATH);
+!!!7592069.java!!!	penaltyDeathOnCleartextNetwork() : StrictMode::VmPolicy::Builder
+                return enable(PENALTY_DEATH_ON_CLEARTEXT_NETWORK);
+!!!7592197.java!!!	penaltyDeathOnFileUriExposure() : StrictMode::VmPolicy::Builder
+                return enable(PENALTY_DEATH_ON_FILE_URI_EXPOSURE);
+!!!7592325.java!!!	penaltyLog() : StrictMode::VmPolicy::Builder
+                return enable(PENALTY_LOG);
+!!!7592453.java!!!	penaltyDropBox() : StrictMode::VmPolicy::Builder
+                return enable(PENALTY_DROPBOX);
+!!!7592581.java!!!	enable(in bit : int) : StrictMode::VmPolicy::Builder
+                mMask |= bit;
+                return this;
+!!!7592709.java!!!	disable(in bit : int) : StrictMode::VmPolicy::Builder
+                mMask &= ~bit;
+                return this;
+!!!7592837.java!!!	build() : StrictMode::VmPolicy
+                // If there are detection bits set but no violation bits
+                // set, enable simple logging.
+                if (mMask != 0 &&
+                    (mMask & (PENALTY_DEATH | PENALTY_LOG |
+                              PENALTY_DROPBOX | PENALTY_DIALOG)) == 0) {
+                    penaltyLog();
+                }
+                return new VmPolicy(mMask,
+                        mClassInstanceLimit != null ? mClassInstanceLimit : EMPTY_CLASS_LIMIT_MAP);

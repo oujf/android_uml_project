@@ -1,0 +1,78 @@
+class ForcedResizableInfoActivityController
+!!!3641221.java!!!	ForcedResizableInfoActivityController(inout context : Context)
+        mContext = context;
+        EventBus.getDefault().register(this);
+        SystemServicesProxy.getInstance(context).registerTaskStackListener(
+                new TaskStackListener() {
+                    @Override
+                    public void onActivityForcedResizable(String packageName, int taskId,
+                            int reason) {
+                        activityForcedResizable(packageName, taskId, reason);
+                    }
+
+                    @Override
+                    public void onActivityDismissingDockedStack() {
+                        activityDismissingDockedStack();
+                    }
+
+                    @Override
+                    public void onActivityLaunchOnSecondaryDisplayFailed() {
+                        activityLaunchOnSecondaryDisplayFailed();
+                    }
+                });
+!!!3641349.java!!!	notifyDockedStackExistsChanged(inout exists : boolean) : void
+        if (!exists) {
+            mPackagesShownInSession.clear();
+        }
+!!!3641477.java!!!	onBusEvent(inout event : AppTransitionFinishedEvent) : void
+        if (!mDividerDraging) {
+            showPending();
+        }
+!!!3641605.java!!!	onBusEvent(inout event : StartedDragingEvent) : void
+        mDividerDraging = true;
+        mHandler.removeCallbacks(mTimeoutRunnable);
+!!!3641733.java!!!	onBusEvent(inout event : StoppedDragingEvent) : void
+        mDividerDraging = false;
+        showPending();
+!!!3641861.java!!!	activityForcedResizable(in packageName : String, in taskId : int, in reason : int) : void
+        if (debounce(packageName)) {
+            return;
+        }
+        mPendingTasks.add(new PendingTaskRecord(taskId, reason));
+        postTimeout();
+!!!3641989.java!!!	activityDismissingDockedStack() : void
+        EventBus.getDefault().send(new ShowUserToastEvent(
+                R.string.dock_non_resizeble_failed_to_dock_text, Toast.LENGTH_SHORT));
+!!!3642117.java!!!	activityLaunchOnSecondaryDisplayFailed() : void
+        EventBus.getDefault().send(new ShowUserToastEvent(
+                R.string.activity_launch_on_secondary_display_failed_text, Toast.LENGTH_SHORT));
+!!!3642245.java!!!	showPending() : void
+        mHandler.removeCallbacks(mTimeoutRunnable);
+        for (int i = mPendingTasks.size() - 1; i >= 0; i--) {
+            PendingTaskRecord pendingRecord = mPendingTasks.valueAt(i);
+            Intent intent = new Intent(mContext, ForcedResizableInfoActivity.class);
+            ActivityOptions options = ActivityOptions.makeBasic();
+            options.setLaunchTaskId(pendingRecord.taskId);
+            // Set as task overlay and allow to resume, so that when an app enters split-screen and
+            // becomes paused, the overlay will still be shown.
+            options.setTaskOverlay(true, true /* canResume */);
+            intent.putExtra(EXTRA_FORCED_RESIZEABLE_REASON, pendingRecord.reason);
+            mContext.startActivityAsUser(intent, options.toBundle(), UserHandle.CURRENT);
+        }
+        mPendingTasks.clear();
+!!!3642373.java!!!	postTimeout() : void
+        mHandler.removeCallbacks(mTimeoutRunnable);
+        mHandler.postDelayed(mTimeoutRunnable, TIMEOUT);
+!!!3642501.java!!!	debounce(in packageName : String) : boolean
+        if (packageName == null) {
+            return false;
+        }
+
+        // We launch ForcedResizableInfoActivity into a task that was forced resizable, so that
+        // triggers another notification. So ignore our own activity.
+        if (SELF_PACKAGE_NAME.equals(packageName)) {
+            return true;
+        }
+        boolean debounce = mPackagesShownInSession.contains(packageName);
+        mPackagesShownInSession.add(packageName);
+        return debounce;

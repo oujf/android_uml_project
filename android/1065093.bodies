@@ -1,0 +1,121 @@
+class RemoteInput
+!!!5666821.java!!!	RemoteInput(in resultKey : String, inout label : CharSequence, inout choices : CharSequence [[]], in flags : int, inout extras : Bundle, inout allowedDataTypes : ArraySet)
+        this.mResultKey = resultKey;
+        this.mLabel = label;
+        this.mChoices = choices;
+        this.mFlags = flags;
+        this.mExtras = extras;
+        this.mAllowedDataTypes = allowedDataTypes;
+!!!5666949.java!!!	getResultKey() : String
+        return mResultKey;
+!!!5667077.java!!!	getLabel() : CharSequence
+        return mLabel;
+!!!5667205.java!!!	getChoices() : CharSequence
+        return mChoices;
+!!!5667333.java!!!	getAllowedDataTypes() : Set<String>
+        return mAllowedDataTypes;
+!!!5667461.java!!!	isDataOnly() : boolean
+        return !getAllowFreeFormInput()
+                && (getChoices() == null || getChoices().length == 0)
+                && !getAllowedDataTypes().isEmpty();
+!!!5667589.java!!!	getAllowFreeFormInput() : boolean
+        return (mFlags & FLAG_ALLOW_FREE_FORM_INPUT) != 0;
+!!!5667717.java!!!	getExtras() : Bundle
+        return mExtras;
+!!!5668997.java!!!	RemoteInput(inout in : Parcel)
+        mResultKey = in.readString();
+        mLabel = in.readCharSequence();
+        mChoices = in.readCharSequenceArray();
+        mFlags = in.readInt();
+        mExtras = in.readBundle();
+        mAllowedDataTypes = (ArraySet<String>) in.readArraySet(null);
+!!!5669125.java!!!	getDataResultsFromIntent(inout intent : Intent, in remoteInputResultKey : String) : Uri
+        Intent clipDataIntent = getClipDataIntentFromIntent(intent);
+        if (clipDataIntent == null) {
+            return null;
+        }
+        Map<String, Uri> results = new HashMap<>();
+        Bundle extras = clipDataIntent.getExtras();
+        for (String key : extras.keySet()) {
+          if (key.startsWith(EXTRA_DATA_TYPE_RESULTS_DATA)) {
+              String mimeType = key.substring(EXTRA_DATA_TYPE_RESULTS_DATA.length());
+              if (mimeType == null || mimeType.isEmpty()) {
+                  continue;
+              }
+              Bundle bundle = clipDataIntent.getBundleExtra(key);
+              String uriStr = bundle.getString(remoteInputResultKey);
+              if (uriStr == null || uriStr.isEmpty()) {
+                  continue;
+              }
+              results.put(mimeType, Uri.parse(uriStr));
+          }
+        }
+        return results.isEmpty() ? null : results;
+!!!5669253.java!!!	getResultsFromIntent(inout intent : Intent) : Bundle
+        Intent clipDataIntent = getClipDataIntentFromIntent(intent);
+        if (clipDataIntent == null) {
+            return null;
+        }
+        return clipDataIntent.getExtras().getParcelable(EXTRA_RESULTS_DATA);
+!!!5669381.java!!!	addResultsToIntent(inout remoteInputs : RemoteInput [[]], inout intent : Intent, inout results : Bundle) : void
+        Intent clipDataIntent = getClipDataIntentFromIntent(intent);
+        if (clipDataIntent == null) {
+            clipDataIntent = new Intent();  // First time we've added a result.
+        }
+        Bundle resultsBundle = clipDataIntent.getBundleExtra(EXTRA_RESULTS_DATA);
+        if (resultsBundle == null) {
+            resultsBundle = new Bundle();
+        }
+        for (RemoteInput remoteInput : remoteInputs) {
+            Object result = results.get(remoteInput.getResultKey());
+            if (result instanceof CharSequence) {
+                resultsBundle.putCharSequence(remoteInput.getResultKey(), (CharSequence) result);
+            }
+        }
+        clipDataIntent.putExtra(EXTRA_RESULTS_DATA, resultsBundle);
+        intent.setClipData(ClipData.newIntent(RESULTS_CLIP_LABEL, clipDataIntent));
+!!!5669509.java!!!	addDataResultToIntent(inout remoteInput : RemoteInput, inout intent : Intent, inout results : Map<String, Uri>) : void
+        Intent clipDataIntent = getClipDataIntentFromIntent(intent);
+        if (clipDataIntent == null) {
+            clipDataIntent = new Intent();  // First time we've added a result.
+        }
+        for (Map.Entry<String, Uri> entry : results.entrySet()) {
+            String mimeType = entry.getKey();
+            Uri uri = entry.getValue();
+            if (mimeType == null) {
+                continue;
+            }
+            Bundle resultsBundle =
+                    clipDataIntent.getBundleExtra(getExtraResultsKeyForData(mimeType));
+            if (resultsBundle == null) {
+                resultsBundle = new Bundle();
+            }
+            resultsBundle.putString(remoteInput.getResultKey(), uri.toString());
+
+            clipDataIntent.putExtra(getExtraResultsKeyForData(mimeType), resultsBundle);
+        }
+        intent.setClipData(ClipData.newIntent(RESULTS_CLIP_LABEL, clipDataIntent));
+!!!5669637.java!!!	getExtraResultsKeyForData(in mimeType : String) : String
+        return EXTRA_DATA_TYPE_RESULTS_DATA + mimeType;
+!!!5669765.java!!!	describeContents() : int
+        return 0;
+!!!5669893.java!!!	writeToParcel(inout out : Parcel, in flags : int) : void
+        out.writeString(mResultKey);
+        out.writeCharSequence(mLabel);
+        out.writeCharSequenceArray(mChoices);
+        out.writeInt(mFlags);
+        out.writeBundle(mExtras);
+        out.writeArraySet(mAllowedDataTypes);
+!!!5670021.java!!!	getClipDataIntentFromIntent(inout intent : Intent) : Intent
+        ClipData clipData = intent.getClipData();
+        if (clipData == null) {
+            return null;
+        }
+        ClipDescription clipDescription = clipData.getDescription();
+        if (!clipDescription.hasMimeType(ClipDescription.MIMETYPE_TEXT_INTENT)) {
+            return null;
+        }
+        if (!clipDescription.getLabel().equals(RESULTS_CLIP_LABEL)) {
+            return null;
+        }
+        return clipData.getItemAt(0).getIntent();

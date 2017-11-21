@@ -1,0 +1,43 @@
+class HardwarePropertiesManagerService
+!!!10686469.java!!!	HardwarePropertiesManagerService(inout context : Context)
+        mContext = context;
+        synchronized (mLock) {
+            nativeInit();
+        }
+!!!10686597.java!!!	getDeviceTemperatures(in callingPackage : String, in type : int, in source : int) : float
+        enforceHardwarePropertiesRetrievalAllowed(callingPackage);
+        synchronized (mLock) {
+            return nativeGetDeviceTemperatures(type, source);
+        }
+!!!10686725.java!!!	getCpuUsages(in callingPackage : String) : CpuUsageInfo
+        enforceHardwarePropertiesRetrievalAllowed(callingPackage);
+        synchronized (mLock) {
+            return nativeGetCpuUsages();
+        }
+!!!10686853.java!!!	getFanSpeeds(in callingPackage : String) : float
+        enforceHardwarePropertiesRetrievalAllowed(callingPackage);
+        synchronized (mLock) {
+            return nativeGetFanSpeeds();
+        }
+!!!10686981.java!!!	enforceHardwarePropertiesRetrievalAllowed(in callingPackage : String) : void
+        final PackageManager pm = mContext.getPackageManager();
+        int uid = 0;
+        try {
+            uid = pm.getPackageUid(callingPackage, 0);
+            if (Binder.getCallingUid() != uid) {
+                throw new SecurityException("The caller has faked the package name.");
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            throw new SecurityException("The caller has faked the package name.");
+        }
+
+        final int userId = UserHandle.getUserId(uid);
+        final VrManagerInternal vrService = LocalServices.getService(VrManagerInternal.class);
+        final DevicePolicyManager dpm = mContext.getSystemService(DevicePolicyManager.class);
+        if (!dpm.isDeviceOwnerApp(callingPackage)
+                && !vrService.isCurrentVrListener(callingPackage, userId)
+                && mContext.checkCallingOrSelfPermission(Manifest.permission.DEVICE_POWER)
+                        != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException("The caller is not a device owner, bound VrListenerService"
+                + ", or holding the DEVICE_POWER permission.");
+        }

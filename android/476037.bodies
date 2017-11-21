@@ -1,0 +1,40 @@
+class ResourceManagerServiceProxy
+!!!1283717.cpp!!!	ResourceManagerServiceProxy(in pid : pid_t)
+    if (mPid == MediaCodec::kNoPid) {
+        mPid = IPCThreadState::self()->getCallingPid();
+    }
+!!!1283845.cpp!!!	~ResourceManagerServiceProxy()
+    if (mService != NULL) {
+        IInterface::asBinder(mService)->unlinkToDeath(this);
+    }
+!!!1283973.cpp!!!	init() : void
+    sp<IServiceManager> sm = defaultServiceManager();
+    sp<IBinder> binder = sm->getService(String16("media.resource_manager"));
+    mService = interface_cast<IResourceManagerService>(binder);
+    if (mService == NULL) {
+        ALOGE("Failed to get ResourceManagerService");
+        return;
+    }
+    IInterface::asBinder(mService)->linkToDeath(this);
+!!!1284101.cpp!!!	binderDied(in  : wp<IBinder>) : void
+    ALOGW("ResourceManagerService died.");
+    Mutex::Autolock _l(mLock);
+    mService.clear();
+!!!1284229.cpp!!!	addResource(in clientId : int64_t, in client : sp<IResourceManagerClient>, in resources : Vector<MediaResource>) : void
+    Mutex::Autolock _l(mLock);
+    if (mService == NULL) {
+        return;
+    }
+    mService->addResource(mPid, clientId, client, resources);
+!!!1284357.cpp!!!	removeResource(in clientId : int64_t) : void
+    Mutex::Autolock _l(mLock);
+    if (mService == NULL) {
+        return;
+    }
+    mService->removeResource(mPid, clientId);
+!!!1284485.cpp!!!	reclaimResource(in resources : Vector<MediaResource>) : bool
+    Mutex::Autolock _l(mLock);
+    if (mService == NULL) {
+        return false;
+    }
+    return mService->reclaimResource(mPid, resources);

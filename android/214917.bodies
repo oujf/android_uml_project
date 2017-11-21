@@ -1,0 +1,70 @@
+class RadioHalHidl
+!!!547333.cpp!!!	getProperties(inout properties : radio_hal_properties_t) : int
+    ALOGV("%s IN", __FUNCTION__);
+    sp<IBroadcastRadio> module = getService();
+    if (module == 0) {
+        return -ENODEV;
+    }
+    Properties halProperties;
+    Result halResult = Result::NOT_INITIALIZED;
+    Return<void> hidlReturn =
+            module->getProperties([&](Result result, const Properties& properties) {
+                    halResult = result;
+                    if (result == Result::OK) {
+                        halProperties = properties;
+                    }
+                });
+
+    if (halResult == Result::OK) {
+        HidlUtils::convertPropertiesFromHal(properties, &halProperties);
+    }
+    return HidlUtils::convertHalResult(halResult);
+!!!547461.cpp!!!	openTuner(in config : radio_hal_band_config_t, in audio : bool, in callback : sp<TunerCallbackInterface>, inout tuner : sp<TunerInterface>) : int
+    sp<IBroadcastRadio> module = getService();
+    if (module == 0) {
+        return -ENODEV;
+    }
+    sp<Tuner> tunerImpl = new Tuner(callback, this);
+
+    BandConfig halConfig;
+    Result halResult = Result::NOT_INITIALIZED;
+    sp<ITuner> halTuner;
+
+    HidlUtils::convertBandConfigToHal(&halConfig, config);
+    Return<void> hidlReturn =
+            module->openTuner(halConfig, audio, tunerImpl,
+                              [&](Result result, const sp<ITuner>& tuner) {
+                    halResult = result;
+                    if (result == Result::OK) {
+                        halTuner = tuner;
+                    }
+                });
+
+    if (halResult == Result::OK) {
+        tunerImpl->setHalTuner(halTuner);
+        tuner = tunerImpl;
+    }
+
+    return HidlUtils::convertHalResult(halResult);
+!!!547589.cpp!!!	closeTuner(inout tuner : sp<TunerInterface>) : int
+    sp<Tuner> tunerImpl = static_cast<Tuner *>(tuner.get());
+    sp<ITuner> clearTuner;
+    tunerImpl->setHalTuner(clearTuner);
+    return 0;
+!!!550533.cpp!!!	getService() : sp<IBroadcastRadio>
+    if (mHalModule == 0) {
+        sp<IBroadcastRadioFactory> factory = IBroadcastRadioFactory::getService();
+        if (factory != 0) {
+            factory->connectModule(static_cast<Class>(mClassId),
+                               [&](Result retval, const ::android::sp<IBroadcastRadio>& result) {
+                if (retval == Result::OK) {
+                    mHalModule = result;
+                }
+            });
+        }
+    }
+    ALOGV("%s OUT module %p", __FUNCTION__, mHalModule.get());
+    return mHalModule;
+!!!550661.cpp!!!	clearService() : void
+    ALOGV("%s IN module %p", __FUNCTION__, mHalModule.get());
+    mHalModule.clear();

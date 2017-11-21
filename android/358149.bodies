@@ -1,0 +1,46 @@
+class BnMediaAnalyticsService
+!!!948485.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+
+
+    // get calling pid/tid
+    IPCThreadState *ipc = IPCThreadState::self();
+    int clientPid = ipc->getCallingPid();
+    // permission checking
+
+    if(DEBUGGING_FLOW) {
+        ALOGD("running in service, code %d, pid %d; called from pid %d",
+            code, getpid(), clientPid);
+    }
+
+    switch (code) {
+
+        case GENERATE_UNIQUE_SESSIONID: {
+            CHECK_INTERFACE(IMediaAnalyticsService, data, reply);
+
+            MediaAnalyticsItem::SessionID_t sessionid = generateUniqueSessionID();
+            reply->writeInt64(sessionid);
+
+            return NO_ERROR;
+        } break;
+
+        case SUBMIT_ITEM: {
+            CHECK_INTERFACE(IMediaAnalyticsService, data, reply);
+
+            bool forcenew;
+            MediaAnalyticsItem *item = new MediaAnalyticsItem;
+
+            data.readBool(&forcenew);
+            item->readFromParcel(data);
+
+            item->setPid(clientPid);
+
+            // submit() takes over ownership of 'item'
+            MediaAnalyticsItem::SessionID_t sessionid = submit(item, forcenew);
+            reply->writeInt64(sessionid);
+
+            return NO_ERROR;
+        } break;
+
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

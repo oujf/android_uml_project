@@ -1,0 +1,307 @@
+class Installer
+!!!12041093.java!!!	Installer(inout context : Context)
+        this(context, false);
+!!!12041221.java!!!	Installer(inout context : Context, inout isolated : boolean)
+        super(context);
+        mIsolated = isolated;
+!!!12041349.java!!!	setWarnIfHeld(inout warnIfHeld : Object) : void
+        mWarnIfHeld = warnIfHeld;
+!!!12041477.java!!!	onStart() : void
+        if (mIsolated) {
+            mInstalld = null;
+        } else {
+            connect();
+        }
+!!!12041605.java!!!	connect() : void
+        IBinder binder = ServiceManager.getService("installd");
+        if (binder != null) {
+            try {
+                binder.linkToDeath(new DeathRecipient() {
+                    @Override
+                    public void binderDied() {
+                        Slog.w(TAG, "installd died; reconnecting");
+                        connect();
+                    }
+                }, 0);
+            } catch (RemoteException e) {
+                binder = null;
+            }
+        }
+
+        if (binder != null) {
+            mInstalld = IInstalld.Stub.asInterface(binder);
+            try {
+                invalidateMounts();
+            } catch (InstallerException ignored) {
+            }
+        } else {
+            Slog.w(TAG, "installd not found; trying again");
+            BackgroundThread.getHandler().postDelayed(() -> {
+                connect();
+            }, DateUtils.SECOND_IN_MILLIS);
+        }
+!!!12041733.java!!!	checkBeforeRemote() : boolean
+        if (mWarnIfHeld != null && Thread.holdsLock(mWarnIfHeld)) {
+            Slog.wtf(TAG, "Calling thread " + Thread.currentThread().getName() + " is holding 0x"
+                    + Integer.toHexString(System.identityHashCode(mWarnIfHeld)), new Throwable());
+        }
+        if (mIsolated) {
+            Slog.i(TAG, "Ignoring request because this installer is isolated");
+            return false;
+        } else {
+            return true;
+        }
+!!!12041861.java!!!	createAppData(in uuid : String, in packageName : String, in userId : int, in flags : int, in appId : int, in seInfo : String, in targetSdkVersion : int) : long
+        if (!checkBeforeRemote()) return -1;
+        try {
+            return mInstalld.createAppData(uuid, packageName, userId, flags, appId, seInfo,
+                    targetSdkVersion);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12041989.java!!!	restoreconAppData(in uuid : String, in packageName : String, in userId : int, in flags : int, in appId : int, in seInfo : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.restoreconAppData(uuid, packageName, userId, flags, appId, seInfo);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042117.java!!!	migrateAppData(in uuid : String, in packageName : String, in userId : int, in flags : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.migrateAppData(uuid, packageName, userId, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042245.java!!!	clearAppData(in uuid : String, in packageName : String, in userId : int, in flags : int, in ceDataInode : long) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.clearAppData(uuid, packageName, userId, flags, ceDataInode);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042373.java!!!	destroyAppData(in uuid : String, in packageName : String, in userId : int, in flags : int, in ceDataInode : long) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.destroyAppData(uuid, packageName, userId, flags, ceDataInode);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042501.java!!!	fixupAppData(in uuid : String, in flags : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.fixupAppData(uuid, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042629.java!!!	moveCompleteApp(in fromUuid : String, in toUuid : String, in packageName : String, in dataAppName : String, in appId : int, in seInfo : String, in targetSdkVersion : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.moveCompleteApp(fromUuid, toUuid, packageName, dataAppName, appId, seInfo,
+                    targetSdkVersion);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042757.java!!!	getAppSize(in uuid : String, inout packageNames : String [[]], in userId : int, in flags : int, in appId : int, inout ceDataInodes : long [[]], inout codePaths : String [[]], inout stats : PackageStats) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            final long[] res = mInstalld.getAppSize(uuid, packageNames, userId, flags,
+                    appId, ceDataInodes, codePaths);
+            stats.codeSize += res[0];
+            stats.dataSize += res[1];
+            stats.cacheSize += res[2];
+            stats.externalCodeSize += res[3];
+            stats.externalDataSize += res[4];
+            stats.externalCacheSize += res[5];
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12042885.java!!!	getUserSize(in uuid : String, in userId : int, in flags : int, inout appIds : int [[]], inout stats : PackageStats) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            final long[] res = mInstalld.getUserSize(uuid, userId, flags, appIds);
+            stats.codeSize += res[0];
+            stats.dataSize += res[1];
+            stats.cacheSize += res[2];
+            stats.externalCodeSize += res[3];
+            stats.externalDataSize += res[4];
+            stats.externalCacheSize += res[5];
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043013.java!!!	getExternalSize(in uuid : String, in userId : int, in flags : int, inout appIds : int [[]]) : long
+        if (!checkBeforeRemote()) return new long[4];
+        try {
+            return mInstalld.getExternalSize(uuid, userId, flags, appIds);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043141.java!!!	setAppQuota(in uuid : String, in userId : int, in appId : int, in cacheQuota : long) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.setAppQuota(uuid, userId, appId, cacheQuota);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043269.java!!!	dexopt(in apkPath : String, in uid : int, in pkgName : String, in instructionSet : String, in dexoptNeeded : int, in outputPath : String, in dexFlags : int, in compilerFilter : String, in volumeUuid : String, in sharedLibraries : String, in seInfo : String) : void
+        assertValidInstructionSet(instructionSet);
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.dexopt(apkPath, uid, pkgName, instructionSet, dexoptNeeded, outputPath,
+                    dexFlags, compilerFilter, volumeUuid, sharedLibraries, seInfo);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043397.java!!!	mergeProfiles(in uid : int, in packageName : String) : boolean
+        if (!checkBeforeRemote()) return false;
+        try {
+            return mInstalld.mergeProfiles(uid, packageName);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043525.java!!!	dumpProfiles(in uid : int, in packageName : String, in codePaths : String) : boolean
+        if (!checkBeforeRemote()) return false;
+        try {
+            return mInstalld.dumpProfiles(uid, packageName, codePaths);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043653.java!!!	idmap(in targetApkPath : String, in overlayApkPath : String, in uid : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.idmap(targetApkPath, overlayApkPath, uid);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043781.java!!!	removeIdmap(in overlayApkPath : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.removeIdmap(overlayApkPath);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12043909.java!!!	rmdex(in codePath : String, in instructionSet : String) : void
+        assertValidInstructionSet(instructionSet);
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.rmdex(codePath, instructionSet);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044037.java!!!	rmPackageDir(in packageDir : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.rmPackageDir(packageDir);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044165.java!!!	clearAppProfiles(in packageName : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.clearAppProfiles(packageName);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044293.java!!!	destroyAppProfiles(in packageName : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.destroyAppProfiles(packageName);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044421.java!!!	createUserData(in uuid : String, in userId : int, in userSerial : int, in flags : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.createUserData(uuid, userId, userSerial, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044549.java!!!	destroyUserData(in uuid : String, in userId : int, in flags : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.destroyUserData(uuid, userId, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044677.java!!!	markBootComplete(in instructionSet : String) : void
+        assertValidInstructionSet(instructionSet);
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.markBootComplete(instructionSet);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044805.java!!!	freeCache(in uuid : String, in targetFreeBytes : long, in cacheReservedBytes : long, in flags : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.freeCache(uuid, targetFreeBytes, cacheReservedBytes, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12044933.java!!!	linkNativeLibraryDirectory(in uuid : String, in packageName : String, in nativeLibPath32 : String, in userId : int) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.linkNativeLibraryDirectory(uuid, packageName, nativeLibPath32, userId);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045061.java!!!	createOatDir(in oatDir : String, in dexInstructionSet : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.createOatDir(oatDir, dexInstructionSet);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045189.java!!!	linkFile(in relativePath : String, in fromBase : String, in toBase : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.linkFile(relativePath, fromBase, toBase);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045317.java!!!	moveAb(in apkPath : String, in instructionSet : String, in outputPath : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.moveAb(apkPath, instructionSet, outputPath);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045445.java!!!	deleteOdex(in apkPath : String, in instructionSet : String, in outputPath : String) : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.deleteOdex(apkPath, instructionSet, outputPath);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045573.java!!!	reconcileSecondaryDexFile(in apkPath : String, in packageName : String, in uid : int, inout isas : String [[]], in volumeUuid : String, in flags : int) : boolean
+        for (int i = 0; i < isas.length; i++) {
+            assertValidInstructionSet(isas[i]);
+        }
+        if (!checkBeforeRemote()) return false;
+        try {
+            return mInstalld.reconcileSecondaryDexFile(apkPath, packageName, uid, isas,
+                    volumeUuid, flags);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045701.java!!!	invalidateMounts() : void
+        if (!checkBeforeRemote()) return;
+        try {
+            mInstalld.invalidateMounts();
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045829.java!!!	isQuotaSupported(in volumeUuid : String) : boolean
+        if (!checkBeforeRemote()) return false;
+        try {
+            return mInstalld.isQuotaSupported(volumeUuid);
+        } catch (Exception e) {
+            throw InstallerException.from(e);
+        }
+!!!12045957.java!!!	assertValidInstructionSet(in instructionSet : String) : void
+        for (String abi : Build.SUPPORTED_ABIS) {
+            if (VMRuntime.getInstructionSet(abi).equals(instructionSet)) {
+                return;
+            }
+        }
+        throw new InstallerException("Invalid instruction set: " + instructionSet);

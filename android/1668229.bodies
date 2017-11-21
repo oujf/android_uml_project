@@ -1,0 +1,143 @@
+class TetherModeAliveState
+!!!11400965.java!!!	enter() : void
+                // If turning on master tether settings fails, we have already
+                // transitioned to an error state; exit early.
+                if (!turnOnMasterTetherSettings()) {
+                    return;
+                }
+
+                simChange.startListening();
+                mUpstreamNetworkMonitor.start();
+                mOffloadController.start();
+
+                if (upstreamWanted()) {
+                    mUpstreamWanted = true;
+                    chooseUpstreamType(true);
+                    mTryCell = false;
+                }
+!!!11401093.java!!!	exit() : void
+                mOffloadController.stop();
+                unrequestUpstreamMobileConnection();
+                mUpstreamNetworkMonitor.stop();
+                simChange.stopListening();
+                notifyTetheredOfNewUpstreamIface(null);
+                handleNewUpstreamNetworkState(null);
+!!!11401221.java!!!	updateUpstreamWanted() : boolean
+                final boolean previousUpstreamWanted = mUpstreamWanted;
+                mUpstreamWanted = upstreamWanted();
+                return previousUpstreamWanted;
+!!!11401349.java!!!	processMessage(inout message : Message) : boolean
+                maybeLogMessage(this, message.what);
+                boolean retValue = true;
+                switch (message.what) {
+                    case EVENT_IFACE_SERVING_STATE_ACTIVE: {
+                        TetherInterfaceStateMachine who = (TetherInterfaceStateMachine)message.obj;
+                        if (VDBG) Log.d(TAG, "Tether Mode requested by " + who);
+                        handleInterfaceServingStateActive(message.arg1, who);
+                        who.sendMessage(TetherInterfaceStateMachine.CMD_TETHER_CONNECTION_CHANGED,
+                                mCurrentUpstreamIface);
+                        // If there has been a change and an upstream is now
+                        // desired, kick off the selection process.
+                        final boolean previousUpstreamWanted = updateUpstreamWanted();
+                        if (!previousUpstreamWanted && mUpstreamWanted) {
+                            chooseUpstreamType(true);
+                        }
+                        break;
+                    }
+                    case EVENT_IFACE_SERVING_STATE_INACTIVE: {
+                        TetherInterfaceStateMachine who = (TetherInterfaceStateMachine)message.obj;
+                        if (VDBG) Log.d(TAG, "Tether Mode unrequested by " + who);
+                        handleInterfaceServingStateInactive(who);
+
+                        if (mNotifyList.isEmpty()) {
+                            // transitions appropriately
+                            turnOffMasterTetherSettings();
+                            break;
+                        }
+
+                        if (DBG) {
+                            Log.d(TAG, "TetherModeAlive still has " + mNotifyList.size() +
+                                    " live requests:");
+                            for (TetherInterfaceStateMachine o : mNotifyList) {
+                                Log.d(TAG, "  " + o);
+                            }
+                        }
+                        // If there has been a change and an upstream is no
+                        // longer desired, release any mobile requests.
+                        final boolean previousUpstreamWanted = updateUpstreamWanted();
+                        if (previousUpstreamWanted && !mUpstreamWanted) {
+                            mUpstreamNetworkMonitor.releaseMobileNetworkRequest();
+                        }
+                        break;
+                    }
+                    case CMD_UPSTREAM_CHANGED:
+                        updateUpstreamWanted();
+                        if (!mUpstreamWanted) break;
+
+                        // Need to try DUN immediately if Wi-Fi goes down.
+                        chooseUpstreamType(true);
+                        mTryCell = false;
+                        break;
+                    case CMD_RETRY_UPSTREAM:
+                        updateUpstreamWanted();
+                        if (!mUpstreamWanted) break;
+
+                        chooseUpstreamType(mTryCell);
+                        mTryCell = !mTryCell;
+                        break;
+                    case EVENT_UPSTREAM_CALLBACK: {
+                        updateUpstreamWanted();
+                        if (!mUpstreamWanted) break;
+
+                        final NetworkState ns = (NetworkState) message.obj;
+
+                        if (ns == null || !pertainsToCurrentUpstream(ns)) {
+                            // TODO: In future, this is where upstream evaluation and selection
+                            // could be handled for notifications which include sufficient data.
+                            // For example, after CONNECTIVITY_ACTION listening is removed, here
+                            // is where we could observe a Wi-Fi network becoming available and
+                            // passing validation.
+                            if (mCurrentUpstreamIface == null) {
+                                // If we have no upstream interface, try to run through upstream
+                                // selection again.  If, for example, IPv4 connectivity has shown up
+                                // after IPv6 (e.g., 464xlat became available) we want the chance to
+                                // notice and act accordingly.
+                                chooseUpstreamType(false);
+                            }
+                            break;
+                        }
+
+                        switch (message.arg1) {
+                            case UpstreamNetworkMonitor.EVENT_ON_AVAILABLE:
+                                // The default network changed, or DUN connected
+                                // before this callback was processed. Updates
+                                // for the current NetworkCapabilities and
+                                // LinkProperties have been requested (default
+                                // request) or are being sent shortly (DUN). Do
+                                // nothing until they arrive; if no updates
+                                // arrive there's nothing to do.
+                                break;
+                            case UpstreamNetworkMonitor.EVENT_ON_CAPABILITIES:
+                                handleNewUpstreamNetworkState(ns);
+                                break;
+                            case UpstreamNetworkMonitor.EVENT_ON_LINKPROPERTIES:
+                                setDnsForwarders(ns.network, ns.linkProperties);
+                                handleNewUpstreamNetworkState(ns);
+                                break;
+                            case UpstreamNetworkMonitor.EVENT_ON_LOST:
+                                // TODO: Re-evaluate possible upstreams. Currently upstream
+                                // reevaluation is triggered via received CONNECTIVITY_ACTION
+                                // broadcasts that result in being passed a
+                                // TetherMasterSM.CMD_UPSTREAM_CHANGED.
+                                handleNewUpstreamNetworkState(null);
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    }
+                    default:
+                        retValue = false;
+                        break;
+                }
+                return retValue;

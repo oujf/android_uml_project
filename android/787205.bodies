@@ -1,0 +1,318 @@
+class PipMotionHelper
+!!!3281285.java!!!	PipMotionHelper(inout context : Context, inout activityManager : IActivityManager, inout menuController : PipMenuActivityController, inout snapAlgorithm : PipSnapAlgorithm, inout flingAnimationUtils : FlingAnimationUtils)
+        mContext = context;
+        mHandler = new Handler(ForegroundThread.get().getLooper(), this);
+        mActivityManager = activityManager;
+        mMenuController = menuController;
+        mSnapAlgorithm = snapAlgorithm;
+        mFlingAnimationUtils = flingAnimationUtils;
+        mAnimationHandler = new AnimationHandler();
+        mAnimationHandler.setProvider(new SfVsyncFrameCallbackProvider());
+        onConfigurationChanged();
+!!!3281413.java!!!	onConfigurationChanged() : void
+        mSnapAlgorithm.onConfigurationChanged();
+        SystemServicesProxy.getInstance(mContext).getStableInsets(mStableInsets);
+!!!3281541.java!!!	synchronizePinnedStackBounds() : void
+        cancelAnimations();
+        try {
+            StackInfo stackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+            if (stackInfo != null) {
+                mBounds.set(stackInfo.bounds);
+            }
+        } catch (RemoteException e) {
+            Log.w(TAG, "Failed to get pinned stack bounds");
+        }
+!!!3281669.java!!!	movePip(inout toBounds : Rect) : void
+        cancelAnimations();
+        resizePipUnchecked(toBounds);
+        mBounds.set(toBounds);
+!!!3281797.java!!!	expandPip() : void
+        expandPip(false /* skipAnimation */);
+!!!3281925.java!!!	expandPip(inout skipAnimation : boolean) : void
+        if (DEBUG) {
+            Log.d(TAG, "expandPip: skipAnimation=" + skipAnimation
+                    + " callers=\n" + Debug.getCallers(5, "    "));
+        }
+        cancelAnimations();
+        mMenuController.hideMenuWithoutResize();
+        mHandler.post(() -> {
+            try {
+                if (skipAnimation) {
+                    mActivityManager.moveTasksToFullscreenStack(PINNED_STACK_ID, true /* onTop */);
+                } else {
+                    mActivityManager.resizeStack(PINNED_STACK_ID, null /* bounds */,
+                            true /* allowResizeInDockedMode */, true /* preserveWindows */,
+                            true /* animate */, EXPAND_STACK_TO_FULLSCREEN_DURATION);
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error expanding PiP activity", e);
+            }
+        });
+!!!3282053.java!!!	dismissPip() : void
+        if (DEBUG) {
+            Log.d(TAG, "dismissPip: callers=\n" + Debug.getCallers(5, "    "));
+        }
+        cancelAnimations();
+        mMenuController.hideMenuWithoutResize();
+        mHandler.post(() -> {
+            try {
+                mActivityManager.removeStack(PINNED_STACK_ID);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Failed to remove PiP", e);
+            }
+        });
+!!!3282181.java!!!	getBounds() : Rect
+        return mBounds;
+!!!3282309.java!!!	getClosestMinimizedBounds(inout stackBounds : Rect, inout movementBounds : Rect) : Rect
+        Point displaySize = new Point();
+        mContext.getDisplay().getRealSize(displaySize);
+        Rect toBounds = mSnapAlgorithm.findClosestSnapBounds(movementBounds, stackBounds);
+        mSnapAlgorithm.applyMinimizedOffset(toBounds, movementBounds, displaySize, mStableInsets);
+        return toBounds;
+!!!3282437.java!!!	shouldMinimizePip() : boolean
+        Point displaySize = new Point();
+        mContext.getDisplay().getRealSize(displaySize);
+        if (mBounds.left < 0) {
+            float offscreenFraction = (float) -mBounds.left / mBounds.width();
+            return offscreenFraction >= MINIMIZE_OFFSCREEN_FRACTION;
+        } else if (mBounds.right > displaySize.x) {
+            float offscreenFraction = (float) (mBounds.right - displaySize.x) /
+                    mBounds.width();
+            return offscreenFraction >= MINIMIZE_OFFSCREEN_FRACTION;
+        } else {
+            return false;
+        }
+!!!3282565.java!!!	shouldDismissPip() : boolean
+        Point displaySize = new Point();
+        mContext.getDisplay().getSize(displaySize);
+        if (mBounds.bottom > displaySize.y) {
+            float offscreenFraction = (float) (mBounds.bottom - displaySize.y) / mBounds.height();
+            return offscreenFraction >= DISMISS_OFFSCREEN_FRACTION;
+        }
+        return false;
+!!!3282693.java!!!	flingToMinimizedState(in velocityY : float, inout movementBounds : Rect) : Rect
+        cancelAnimations();
+        // We currently only allow flinging the minimized stack up and down, so just lock the
+        // movement bounds to the current stack bounds horizontally
+        movementBounds = new Rect(mBounds.left, movementBounds.top, mBounds.left,
+                movementBounds.bottom);
+        Rect toBounds = mSnapAlgorithm.findClosestSnapBounds(movementBounds, mBounds,
+                0 /* velocityX */, velocityY);
+        if (!mBounds.equals(toBounds)) {
+            mBoundsAnimator = createAnimationToBounds(mBounds, toBounds, 0, FAST_OUT_SLOW_IN);
+            mFlingAnimationUtils.apply(mBoundsAnimator, 0,
+                    distanceBetweenRectOffsets(mBounds, toBounds),
+                    velocityY);
+            mBoundsAnimator.start();
+        }
+        return toBounds;
+!!!3282821.java!!!	animateToClosestMinimizedState(inout movementBounds : Rect, inout updateListener : AnimatorUpdateListener) : Rect
+        cancelAnimations();
+        Rect toBounds = getClosestMinimizedBounds(mBounds, movementBounds);
+        if (!mBounds.equals(toBounds)) {
+            mBoundsAnimator = createAnimationToBounds(mBounds, toBounds,
+                    MINIMIZE_STACK_MAX_DURATION, LINEAR_OUT_SLOW_IN);
+            if (updateListener != null) {
+                mBoundsAnimator.addUpdateListener(updateListener);
+            }
+            mBoundsAnimator.start();
+        }
+        return toBounds;
+!!!3282949.java!!!	flingToSnapTarget(in velocity : float, in velocityX : float, in velocityY : float, inout movementBounds : Rect, inout updateListener : AnimatorUpdateListener, inout listener : AnimatorListener) : Rect
+        cancelAnimations();
+        Rect toBounds = mSnapAlgorithm.findClosestSnapBounds(movementBounds, mBounds,
+                velocityX, velocityY);
+        if (!mBounds.equals(toBounds)) {
+            mBoundsAnimator = createAnimationToBounds(mBounds, toBounds, 0, FAST_OUT_SLOW_IN);
+            mFlingAnimationUtils.apply(mBoundsAnimator, 0,
+                    distanceBetweenRectOffsets(mBounds, toBounds),
+                    velocity);
+            if (updateListener != null) {
+                mBoundsAnimator.addUpdateListener(updateListener);
+            }
+            if (listener != null){
+                mBoundsAnimator.addListener(listener);
+            }
+            mBoundsAnimator.start();
+        }
+        return toBounds;
+!!!3283077.java!!!	animateToClosestSnapTarget(inout movementBounds : Rect, inout updateListener : AnimatorUpdateListener, inout listener : AnimatorListener) : Rect
+        cancelAnimations();
+        Rect toBounds = mSnapAlgorithm.findClosestSnapBounds(movementBounds, mBounds);
+        if (!mBounds.equals(toBounds)) {
+            mBoundsAnimator = createAnimationToBounds(mBounds, toBounds, SNAP_STACK_DURATION,
+                    FAST_OUT_SLOW_IN);
+            if (updateListener != null) {
+                mBoundsAnimator.addUpdateListener(updateListener);
+            }
+            if (listener != null){
+                mBoundsAnimator.addListener(listener);
+            }
+            mBoundsAnimator.start();
+        }
+        return toBounds;
+!!!3283205.java!!!	animateToExpandedState(inout expandedBounds : Rect, inout movementBounds : Rect, inout expandedMovementBounds : Rect) : float
+        float savedSnapFraction = mSnapAlgorithm.getSnapFraction(new Rect(mBounds), movementBounds);
+        mSnapAlgorithm.applySnapFraction(expandedBounds, expandedMovementBounds, savedSnapFraction);
+        resizeAndAnimatePipUnchecked(expandedBounds, EXPAND_STACK_TO_MENU_DURATION);
+        return savedSnapFraction;
+!!!3283333.java!!!	animateToUnexpandedState(inout normalBounds : Rect, in savedSnapFraction : float, inout normalMovementBounds : Rect, inout currentMovementBounds : Rect, inout minimized : boolean, inout immediate : boolean) : void
+        if (savedSnapFraction < 0f) {
+            // If there are no saved snap fractions, then just use the current bounds
+            savedSnapFraction = mSnapAlgorithm.getSnapFraction(new Rect(mBounds),
+                    currentMovementBounds);
+        }
+        mSnapAlgorithm.applySnapFraction(normalBounds, normalMovementBounds, savedSnapFraction);
+        if (minimized) {
+            normalBounds = getClosestMinimizedBounds(normalBounds, normalMovementBounds);
+        }
+        if (immediate) {
+            movePip(normalBounds);
+        } else {
+            resizeAndAnimatePipUnchecked(normalBounds, SHRINK_STACK_FROM_MENU_DURATION);
+        }
+!!!3283461.java!!!	animateToIMEOffset(inout toBounds : Rect) : void
+        cancelAnimations();
+        resizeAndAnimatePipUnchecked(toBounds, IME_SHIFT_DURATION);
+!!!3283589.java!!!	animateDismiss(inout pipBounds : Rect, in velocityX : float, in velocityY : float, inout listener : AnimatorUpdateListener) : Rect
+        cancelAnimations();
+        final float velocity = PointF.length(velocityX, velocityY);
+        final boolean isFling = velocity > mFlingAnimationUtils.getMinVelocityPxPerSecond();
+        Point p = getDismissEndPoint(pipBounds, velocityX, velocityY, isFling);
+        Rect toBounds = new Rect(pipBounds);
+        toBounds.offsetTo(p.x, p.y);
+        mBoundsAnimator = createAnimationToBounds(mBounds, toBounds, DRAG_TO_DISMISS_STACK_DURATION,
+                FAST_OUT_LINEAR_IN);
+        mBoundsAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                dismissPip();
+            }
+        });
+        if (isFling) {
+            mFlingAnimationUtils.apply(mBoundsAnimator, 0,
+                    distanceBetweenRectOffsets(mBounds, toBounds), velocity);
+        }
+        if (listener != null) {
+            mBoundsAnimator.addUpdateListener(listener);
+        }
+        mBoundsAnimator.start();
+        return toBounds;
+!!!3283717.java!!!	cancelAnimations() : void
+        if (mBoundsAnimator != null) {
+            mBoundsAnimator.cancel();
+            mBoundsAnimator = null;
+        }
+!!!3283845.java!!!	createAnimationToBounds(inout fromBounds : Rect, inout toBounds : Rect, in duration : int, inout interpolator : Interpolator) : ValueAnimator
+        ValueAnimator anim = new ValueAnimator() {
+            @Override
+            public AnimationHandler getAnimationHandler() {
+                return mAnimationHandler;
+            }
+        };
+        anim.setObjectValues(fromBounds, toBounds);
+        anim.setEvaluator(RECT_EVALUATOR);
+        anim.setDuration(duration);
+        anim.setInterpolator(interpolator);
+        anim.addUpdateListener((ValueAnimator animation) -> {
+            resizePipUnchecked((Rect) animation.getAnimatedValue());
+        });
+        return anim;
+!!!3283973.java!!!	resizePipUnchecked(inout toBounds : Rect) : void
+        if (DEBUG) {
+            Log.d(TAG, "resizePipUnchecked: toBounds=" + toBounds
+                    + " callers=\n" + Debug.getCallers(5, "    "));
+        }
+        if (!toBounds.equals(mBounds)) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = toBounds;
+            mHandler.sendMessage(mHandler.obtainMessage(MSG_RESIZE_IMMEDIATE, args));
+        }
+!!!3284101.java!!!	resizeAndAnimatePipUnchecked(inout toBounds : Rect, in duration : int) : void
+        if (DEBUG) {
+            Log.d(TAG, "resizeAndAnimatePipUnchecked: toBounds=" + toBounds
+                    + " duration=" + duration + " callers=\n" + Debug.getCallers(5, "    "));
+        }
+        if (!toBounds.equals(mBounds)) {
+            SomeArgs args = SomeArgs.obtain();
+            args.arg1 = toBounds;
+            args.argi1 = duration;
+            mHandler.sendMessage(mHandler.obtainMessage(MSG_RESIZE_ANIMATE, args));
+        }
+!!!3284229.java!!!	getDismissEndPoint(inout pipBounds : Rect, in velX : float, in velY : float, inout isFling : boolean) : Point
+        Point displaySize = new Point();
+        mContext.getDisplay().getRealSize(displaySize);
+        final float bottomBound = displaySize.y + pipBounds.height() * .1f;
+        if (isFling && velX != 0 && velY != 0) {
+            // Line is defined by: y = mx + b, m = slope, b = y-intercept
+            // Find the slope
+            final float slope = velY / velX;
+            // Sub in slope and PiP position to solve for y-intercept: b = y - mx
+            final float yIntercept = pipBounds.top - slope * pipBounds.left;
+            // Now find the point on this line when y = bottom bound: x = (y - b) / m
+            final float x = (bottomBound - yIntercept) / slope;
+            return new Point((int) x, (int) bottomBound);
+        } else {
+            // If it wasn't a fling the velocity on 'up' is not reliable for direction of movement,
+            // just animate downwards.
+            return new Point(pipBounds.left, (int) bottomBound);
+        }
+!!!3284357.java!!!	isGestureToDismissArea(inout pipBounds : Rect, in velX : float, in velY : float, inout isFling : boolean) : boolean
+        Point endpoint = getDismissEndPoint(pipBounds, velX, velY, isFling);
+        // Center the point
+        endpoint.x += pipBounds.width() / 2;
+        endpoint.y += pipBounds.height() / 2;
+
+        // The dismiss area is the middle third of the screen, half the PIP's height from the bottom
+        Point size = new Point();
+        mContext.getDisplay().getRealSize(size);
+        final int left = size.x / 3;
+        Rect dismissArea = new Rect(left, size.y - (pipBounds.height() / 2), left * 2,
+                size.y + pipBounds.height());
+        return dismissArea.contains(endpoint.x, endpoint.y);
+!!!3284485.java!!!	distanceBetweenRectOffsets(inout r1 : Rect, inout r2 : Rect) : float
+        return PointF.length(r1.left - r2.left, r1.top - r2.top);
+!!!3284613.java!!!	handleMessage(inout msg : Message) : boolean
+        switch (msg.what) {
+            case MSG_RESIZE_IMMEDIATE: {
+                SomeArgs args = (SomeArgs) msg.obj;
+                Rect toBounds = (Rect) args.arg1;
+                try {
+                    mActivityManager.resizePinnedStack(toBounds, null /* tempPinnedTaskBounds */);
+                    mBounds.set(toBounds);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Could not resize pinned stack to bounds: " + toBounds, e);
+                }
+                return true;
+            }
+
+            case MSG_RESIZE_ANIMATE: {
+                SomeArgs args = (SomeArgs) msg.obj;
+                Rect toBounds = (Rect) args.arg1;
+                int duration = args.argi1;
+                try {
+                    StackInfo stackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+                    if (stackInfo == null) {
+                        // In the case where we've already re-expanded or dismissed the PiP, then
+                        // just skip the resize
+                        return true;
+                    }
+
+                    mActivityManager.resizeStack(PINNED_STACK_ID, toBounds,
+                            false /* allowResizeInDockedMode */, true /* preserveWindows */,
+                            true /* animate */, duration);
+                    mBounds.set(toBounds);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Could not animate resize pinned stack to bounds: " + toBounds, e);
+                }
+                return true;
+            }
+
+            default:
+                return false;
+        }
+!!!3284741.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        final String innerPrefix = prefix + "  ";
+        pw.println(prefix + TAG);
+        pw.println(innerPrefix + "mBounds=" + mBounds);
+        pw.println(innerPrefix + "mStableInsets=" + mStableInsets);

@@ -1,0 +1,58 @@
+class LockscreenFragment
+!!!4223493.java!!!	onCreatePreferences(inout savedInstanceState : Bundle, in rootKey : String) : void
+        mTunerService = Dependency.get(TunerService.class);
+        mHandler = new Handler();
+        addPreferencesFromResource(R.xml.lockscreen_settings);
+        setupGroup(LOCKSCREEN_LEFT_BUTTON, LOCKSCREEN_LEFT_UNLOCK);
+        setupGroup(LOCKSCREEN_RIGHT_BUTTON, LOCKSCREEN_RIGHT_UNLOCK);
+!!!4223621.java!!!	onDestroy() : void
+        super.onDestroy();
+        mTunables.forEach(t -> mTunerService.removeTunable(t));
+!!!4223749.java!!!	setupGroup(in buttonSetting : String, in unlockKey : String) : void
+        Preference shortcut = findPreference(buttonSetting);
+        SwitchPreference unlock = (SwitchPreference) findPreference(unlockKey);
+        addTunable((k, v) -> {
+            boolean visible = !TextUtils.isEmpty(v);
+            unlock.setVisible(visible);
+            setSummary(shortcut, v);
+        }, buttonSetting);
+!!!4223877.java!!!	showSelectDialog(in buttonSetting : String) : void
+        RecyclerView v = (RecyclerView) LayoutInflater.from(getContext())
+                .inflate(R.layout.tuner_shortcut_list, null);
+        v.setLayoutManager(new LinearLayoutManager(getContext()));
+        AlertDialog dialog = new Builder(getContext())
+                .setView(v)
+                .show();
+        Adapter adapter = new Adapter(getContext(), item -> {
+            mTunerService.setValue(buttonSetting, item.getSettingValue());
+            dialog.dismiss();
+        });
+
+        v.setAdapter(adapter);
+!!!4224005.java!!!	setSummary(inout shortcut : Preference, in value : String) : void
+        if (value == null) {
+            shortcut.setSummary(R.string.lockscreen_none);
+            return;
+        }
+        if (value.contains("::")) {
+            Shortcut info = getShortcutInfo(getContext(), value);
+            shortcut.setSummary(info != null ? info.label : null);
+        } else if (value.contains("/")) {
+            ActivityInfo info = getActivityinfo(getContext(), value);
+            shortcut.setSummary(info != null ? info.loadLabel(getContext().getPackageManager())
+                    : null);
+        } else {
+            shortcut.setSummary(R.string.lockscreen_none);
+        }
+!!!4224133.java!!!	addTunable(inout t : TunerService::Tunable, inout  : String...keys) : void
+        mTunables.add(t);
+        mTunerService.addTunable(t, keys);
+!!!4224261.java!!!	getActivityinfo(inout context : Context, in value : String) : ActivityInfo
+        ComponentName component = ComponentName.unflattenFromString(value);
+        try {
+            return context.getPackageManager().getActivityInfo(component, 0);
+        } catch (NameNotFoundException e) {
+            return null;
+        }
+!!!4224389.java!!!	getShortcutInfo(inout context : Context, in value : String) : ShortcutParser::Shortcut
+        return Shortcut.create(context, value);

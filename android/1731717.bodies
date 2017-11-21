@@ -1,0 +1,135 @@
+class CompilerStats
+!!!12030725.java!!!	CompilerStats()
+        super("package-cstats.list", "CompilerStats_DiskWriter", /* lock */ false);
+        packageStats = new HashMap<>();
+!!!12030853.java!!!	getPackageStats(in packageName : String) : CompilerStats::PackageStats
+        synchronized (packageStats) {
+            return packageStats.get(packageName);
+        }
+!!!12030981.java!!!	setPackageStats(in packageName : String, inout stats : CompilerStats::PackageStats) : void
+        synchronized (packageStats) {
+            packageStats.put(packageName, stats);
+        }
+!!!12031109.java!!!	createPackageStats(in packageName : String) : CompilerStats::PackageStats
+        synchronized (packageStats) {
+            PackageStats newStats = new PackageStats(packageName);
+            packageStats.put(packageName, newStats);
+            return newStats;
+        }
+!!!12031237.java!!!	getOrCreatePackageStats(in packageName : String) : CompilerStats::PackageStats
+        synchronized (packageStats) {
+            PackageStats existingStats = packageStats.get(packageName);
+            if (existingStats != null) {
+                return existingStats;
+            }
+
+            return createPackageStats(packageName);
+        }
+!!!12031365.java!!!	deletePackageStats(in packageName : String) : void
+        synchronized (packageStats) {
+            packageStats.remove(packageName);
+        }
+!!!12031493.java!!!	write(inout out : Writer) : void
+        @SuppressWarnings("resource")
+        FastPrintWriter fpw = new FastPrintWriter(out);
+
+        fpw.print(COMPILER_STATS_VERSION_HEADER);
+        fpw.println(COMPILER_STATS_VERSION);
+
+        synchronized (packageStats) {
+            for (PackageStats pkg : packageStats.values()) {
+                synchronized (pkg.compileTimePerCodePath) {
+                    if (!pkg.compileTimePerCodePath.isEmpty()) {
+                        fpw.println(pkg.getPackageName());
+
+                        for (Map.Entry<String, Long> e : pkg.compileTimePerCodePath.entrySet()) {
+                            fpw.println("-" + e.getKey() + ":" + e.getValue());
+                        }
+                    }
+                }
+            }
+        }
+
+        fpw.flush();
+!!!12031621.java!!!	read(inout r : Reader) : boolean
+        synchronized (packageStats) {
+            // TODO: Could make this a final switch, then we wouldn't have to synchronize over
+            //       the whole reading.
+            packageStats.clear();
+
+            try {
+                BufferedReader in = new BufferedReader(r);
+
+                // Read header, do version check.
+                String versionLine = in.readLine();
+                if (versionLine == null) {
+                    throw new IllegalArgumentException("No version line found.");
+                } else {
+                    if (!versionLine.startsWith(COMPILER_STATS_VERSION_HEADER)) {
+                        throw new IllegalArgumentException("Invalid version line: " + versionLine);
+                    }
+                    int version = Integer.parseInt(
+                            versionLine.substring(COMPILER_STATS_VERSION_HEADER.length()));
+                    if (version != COMPILER_STATS_VERSION) {
+                        // TODO: Upgrade older formats? For now, just reject and regenerate.
+                        throw new IllegalArgumentException("Unexpected version: " + version);
+                    }
+                }
+
+                // For simpler code, we ignore any data lines before the first package. We
+                // collect it in a fake package.
+                PackageStats currentPackage = new PackageStats("fake package");
+
+                String s = null;
+                while ((s = in.readLine()) != null) {
+                    if (s.startsWith("-")) {
+                        int colonIndex = s.indexOf(':');
+                        if (colonIndex == -1 || colonIndex == 1) {
+                            throw new IllegalArgumentException("Could not parse data " + s);
+                        }
+                        String codePath = s.substring(1, colonIndex);
+                        long time = Long.parseLong(s.substring(colonIndex + 1));
+                        currentPackage.setCompileTime(codePath, time);
+                    } else {
+                        currentPackage = getOrCreatePackageStats(s);
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(PackageManagerService.TAG, "Error parsing compiler stats", e);
+                return false;
+            }
+
+            return true;
+        }
+!!!12031749.java!!!	writeNow() : void
+        writeNow(null);
+!!!12031877.java!!!	maybeWriteAsync() : boolean
+        return maybeWriteAsync(null);
+!!!12032005.java!!!	writeInternal(inout data : Void) : void
+        AtomicFile file = getFile();
+        FileOutputStream f = null;
+
+        try {
+            f = file.startWrite();
+            OutputStreamWriter osw = new OutputStreamWriter(f);
+            write(osw);
+            osw.flush();
+            file.finishWrite(f);
+        } catch (IOException e) {
+            if (f != null) {
+                file.failWrite(f);
+            }
+            Log.e(PackageManagerService.TAG, "Failed to write compiler stats", e);
+        }
+!!!12032133.java!!!	read() : void
+        read((Void)null);
+!!!12032261.java!!!	readInternal(inout data : Void) : void
+        AtomicFile file = getFile();
+        BufferedReader in = null;
+        try {
+            in = new BufferedReader(new InputStreamReader(file.openRead()));
+            read(in);
+        } catch (FileNotFoundException expected) {
+        } finally {
+            IoUtils.closeQuietly(in);
+        }

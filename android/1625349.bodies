@@ -1,0 +1,101 @@
+class VibrateThread
+!!!10891781.java!!!	VibrateThread(inout waveform : VibrationEffect::Waveform, in uid : int, in usageHint : int)
+            mWaveform = waveform;
+            mUid = uid;
+            mUsageHint = usageHint;
+            mTmpWorkSource.set(uid);
+            mWakeLock.setWorkSource(mTmpWorkSource);
+!!!10891909.java!!!	delayLocked(in duration : long) : long
+            long durationRemaining = duration;
+            if (duration > 0) {
+                final long bedtime = duration + SystemClock.uptimeMillis();
+                do {
+                    try {
+                        this.wait(durationRemaining);
+                    }
+                    catch (InterruptedException e) { }
+                    if (mForceStop) {
+                        break;
+                    }
+                    durationRemaining = bedtime - SystemClock.uptimeMillis();
+                } while (durationRemaining > 0);
+                return duration - durationRemaining;
+            }
+            return 0;
+!!!10892037.java!!!	run() : void
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
+            mWakeLock.acquire();
+            try {
+                boolean finished = playWaveform();
+                if (finished) {
+                    onVibrationFinished();
+                }
+            } finally {
+                mWakeLock.release();
+            }
+!!!10892165.java!!!	playWaveform() : boolean
+            synchronized (this) {
+                final long[] timings = mWaveform.getTimings();
+                final int[] amplitudes = mWaveform.getAmplitudes();
+                final int len = timings.length;
+                final int repeat = mWaveform.getRepeatIndex();
+
+                int index = 0;
+                long onDuration = 0;
+                while (!mForceStop) {
+                    if (index < len) {
+                        final int amplitude = amplitudes[index];
+                        final long duration = timings[index++];
+                        if (duration <= 0) {
+                            continue;
+                        }
+                        if (amplitude != 0) {
+                            if (onDuration <= 0) {
+                                // Telling the vibrator to start multiple times usually causes
+                                // effects to feel "choppy" because the motor resets at every on
+                                // command.  Instead we figure out how long our next "on" period is
+                                // going to be, tell the motor to stay on for the full duration,
+                                // and then wake up to change the amplitude at the appropriate
+                                // intervals.
+                                onDuration =
+                                        getTotalOnDuration(timings, amplitudes, index - 1, repeat);
+                                doVibratorOn(onDuration, amplitude, mUid, mUsageHint);
+                            } else {
+                                doVibratorSetAmplitude(amplitude);
+                            }
+                        }
+
+                        long waitTime = delayLocked(duration);
+                        if (amplitude != 0) {
+                            onDuration -= waitTime;
+                        }
+                    } else if (repeat < 0) {
+                        break;
+                    } else {
+                        index = repeat;
+                    }
+                }
+                return !mForceStop;
+            }
+!!!10892293.java!!!	cancel() : void
+            synchronized (this) {
+                mThread.mForceStop = true;
+                mThread.notify();
+            }
+!!!10892421.java!!!	getTotalOnDuration(inout timings : long [[]], inout amplitudes : int [[]], in startIndex : int, in repeatIndex : int) : long
+            int i = startIndex;
+            long timing = 0;
+            while(amplitudes[i] != 0) {
+                timing += timings[i++];
+                if (i >= timings.length) {
+                    if (repeatIndex >= 0) {
+                        i = repeatIndex;
+                    } else {
+                        break;
+                    }
+                }
+                if (i == startIndex) {
+                    return 1000;
+                }
+            }
+            return timing;

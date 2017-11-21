@@ -1,0 +1,111 @@
+class IsochronousClockModel
+!!!679685.cpp!!!	start(in nanoTime : int64_t) : void
+    ALOGD("IsochronousClockModel::start(nanos = %lld)\n", (long long) nanoTime);
+    mMarkerNanoTime = nanoTime;
+    mState = STATE_STARTING;
+!!!679813.cpp!!!	stop(in nanoTime : int64_t) : void
+    ALOGD("IsochronousClockModel::stop(nanos = %lld)\n", (long long) nanoTime);
+    mMarkerNanoTime = nanoTime;
+    mMarkerFramePosition = convertTimeToPosition(nanoTime); // TODO should we do this?
+    mState = STATE_STOPPED;
+!!!679941.cpp!!!	processTimestamp(in framePosition : int64_t, in nanoTime : int64_t) : void
+    int64_t framesDelta = framePosition - mMarkerFramePosition;
+    int64_t nanosDelta = nanoTime - mMarkerNanoTime;
+    if (nanosDelta < 1000) {
+        return;
+    }
+
+//    ALOGD("processTimestamp() - mMarkerFramePosition = %lld at mMarkerNanoTime %llu",
+//         (long long)mMarkerFramePosition,
+//         (long long)mMarkerNanoTime);
+//    ALOGD("processTimestamp() - framePosition = %lld at nanoTime %llu",
+//         (long long)framePosition,
+//         (long long)nanoTime);
+
+    int64_t expectedNanosDelta = convertDeltaPositionToTime(framesDelta);
+//    ALOGD("processTimestamp() - expectedNanosDelta = %lld, nanosDelta = %llu",
+//         (long long)expectedNanosDelta,
+//         (long long)nanosDelta);
+
+//    ALOGD("processTimestamp() - mSampleRate = %d", mSampleRate);
+//    ALOGD("processTimestamp() - mState = %d", mState);
+    switch (mState) {
+    case STATE_STOPPED:
+        break;
+    case STATE_STARTING:
+        mMarkerFramePosition = framePosition;
+        mMarkerNanoTime = nanoTime;
+        mState = STATE_SYNCING;
+        break;
+    case STATE_SYNCING:
+        // This will handle a burst of rapid transfer at the beginning.
+        if (nanosDelta < expectedNanosDelta) {
+            mMarkerFramePosition = framePosition;
+            mMarkerNanoTime = nanoTime;
+        } else {
+//            ALOGD("processTimestamp() - advance to STATE_RUNNING");
+            mState = STATE_RUNNING;
+        }
+        break;
+    case STATE_RUNNING:
+        if (nanosDelta < expectedNanosDelta) {
+            // Earlier than expected timestamp.
+            // This data is probably more accurate so use it.
+            // or we may be drifting due to a slow HW clock.
+            mMarkerFramePosition = framePosition;
+            mMarkerNanoTime = nanoTime;
+//            ALOGD("processTimestamp() - STATE_RUNNING - %d < %d micros - EARLY",
+//                 (int) (nanosDelta / 1000), (int)(expectedNanosDelta / 1000));
+        } else if (nanosDelta > (expectedNanosDelta + mMaxLatenessInNanos)) {
+            // Later than expected timestamp.
+            mMarkerFramePosition = framePosition;
+            mMarkerNanoTime = nanoTime - mMaxLatenessInNanos;
+//            ALOGD("processTimestamp() - STATE_RUNNING - %d > %d + %d micros - LATE",
+//                 (int) (nanosDelta / 1000), (int)(expectedNanosDelta / 1000),
+//                 (int) (mMaxLatenessInNanos / 1000));
+        }
+        break;
+    default:
+        break;
+    }
+!!!680069.cpp!!!	setSampleRate(in sampleRate : int32_t) : void
+    mSampleRate = sampleRate;
+    update();
+!!!680325.cpp!!!	setFramesPerBurst(in framesPerBurst : int32_t) : void
+    mFramesPerBurst = framesPerBurst;
+    update();
+!!!680581.cpp!!!	convertPositionToTime(in framePosition : int64_t) : int64_t
+    if (mState == STATE_STOPPED) {
+        return mMarkerNanoTime;
+    }
+    int64_t nextBurstIndex = (framePosition + mFramesPerBurst - 1) / mFramesPerBurst;
+    int64_t nextBurstPosition = mFramesPerBurst * nextBurstIndex;
+    int64_t framesDelta = nextBurstPosition - mMarkerFramePosition;
+    int64_t nanosDelta = convertDeltaPositionToTime(framesDelta);
+    int64_t time = (int64_t) (mMarkerNanoTime + nanosDelta);
+//    ALOGD("IsochronousClockModel::convertPositionToTime: pos = %llu --> time = %llu",
+//         (unsigned long long)framePosition,
+//         (unsigned long long)time);
+    return time;
+!!!680709.cpp!!!	convertTimeToPosition(in nanoTime : int64_t) : int64_t
+    if (mState == STATE_STOPPED) {
+        return mMarkerFramePosition;
+    }
+    int64_t nanosDelta = nanoTime - mMarkerNanoTime;
+    int64_t framesDelta = convertDeltaTimeToPosition(nanosDelta);
+    int64_t nextBurstPosition = mMarkerFramePosition + framesDelta;
+    int64_t nextBurstIndex = nextBurstPosition / mFramesPerBurst;
+    int64_t position = nextBurstIndex * mFramesPerBurst;
+//    ALOGD("IsochronousClockModel::convertTimeToPosition: time = %llu --> pos = %llu",
+//         (unsigned long long)nanoTime,
+//         (unsigned long long)position);
+//    ALOGD("IsochronousClockModel::convertTimeToPosition: framesDelta = %llu, mFramesPerBurst = %d",
+//         (long long) framesDelta, mFramesPerBurst);
+    return position;
+!!!680837.cpp!!!	convertDeltaPositionToTime(in framesDelta : int64_t) : int64_t
+    return (AAUDIO_NANOS_PER_SECOND * framesDelta) / mSampleRate;
+!!!680965.cpp!!!	convertDeltaTimeToPosition(in nanosDelta : int64_t) : int64_t
+    return (mSampleRate * nanosDelta) / AAUDIO_NANOS_PER_SECOND;
+!!!681093.cpp!!!	update() : void
+    int64_t nanosLate = convertDeltaPositionToTime(mFramesPerBurst); // uses mSampleRate
+    mMaxLatenessInNanos = (nanosLate > MIN_LATENESS_NANOS) ? nanosLate : MIN_LATENESS_NANOS;

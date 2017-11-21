@@ -1,0 +1,181 @@
+class KeyguardIndicationController
+!!!3719813.java!!!	KeyguardIndicationController(inout context : Context, inout indicationArea : ViewGroup, inout lockIcon : LockIcon)
+        this(context, indicationArea, lockIcon,
+                WakeLock.createPartial(context, "Doze:KeyguardIndication"));
+
+        registerCallbacks(KeyguardUpdateMonitor.getInstance(context));
+!!!3719941.java!!!	KeyguardIndicationController(inout context : Context, inout indicationArea : ViewGroup, inout lockIcon : LockIcon, inout wakeLock : WakeLock)
+        mContext = context;
+        mIndicationArea = indicationArea;
+        mTextView = (KeyguardIndicationTextView) indicationArea.findViewById(
+                R.id.keyguard_indication_text);
+        mDisclosure = (KeyguardIndicationTextView) indicationArea.findViewById(
+                R.id.keyguard_indication_enterprise_disclosure);
+        mLockIcon = lockIcon;
+        mWakeLock = new SettableWakeLock(wakeLock);
+
+        Resources res = context.getResources();
+        mSlowThreshold = res.getInteger(R.integer.config_chargingSlowlyThreshold);
+        mFastThreshold = res.getInteger(R.integer.config_chargingFastThreshold);
+
+        mUserManager = context.getSystemService(UserManager.class);
+        mBatteryInfo = IBatteryStats.Stub.asInterface(
+                ServiceManager.getService(BatteryStats.SERVICE_NAME));
+
+        mDevicePolicyManager = (DevicePolicyManager) context.getSystemService(
+                Context.DEVICE_POLICY_SERVICE);
+
+        updateDisclosure();
+!!!3720069.java!!!	registerCallbacks(inout monitor : KeyguardUpdateMonitor) : void
+        monitor.registerCallback(getKeyguardCallback());
+
+        mContext.registerReceiverAsUser(mTickReceiver, UserHandle.SYSTEM,
+                new IntentFilter(Intent.ACTION_TIME_TICK), null,
+                Dependency.get(Dependency.TIME_TICK_HANDLER));
+!!!3720197.java!!!	getKeyguardCallback() : KeyguardUpdateMonitorCallback
+        if (mUpdateMonitor == null) {
+            mUpdateMonitor = new BaseKeyguardCallback();
+        }
+        return mUpdateMonitor;
+!!!3720325.java!!!	updateDisclosure() : void
+        if (mDevicePolicyManager == null) {
+            return;
+        }
+
+        if (!mDozing && mDevicePolicyManager.isDeviceManaged()) {
+            final CharSequence organizationName =
+                    mDevicePolicyManager.getDeviceOwnerOrganizationName();
+            if (organizationName != null) {
+                mDisclosure.switchIndication(mContext.getResources().getString(
+                        R.string.do_disclosure_with_name, organizationName));
+            } else {
+                mDisclosure.switchIndication(R.string.do_disclosure_generic);
+            }
+            mDisclosure.setVisibility(View.VISIBLE);
+        } else {
+            mDisclosure.setVisibility(View.GONE);
+        }
+!!!3720453.java!!!	setVisible(inout visible : boolean) : void
+        mVisible = visible;
+        mIndicationArea.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) {
+            hideTransientIndication();
+            updateIndication();
+        }
+!!!3720581.java!!!	setRestingIndication(in restingIndication : String) : void
+        mRestingIndication = restingIndication;
+        updateIndication();
+!!!3720837.java!!!	hideTransientIndicationDelayed(in delayMs : long) : void
+        mHandler.sendMessageDelayed(
+                mHandler.obtainMessage(MSG_HIDE_TRANSIENT), delayMs);
+!!!3720965.java!!!	showTransientIndication(in transientIndication : int) : void
+        showTransientIndication(mContext.getResources().getString(transientIndication));
+!!!3721093.java!!!	showTransientIndication(in transientIndication : String) : void
+        showTransientIndication(transientIndication, Color.WHITE);
+!!!3721221.java!!!	showTransientIndication(in transientIndication : String, in textColor : int) : void
+        mTransientIndication = transientIndication;
+        mTransientTextColor = textColor;
+        mHandler.removeMessages(MSG_HIDE_TRANSIENT);
+        if (mDozing && !TextUtils.isEmpty(mTransientIndication)) {
+            // Make sure this doesn't get stuck and burns in. Acquire wakelock until its cleared.
+            mWakeLock.setAcquired(true);
+            hideTransientIndicationDelayed(BaseKeyguardCallback.HIDE_DELAY_MS);
+        }
+        updateIndication();
+!!!3721349.java!!!	hideTransientIndication() : void
+        if (mTransientIndication != null) {
+            mTransientIndication = null;
+            mHandler.removeMessages(MSG_HIDE_TRANSIENT);
+            updateIndication();
+        }
+!!!3721477.java!!!	updateIndication() : void
+        if (TextUtils.isEmpty(mTransientIndication)) {
+            mWakeLock.setAcquired(false);
+        }
+
+        if (mVisible) {
+            // Walk down a precedence-ordered list of what should indication
+            // should be shown based on user or device state
+            if (mDozing) {
+                // If we're dozing, never show a persistent indication.
+                if (!TextUtils.isEmpty(mTransientIndication)) {
+                    mTextView.switchIndication(mTransientIndication);
+                    mTextView.setTextColor(mTransientTextColor);
+
+                } else {
+                    mTextView.switchIndication(null);
+                }
+                return;
+            }
+
+            if (!mUserManager.isUserUnlocked(KeyguardUpdateMonitor.getCurrentUser())) {
+                mTextView.switchIndication(com.android.internal.R.string.lockscreen_storage_locked);
+                mTextView.setTextColor(Color.WHITE);
+
+            } else if (!TextUtils.isEmpty(mTransientIndication)) {
+                mTextView.switchIndication(mTransientIndication);
+                mTextView.setTextColor(mTransientTextColor);
+
+            } else if (mPowerPluggedIn) {
+                String indication = computePowerIndication();
+                if (DEBUG_CHARGING_SPEED) {
+                    indication += ",  " + (mChargingWattage / 1000) + " mW";
+                }
+                mTextView.switchIndication(indication);
+                mTextView.setTextColor(Color.WHITE);
+
+            } else {
+                mTextView.switchIndication(mRestingIndication);
+                mTextView.setTextColor(Color.WHITE);
+            }
+        }
+!!!3721605.java!!!	computePowerIndication() : String
+        if (mPowerCharged) {
+            return mContext.getResources().getString(R.string.keyguard_charged);
+        }
+
+        // Try fetching charging time from battery stats.
+        long chargingTimeRemaining = 0;
+        try {
+            chargingTimeRemaining = mBatteryInfo.computeChargeTimeRemaining();
+
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error calling IBatteryStats: ", e);
+        }
+        final boolean hasChargingTime = chargingTimeRemaining > 0;
+
+        int chargingId;
+        switch (mChargingSpeed) {
+            case KeyguardUpdateMonitor.BatteryStatus.CHARGING_FAST:
+                chargingId = hasChargingTime
+                        ? R.string.keyguard_indication_charging_time_fast
+                        : R.string.keyguard_plugged_in_charging_fast;
+                break;
+            case KeyguardUpdateMonitor.BatteryStatus.CHARGING_SLOWLY:
+                chargingId = hasChargingTime
+                        ? R.string.keyguard_indication_charging_time_slowly
+                        : R.string.keyguard_plugged_in_charging_slowly;
+                break;
+            default:
+                chargingId = hasChargingTime
+                        ? R.string.keyguard_indication_charging_time
+                        : R.string.keyguard_plugged_in;
+                break;
+        }
+
+        if (hasChargingTime) {
+            String chargingTimeFormatted = Formatter.formatShortElapsedTimeRoundingUpToMinutes(
+                    mContext, chargingTimeRemaining);
+            return mContext.getResources().getString(chargingId, chargingTimeFormatted);
+        } else {
+            return mContext.getResources().getString(chargingId);
+        }
+!!!3721733.java!!!	setStatusBarKeyguardViewManager(inout statusBarKeyguardViewManager : StatusBarKeyguardViewManager) : void
+        mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
+!!!3721861.java!!!	setDozing(inout dozing : boolean) : void
+        if (mDozing == dozing) {
+            return;
+        }
+        mDozing = dozing;
+        updateIndication();
+        updateDisclosure();

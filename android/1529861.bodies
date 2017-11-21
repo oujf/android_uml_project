@@ -1,0 +1,40 @@
+class WebViewZygoteConnection
+!!!10009477.java!!!	WebViewZygoteConnection(inout socket : LocalSocket, in abiList : String)
+            super(socket, abiList);
+!!!10009605.java!!!	preload() : void
+            // Nothing to preload by default.
+!!!10009733.java!!!	isPreloadComplete() : boolean
+            // Webview zygotes don't preload any classes or resources or defaults, all of their
+            // preloading is package specific.
+            return true;
+!!!10009861.java!!!	handlePreloadPackage(in packagePath : String, in libsPath : String, in cacheKey : String) : boolean
+            Log.i(TAG, "Beginning package preload");
+            // Ask ApplicationLoaders to create and cache a classloader for the WebView APK so that
+            // our children will reuse the same classloader instead of creating their own.
+            // This enables us to preload Java and native code in the webview zygote process and
+            // have the preloaded versions actually be used post-fork.
+            ClassLoader loader = ApplicationLoaders.getDefault().createAndCacheWebViewClassLoader(
+                    packagePath, libsPath, cacheKey);
+
+            // Add the APK to the Zygote's list of allowed files for children.
+            String[] packageList = TextUtils.split(packagePath, File.pathSeparator);
+            for (String packageEntry : packageList) {
+                Zygote.nativeAllowFileAcrossFork(packageEntry);
+            }
+
+            // Once we have the classloader, look up the WebViewFactoryProvider implementation and
+            // call preloadInZygote() on it to give it the opportunity to preload the native library
+            // and perform any other initialisation work that should be shared among the children.
+            try {
+                Class<WebViewFactoryProvider> providerClass =
+                        WebViewFactory.getWebViewProviderClass(loader);
+                Object result = providerClass.getMethod("preloadInZygote").invoke(null);
+                if (!((Boolean)result).booleanValue()) {
+                    Log.e(TAG, "preloadInZygote returned false");
+                }
+            } catch (ClassNotFoundException | NoSuchMethodException | SecurityException |
+                     IllegalAccessException | InvocationTargetException e) {
+                Log.e(TAG, "Exception while preloading package", e);
+            }
+            Log.i(TAG, "Package preload done");
+            return false;

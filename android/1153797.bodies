@@ -1,0 +1,136 @@
+class StrictJarFile
+!!!8534533.java!!!	StrictJarFile(in fileName : String)
+        this(fileName, true, true);
+!!!8534661.java!!!	StrictJarFile(inout fd : FileDescriptor)
+        this(fd, true, true);
+!!!8534789.java!!!	StrictJarFile(inout fd : FileDescriptor, inout verify : boolean, inout signatureSchemeRollbackProtectionsEnforced : boolean)
+        this("[fd:" + fd.getInt$() + "]", fd, verify,
+                signatureSchemeRollbackProtectionsEnforced);
+!!!8534917.java!!!	StrictJarFile(in fileName : String, inout verify : boolean, inout signatureSchemeRollbackProtectionsEnforced : boolean)
+        this(fileName, IoBridge.open(fileName, OsConstants.O_RDONLY),
+                verify, signatureSchemeRollbackProtectionsEnforced);
+!!!8535045.java!!!	StrictJarFile(in name : String, inout fd : FileDescriptor, inout verify : boolean, inout signatureSchemeRollbackProtectionsEnforced : boolean)
+        this.nativeHandle = nativeOpenJarFile(name, fd.getInt$());
+        this.fd = fd;
+
+        try {
+            // Read the MANIFEST and signature files up front and try to
+            // parse them. We never want to accept a JAR File with broken signatures
+            // or manifests, so it's best to throw as early as possible.
+            if (verify) {
+                HashMap<String, byte[]> metaEntries = getMetaEntries();
+                this.manifest = new StrictJarManifest(metaEntries.get(JarFile.MANIFEST_NAME), true);
+                this.verifier =
+                        new StrictJarVerifier(
+                                name,
+                                manifest,
+                                metaEntries,
+                                signatureSchemeRollbackProtectionsEnforced);
+                Set<String> files = manifest.getEntries().keySet();
+                for (String file : files) {
+                    if (findEntry(file) == null) {
+                        throw new SecurityException("File " + file + " in manifest does not exist");
+                    }
+                }
+
+                isSigned = verifier.readCertificates() && verifier.isSignedJar();
+            } else {
+                isSigned = false;
+                this.manifest = null;
+                this.verifier = null;
+            }
+        } catch (IOException | SecurityException e) {
+            nativeClose(this.nativeHandle);
+            IoUtils.closeQuietly(fd);
+            closed = true;
+            throw e;
+        }
+
+        guard.open("close");
+!!!8535173.java!!!	getManifest() : StrictJarManifest
+        return manifest;
+!!!8535301.java!!!	iterator() : Iterator<ZipEntry>
+        return new EntryIterator(nativeHandle, "");
+!!!8535429.java!!!	findEntry(in name : String) : ZipEntry
+        return nativeFindEntry(nativeHandle, name);
+!!!8535557.java!!!	getCertificateChains(inout ze : ZipEntry) : Certificate
+        if (isSigned) {
+            return verifier.getCertificateChains(ze.getName());
+        }
+
+        return null;
+!!!8535685.java!!!	getCertificates(inout ze : ZipEntry) : Certificate
+        if (isSigned) {
+            Certificate[][] certChains = verifier.getCertificateChains(ze.getName());
+
+            // Measure number of certs.
+            int count = 0;
+            for (Certificate[] chain : certChains) {
+                count += chain.length;
+            }
+
+            // Create new array and copy all the certs into it.
+            Certificate[] certs = new Certificate[count];
+            int i = 0;
+            for (Certificate[] chain : certChains) {
+                System.arraycopy(chain, 0, certs, i, chain.length);
+                i += chain.length;
+            }
+
+            return certs;
+        }
+
+        return null;
+!!!8535813.java!!!	getInputStream(inout ze : ZipEntry) : InputStream
+        final InputStream is = getZipInputStream(ze);
+
+        if (isSigned) {
+            StrictJarVerifier.VerifierEntry entry = verifier.initEntry(ze.getName());
+            if (entry == null) {
+                return is;
+            }
+
+            return new JarFileInputStream(is, ze.getSize(), entry);
+        }
+
+        return is;
+!!!8535941.java!!!	close() : void
+        if (!closed) {
+            if (guard != null) {
+                guard.close();
+            }
+
+            nativeClose(nativeHandle);
+            IoUtils.closeQuietly(fd);
+            closed = true;
+        }
+!!!8536069.java!!!	finalize() : void
+        try {
+            if (guard != null) {
+                guard.warnIfOpen();
+            }
+            close();
+        } finally {
+            super.finalize();
+        }
+!!!8536197.java!!!	getZipInputStream(inout ze : ZipEntry) : InputStream
+        if (ze.getMethod() == ZipEntry.STORED) {
+            return new FDStream(fd, ze.getDataOffset(),
+                    ze.getDataOffset() + ze.getSize());
+        } else {
+            final FDStream wrapped = new FDStream(
+                    fd, ze.getDataOffset(), ze.getDataOffset() + ze.getCompressedSize());
+
+            int bufSize = Math.max(1024, (int) Math.min(ze.getSize(), 65535L));
+            return new ZipInflaterInputStream(wrapped, new Inflater(true), bufSize, ze);
+        }
+!!!8536837.java!!!	getMetaEntries() : HashMap<String, byte[]>
+        HashMap<String, byte[]> metaEntries = new HashMap<String, byte[]>();
+
+        Iterator<ZipEntry> entryIterator = new EntryIterator(nativeHandle, "META-INF/");
+        while (entryIterator.hasNext()) {
+            final ZipEntry entry = entryIterator.next();
+            metaEntries.put(entry.getName(), Streams.readFully(getInputStream(entry)));
+        }
+
+        return metaEntries;

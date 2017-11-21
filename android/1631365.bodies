@@ -1,0 +1,144 @@
+class DeDatabaseHelper
+!!!10954245.java!!!	DeDatabaseHelper(inout context : Context, in userId : int, in deDatabaseName : String)
+            super(context, deDatabaseName, null, DE_DATABASE_VERSION);
+            mUserId = userId;
+!!!10954373.java!!!	onCreate(inout db : SQLiteDatabase) : void
+            Log.i(TAG, "Creating DE database for user " + mUserId);
+            db.execSQL("CREATE TABLE " + TABLE_ACCOUNTS + " ( "
+                    + ACCOUNTS_ID + " INTEGER PRIMARY KEY, "
+                    + ACCOUNTS_NAME + " TEXT NOT NULL, "
+                    + ACCOUNTS_TYPE + " TEXT NOT NULL, "
+                    + ACCOUNTS_PREVIOUS_NAME + " TEXT, "
+                    + ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS + " INTEGER DEFAULT 0, "
+                    + "UNIQUE(" + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + "))");
+
+            db.execSQL("CREATE TABLE " + TABLE_META + " ( "
+                    + META_KEY + " TEXT PRIMARY KEY NOT NULL, "
+                    + META_VALUE + " TEXT)");
+
+            createGrantsTable(db);
+            createSharedAccountsTable(db);
+            createAccountsDeletionTrigger(db);
+            createDebugTable(db);
+            createAccountsVisibilityTable(db);
+            createAccountsDeletionVisibilityCleanupTrigger(db);
+!!!10954501.java!!!	createSharedAccountsTable(inout db : SQLiteDatabase) : void
+            db.execSQL("CREATE TABLE " + TABLE_SHARED_ACCOUNTS + " ( "
+                    + ACCOUNTS_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    + ACCOUNTS_NAME + " TEXT NOT NULL, "
+                    + ACCOUNTS_TYPE + " TEXT NOT NULL, "
+                    + "UNIQUE(" + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + "))");
+!!!10954629.java!!!	createAccountsDeletionTrigger(inout db : SQLiteDatabase) : void
+            db.execSQL(""
+                    + " CREATE TRIGGER " + TABLE_ACCOUNTS + "Delete DELETE ON " + TABLE_ACCOUNTS
+                    + " BEGIN"
+                    + "   DELETE FROM " + TABLE_GRANTS
+                    + "     WHERE " + GRANTS_ACCOUNTS_ID + "=OLD." + ACCOUNTS_ID + " ;"
+                    + " END");
+!!!10954757.java!!!	createGrantsTable(inout db : SQLiteDatabase) : void
+            db.execSQL("CREATE TABLE " + TABLE_GRANTS + " (  "
+                    + GRANTS_ACCOUNTS_ID + " INTEGER NOT NULL, "
+                    + GRANTS_AUTH_TOKEN_TYPE + " STRING NOT NULL,  "
+                    + GRANTS_GRANTEE_UID + " INTEGER NOT NULL,  "
+                    + "UNIQUE (" + GRANTS_ACCOUNTS_ID + "," + GRANTS_AUTH_TOKEN_TYPE
+                    +   "," + GRANTS_GRANTEE_UID + "))");
+!!!10954885.java!!!	createAccountsVisibilityTable(inout db : SQLiteDatabase) : void
+            db.execSQL("CREATE TABLE " + TABLE_VISIBILITY + " ( "
+                  + VISIBILITY_ACCOUNTS_ID + " INTEGER NOT NULL, "
+                  + VISIBILITY_PACKAGE + " TEXT NOT NULL, "
+                  + VISIBILITY_VALUE + " INTEGER, "
+                  + "PRIMARY KEY(" + VISIBILITY_ACCOUNTS_ID + "," + VISIBILITY_PACKAGE + "))");
+!!!10955013.java!!!	createDebugTable(inout db : SQLiteDatabase) : void
+            db.execSQL("CREATE TABLE " + TABLE_DEBUG + " ( "
+                    + ACCOUNTS_ID + " INTEGER,"
+                    + DEBUG_TABLE_ACTION_TYPE + " TEXT NOT NULL, "
+                    + DEBUG_TABLE_TIMESTAMP + " DATETIME,"
+                    + DEBUG_TABLE_CALLER_UID + " INTEGER NOT NULL,"
+                    + DEBUG_TABLE_TABLE_NAME + " TEXT NOT NULL,"
+                    + DEBUG_TABLE_KEY + " INTEGER PRIMARY KEY)");
+            db.execSQL("CREATE INDEX timestamp_index ON " + TABLE_DEBUG + " ("
+                    + DEBUG_TABLE_TIMESTAMP + ")");
+!!!10955141.java!!!	createAccountsDeletionVisibilityCleanupTrigger(inout db : SQLiteDatabase) : void
+            db.execSQL(""
+                   + " CREATE TRIGGER "
+                   + TABLE_ACCOUNTS + "DeleteVisibility DELETE ON " + TABLE_ACCOUNTS
+                   + " BEGIN"
+                   + "   DELETE FROM " + TABLE_VISIBILITY
+                   + "     WHERE " + VISIBILITY_ACCOUNTS_ID + "=OLD." + ACCOUNTS_ID + " ;"
+                   + " END");
+!!!10955269.java!!!	onUpgrade(inout db : SQLiteDatabase, in oldVersion : int, in newVersion : int) : void
+            Log.i(TAG, "upgrade from version " + oldVersion + " to version " + newVersion);
+
+            if (oldVersion == 1) {
+                createAccountsVisibilityTable(db);
+                createAccountsDeletionVisibilityCleanupTrigger(db);
+                oldVersion = 3; // skip version 2 which had uid based table
+            }
+
+            if (oldVersion == 2) {
+                // Remove uid based table and replace it with packageName based
+                db.execSQL("DROP TRIGGER IF EXISTS " + TABLE_ACCOUNTS + "DeleteVisibility");
+                db.execSQL("DROP TABLE IF EXISTS " + TABLE_VISIBILITY);
+                createAccountsVisibilityTable(db);
+                createAccountsDeletionVisibilityCleanupTrigger(db);
+                oldVersion++;
+            }
+
+            if (oldVersion != newVersion) {
+                Log.e(TAG, "failed to upgrade version " + oldVersion + " to version " + newVersion);
+            }
+!!!10955397.java!!!	getReadableDatabaseUserIsUnlocked() : SQLiteDatabase
+            if(!mCeAttached) {
+                Log.wtf(TAG, "getReadableDatabaseUserIsUnlocked called while user " + mUserId
+                        + " is still locked. CE database is not yet available.", new Throwable());
+            }
+            return super.getReadableDatabase();
+!!!10955525.java!!!	getWritableDatabaseUserIsUnlocked() : SQLiteDatabase
+            if(!mCeAttached) {
+                Log.wtf(TAG, "getWritableDatabaseUserIsUnlocked called while user " + mUserId
+                        + " is still locked. CE database is not yet available.", new Throwable());
+            }
+            return super.getWritableDatabase();
+!!!10955653.java!!!	onOpen(inout db : SQLiteDatabase) : void
+            if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "opened database " + DE_DATABASE_NAME);
+!!!10955781.java!!!	migratePreNDbToDe(inout preNDbFile : File) : void
+            Log.i(TAG, "Migrate pre-N database to DE preNDbFile=" + preNDbFile);
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("ATTACH DATABASE '" +  preNDbFile.getPath() + "' AS preNDb");
+            db.beginTransaction();
+            // Copy accounts fields
+            db.execSQL("INSERT INTO " + TABLE_ACCOUNTS
+                    + "(" + ACCOUNTS_ID + "," + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + ", "
+                    + ACCOUNTS_PREVIOUS_NAME + ", " + ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS
+                    + ") "
+                    + "SELECT " + ACCOUNTS_ID + "," + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + ", "
+                    + ACCOUNTS_PREVIOUS_NAME + ", " + ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS
+                    + " FROM preNDb." + TABLE_ACCOUNTS);
+            // Copy SHARED_ACCOUNTS
+            db.execSQL("INSERT INTO " + TABLE_SHARED_ACCOUNTS
+                    + "(" + SHARED_ACCOUNTS_ID + "," + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + ") " +
+                    "SELECT " + SHARED_ACCOUNTS_ID + "," + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE
+                    + " FROM preNDb." + TABLE_SHARED_ACCOUNTS);
+            // Copy DEBUG_TABLE
+            db.execSQL("INSERT INTO " + TABLE_DEBUG
+                    + "(" + ACCOUNTS_ID + "," + DEBUG_TABLE_ACTION_TYPE + ","
+                    + DEBUG_TABLE_TIMESTAMP + "," + DEBUG_TABLE_CALLER_UID + ","
+                    + DEBUG_TABLE_TABLE_NAME + "," + DEBUG_TABLE_KEY + ") " +
+                    "SELECT " + ACCOUNTS_ID + "," + DEBUG_TABLE_ACTION_TYPE + ","
+                    + DEBUG_TABLE_TIMESTAMP + "," + DEBUG_TABLE_CALLER_UID + ","
+                    + DEBUG_TABLE_TABLE_NAME + "," + DEBUG_TABLE_KEY
+                    + " FROM preNDb." + TABLE_DEBUG);
+            // Copy GRANTS
+            db.execSQL("INSERT INTO " + TABLE_GRANTS
+                    + "(" + GRANTS_ACCOUNTS_ID + "," + GRANTS_AUTH_TOKEN_TYPE + ","
+                    + GRANTS_GRANTEE_UID + ") " +
+                    "SELECT " + GRANTS_ACCOUNTS_ID + "," + GRANTS_AUTH_TOKEN_TYPE + ","
+                    + GRANTS_GRANTEE_UID + " FROM preNDb." + TABLE_GRANTS);
+            // Copy META
+            db.execSQL("INSERT INTO " + TABLE_META
+                    + "(" + META_KEY + "," + META_VALUE + ") "
+                    + "SELECT " + META_KEY + "," + META_VALUE + " FROM preNDb." + TABLE_META);
+            db.setTransactionSuccessful();
+            db.endTransaction();
+
+            db.execSQL("DETACH DATABASE preNDb");

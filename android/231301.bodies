@@ -1,0 +1,115 @@
+class StreamHalHidl
+!!!604293.cpp!!!	getSampleRate(inout rate : uint32_t) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("getSampleRate", mStream->getSampleRate(), rate);
+!!!604421.cpp!!!	getBufferSize(inout size : size_t) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("getBufferSize", mStream->getBufferSize(), size);
+!!!604549.cpp!!!	getChannelMask(inout mask : audio_channel_mask_t) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("getChannelMask", mStream->getChannelMask(), mask);
+!!!604677.cpp!!!	getFormat(inout format : audio_format_t) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("getFormat", mStream->getFormat(), format);
+!!!604805.cpp!!!	getAudioProperties(inout sampleRate : uint32_t, inout mask : audio_channel_mask_t, inout format : audio_format_t) : status_t
+    if (!mStream) return NO_INIT;
+    Return<void> ret = mStream->getAudioProperties(
+            [&](uint32_t sr, AudioChannelMask m, AudioFormat f) {
+                *sampleRate = sr;
+                *mask = static_cast<audio_channel_mask_t>(m);
+                *format = static_cast<audio_format_t>(f);
+            });
+    return processReturn("getAudioProperties", ret);
+!!!604933.cpp!!!	setParameters(in kvPairs : String8) : status_t
+    if (!mStream) return NO_INIT;
+    hidl_vec<ParameterValue> hidlParams;
+    status_t status = parametersFromHal(kvPairs, &hidlParams);
+    if (status != OK) return status;
+    return processReturn("setParameters", mStream->setParameters(hidlParams));
+!!!605061.cpp!!!	getParameters(in keys : String8, inout values : String8) : status_t
+    values->clear();
+    if (!mStream) return NO_INIT;
+    hidl_vec<hidl_string> hidlKeys;
+    status_t status = keysFromHal(keys, &hidlKeys);
+    if (status != OK) return status;
+    Result retval;
+    Return<void> ret = mStream->getParameters(
+            hidlKeys,
+            [&](Result r, const hidl_vec<ParameterValue>& parameters) {
+                retval = r;
+                if (retval == Result::OK) {
+                    parametersToHal(parameters, values);
+                }
+            });
+    return processReturn("getParameters", ret, retval);
+!!!605189.cpp!!!	addEffect(in effect : sp<EffectHalInterface>) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("addEffect", mStream->addEffect(
+                    static_cast<EffectHalHidl*>(effect.get())->effectId()));
+!!!605317.cpp!!!	removeEffect(in effect : sp<EffectHalInterface>) : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("removeEffect", mStream->removeEffect(
+                    static_cast<EffectHalHidl*>(effect.get())->effectId()));
+!!!605445.cpp!!!	standby() : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("standby", mStream->standby());
+!!!605573.cpp!!!	dump(in fd : int) : status_t
+    if (!mStream) return NO_INIT;
+    native_handle_t* hidlHandle = native_handle_create(1, 0);
+    hidlHandle->data[0] = fd;
+    Return<void> ret = mStream->debugDump(hidlHandle);
+    native_handle_delete(hidlHandle);
+    return processReturn("dump", ret);
+!!!605701.cpp!!!	start() : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("start", mStream->start());
+!!!605829.cpp!!!	stop() : status_t
+    if (!mStream) return NO_INIT;
+    return processReturn("stop", mStream->stop());
+!!!605957.cpp!!!	createMmapBuffer(in minSizeFrames : int32_t, inout info : audio_mmap_buffer_info) : status_t
+    Result retval;
+    Return<void> ret = mStream->createMmapBuffer(
+            minSizeFrames,
+            [&](Result r, const MmapBufferInfo& hidlInfo) {
+                retval = r;
+                if (retval == Result::OK) {
+                    const native_handle *handle = hidlInfo.sharedMemory.handle();
+                    if (handle->numFds > 0) {
+                        info->shared_memory_fd = handle->data[0];
+                        info->buffer_size_frames = hidlInfo.bufferSizeFrames;
+                        info->burst_size_frames = hidlInfo.burstSizeFrames;
+                        // info->shared_memory_address is not needed in HIDL context
+                        info->shared_memory_address = NULL;
+                    } else {
+                        retval = Result::NOT_INITIALIZED;
+                    }
+                }
+            });
+    return processReturn("createMmapBuffer", ret, retval);
+!!!606085.cpp!!!	getMmapPosition(inout position : audio_mmap_position) : status_t
+    Result retval;
+    Return<void> ret = mStream->getMmapPosition(
+            [&](Result r, const MmapPosition& hidlPosition) {
+                retval = r;
+                if (retval == Result::OK) {
+                    position->time_nanoseconds = hidlPosition.timeNanoseconds;
+                    position->position_frames = hidlPosition.positionFrames;
+                }
+            });
+    return processReturn("getMmapPosition", ret, retval);
+!!!606213.cpp!!!	setHalThreadPriority(in priority : int) : status_t
+    mHalThreadPriority = priority;
+    return OK;
+!!!606469.cpp!!!	~StreamHalHidl()
+    mStream = nullptr;
+!!!606597.cpp!!!	requestHalThreadPriority(in threadPid : pid_t, in threadId : pid_t) : bool
+    if (mHalThreadPriority == HAL_THREAD_PRIORITY_DEFAULT) {
+        return true;
+    }
+    int err = requestPriority(
+            threadPid, threadId,
+            mHalThreadPriority, false /*isForApp*/, true /*asynchronous*/);
+    ALOGE_IF(err, "failed to set priority %d for pid %d tid %d; error %d",
+            mHalThreadPriority, threadPid, threadId, err);
+    // Audio will still work, but latency will be higher and sometimes unacceptable.
+    return err == 0;

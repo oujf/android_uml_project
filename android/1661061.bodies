@@ -1,0 +1,102 @@
+class WindowOrientationListener
+!!!11341317.java!!!	WindowOrientationListener(inout context : Context, inout handler : Handler)
+        this(context, handler, SensorManager.SENSOR_DELAY_UI);
+!!!11341445.java!!!	WindowOrientationListener(inout context : Context, inout handler : Handler, in rate : int)
+        mHandler = handler;
+        mSensorManager = (SensorManager)context.getSystemService(Context.SENSOR_SERVICE);
+        mRate = rate;
+        mSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_DEVICE_ORIENTATION);
+
+        if (mSensor != null) {
+            mOrientationJudge = new OrientationSensorJudge();
+        }
+
+        if (mOrientationJudge == null) {
+            mSensor = mSensorManager.getDefaultSensor(USE_GRAVITY_SENSOR
+                    ? Sensor.TYPE_GRAVITY : Sensor.TYPE_ACCELEROMETER);
+            if (mSensor != null) {
+                // Create listener only if sensors do exist
+                mOrientationJudge = new AccelSensorJudge(context);
+            }
+        }
+!!!11341573.java!!!	enable() : void
+        enable(true /* clearCurrentRotation */);
+!!!11341701.java!!!	enable(inout clearCurrentRotation : boolean) : void
+        synchronized (mLock) {
+            if (mSensor == null) {
+                Slog.w(TAG, "Cannot detect sensors. Not enabled");
+                return;
+            }
+            if (mEnabled) {
+                return;
+            }
+            if (LOG) {
+                Slog.d(TAG, "WindowOrientationListener enabled clearCurrentRotation="
+                        + clearCurrentRotation);
+            }
+            mOrientationJudge.resetLocked(clearCurrentRotation);
+            if (mSensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+                mSensorManager.registerListener(
+                        mOrientationJudge, mSensor, mRate, DEFAULT_BATCH_LATENCY, mHandler);
+            } else {
+                mSensorManager.registerListener(mOrientationJudge, mSensor, mRate, mHandler);
+            }
+            mEnabled = true;
+        }
+!!!11341829.java!!!	disable() : void
+        synchronized (mLock) {
+            if (mSensor == null) {
+                Slog.w(TAG, "Cannot detect sensors. Invalid disable");
+                return;
+            }
+            if (mEnabled == true) {
+                if (LOG) {
+                    Slog.d(TAG, "WindowOrientationListener disabled");
+                }
+                mSensorManager.unregisterListener(mOrientationJudge);
+                mEnabled = false;
+            }
+        }
+!!!11341957.java!!!	onTouchStart() : void
+        synchronized (mLock) {
+            if (mOrientationJudge != null) {
+                mOrientationJudge.onTouchStartLocked();
+            }
+        }
+!!!11342085.java!!!	onTouchEnd() : void
+        long whenElapsedNanos = SystemClock.elapsedRealtimeNanos();
+
+        synchronized (mLock) {
+            if (mOrientationJudge != null) {
+                mOrientationJudge.onTouchEndLocked(whenElapsedNanos);
+            }
+        }
+!!!11342213.java!!!	setCurrentRotation(in rotation : int) : void
+        synchronized (mLock) {
+            mCurrentRotation = rotation;
+        }
+!!!11342341.java!!!	getProposedRotation() : int
+        synchronized (mLock) {
+            if (mEnabled) {
+                return mOrientationJudge.getProposedRotationLocked();
+            }
+            return -1;
+        }
+!!!11342469.java!!!	canDetectOrientation() : boolean
+        synchronized (mLock) {
+            return mSensor != null;
+        }
+!!!11342725.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        synchronized (mLock) {
+            pw.println(prefix + TAG);
+            prefix += "  ";
+            pw.println(prefix + "mEnabled=" + mEnabled);
+            pw.println(prefix + "mCurrentRotation=" + mCurrentRotation);
+            pw.println(prefix + "mSensorType=" + mSensorType);
+            pw.println(prefix + "mSensor=" + mSensor);
+            pw.println(prefix + "mRate=" + mRate);
+
+            if (mOrientationJudge != null) {
+                mOrientationJudge.dumpLocked(pw, prefix);
+            }
+        }

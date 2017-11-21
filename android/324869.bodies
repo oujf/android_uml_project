@@ -1,0 +1,74 @@
+class BnOMX
+!!!855685.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+        case LIST_NODES:
+        {
+            CHECK_OMX_INTERFACE(IOMX, data, reply);
+
+            List<ComponentInfo> list;
+            listNodes(&list);
+
+            reply->writeInt32(list.size());
+            for (List<ComponentInfo>::iterator it = list.begin();
+                 it != list.end(); ++it) {
+                ComponentInfo &cur = *it;
+
+                reply->writeString8(cur.mName);
+                reply->writeInt32(cur.mRoles.size());
+                for (List<String8>::iterator role_it = cur.mRoles.begin();
+                     role_it != cur.mRoles.end(); ++role_it) {
+                    reply->writeString8(*role_it);
+                }
+            }
+
+            return NO_ERROR;
+        }
+
+        case ALLOCATE_NODE:
+        {
+            CHECK_OMX_INTERFACE(IOMX, data, reply);
+
+            const char *name = data.readCString();
+
+            sp<IOMXObserver> observer =
+                interface_cast<IOMXObserver>(data.readStrongBinder());
+
+            if (name == NULL || observer == NULL) {
+                ALOGE("b/26392700");
+                reply->writeInt32(INVALID_OPERATION);
+                return NO_ERROR;
+            }
+
+            sp<IOMXNode> omxNode;
+
+            status_t err = allocateNode(name, observer, &omxNode);
+
+            reply->writeInt32(err);
+            if (err == OK) {
+                reply->writeStrongBinder(IInterface::asBinder(omxNode));
+            }
+
+            return NO_ERROR;
+        }
+
+        case CREATE_INPUT_SURFACE:
+        {
+            CHECK_OMX_INTERFACE(IOMX, data, reply);
+
+            sp<IGraphicBufferProducer> bufferProducer;
+            sp<IGraphicBufferSource> bufferSource;
+            status_t err = createInputSurface(&bufferProducer, &bufferSource);
+
+            reply->writeInt32(err);
+
+            if (err == OK) {
+                reply->writeStrongBinder(IInterface::asBinder(bufferProducer));
+                reply->writeStrongBinder(IInterface::asBinder(bufferSource));
+            }
+
+            return NO_ERROR;
+        }
+
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

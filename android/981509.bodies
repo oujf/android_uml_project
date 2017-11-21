@@ -1,0 +1,605 @@
+class MotionEvent
+!!!8756741.java!!!	ensureSharedTempPointerCapacity(in desiredCapacity : int) : void
+        if (gSharedTempPointerCoords == null
+                || gSharedTempPointerCoords.length < desiredCapacity) {
+            int capacity = gSharedTempPointerCoords != null ? gSharedTempPointerCoords.length : 8;
+            while (capacity < desiredCapacity) {
+                capacity *= 2;
+            }
+            gSharedTempPointerCoords = PointerCoords.createArray(capacity);
+            gSharedTempPointerProperties = PointerProperties.createArray(capacity);
+            gSharedTempPointerIndexMap = new int[capacity];
+        }
+!!!8762373.java!!!	finalize() : void
+        try {
+            if (mNativePtr != 0) {
+                nativeDispose(mNativePtr);
+                mNativePtr = 0;
+            }
+        } finally {
+            super.finalize();
+        }
+!!!8762501.java!!!	obtain() : MotionEvent
+        final MotionEvent ev;
+        synchronized (gRecyclerLock) {
+            ev = gRecyclerTop;
+            if (ev == null) {
+                return new MotionEvent();
+            }
+            gRecyclerTop = ev.mNext;
+            gRecyclerUsed -= 1;
+        }
+        ev.mNext = null;
+        ev.prepareForReuse();
+        return ev;
+!!!8762629.java!!!	obtain(in downTime : long, in eventTime : long, in action : int, in pointerCount : int, inout pointerProperties : MotionEvent::PointerProperties [[]], inout pointerCoords : MotionEvent::PointerCoords [[]], in metaState : int, in buttonState : int, in xPrecision : float, in yPrecision : float, in deviceId : int, in edgeFlags : int, in source : int, in flags : int) : MotionEvent
+        MotionEvent ev = obtain();
+        ev.mNativePtr = nativeInitialize(ev.mNativePtr,
+                deviceId, source, action, flags, edgeFlags, metaState, buttonState,
+                0, 0, xPrecision, yPrecision,
+                downTime * NS_PER_MS, eventTime * NS_PER_MS,
+                pointerCount, pointerProperties, pointerCoords);
+        return ev;
+!!!8762757.java!!!	obtain(in downTime : long, in eventTime : long, in action : int, in pointerCount : int, inout pointerIds : int [[]], inout pointerCoords : MotionEvent::PointerCoords [[]], in metaState : int, in xPrecision : float, in yPrecision : float, in deviceId : int, in edgeFlags : int, in source : int, in flags : int) : MotionEvent
+        synchronized (gSharedTempLock) {
+            ensureSharedTempPointerCapacity(pointerCount);
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            for (int i = 0; i < pointerCount; i++) {
+                pp[i].clear();
+                pp[i].id = pointerIds[i];
+            }
+            return obtain(downTime, eventTime, action, pointerCount, pp,
+                    pointerCoords, metaState, 0, xPrecision, yPrecision, deviceId,
+                    edgeFlags, source, flags);
+        }
+!!!8762885.java!!!	obtain(in downTime : long, in eventTime : long, in action : int, in x : float, in y : float, in pressure : float, in size : float, in metaState : int, in xPrecision : float, in yPrecision : float, in deviceId : int, in edgeFlags : int) : MotionEvent
+        MotionEvent ev = obtain();
+        synchronized (gSharedTempLock) {
+            ensureSharedTempPointerCapacity(1);
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            pp[0].clear();
+            pp[0].id = 0;
+
+            final PointerCoords pc[] = gSharedTempPointerCoords;
+            pc[0].clear();
+            pc[0].x = x;
+            pc[0].y = y;
+            pc[0].pressure = pressure;
+            pc[0].size = size;
+
+            ev.mNativePtr = nativeInitialize(ev.mNativePtr,
+                    deviceId, InputDevice.SOURCE_UNKNOWN, action, 0, edgeFlags, metaState, 0,
+                    0, 0, xPrecision, yPrecision,
+                    downTime * NS_PER_MS, eventTime * NS_PER_MS,
+                    1, pp, pc);
+            return ev;
+        }
+!!!8763013.java!!!	obtain(in downTime : long, in eventTime : long, in action : int, in pointerCount : int, in x : float, in y : float, in pressure : float, in size : float, in metaState : int, in xPrecision : float, in yPrecision : float, in deviceId : int, in edgeFlags : int) : MotionEvent
+        return obtain(downTime, eventTime, action, x, y, pressure, size,
+                metaState, xPrecision, yPrecision, deviceId, edgeFlags);
+!!!8763141.java!!!	obtain(in downTime : long, in eventTime : long, in action : int, in x : float, in y : float, in metaState : int) : MotionEvent
+        return obtain(downTime, eventTime, action, x, y, 1.0f, 1.0f,
+                metaState, 1.0f, 1.0f, 0, 0);
+!!!8763269.java!!!	obtain(inout other : MotionEvent) : MotionEvent
+        if (other == null) {
+            throw new IllegalArgumentException("other motion event must not be null");
+        }
+
+        MotionEvent ev = obtain();
+        ev.mNativePtr = nativeCopy(ev.mNativePtr, other.mNativePtr, true /*keepHistory*/);
+        return ev;
+!!!8763397.java!!!	obtainNoHistory(inout other : MotionEvent) : MotionEvent
+        if (other == null) {
+            throw new IllegalArgumentException("other motion event must not be null");
+        }
+
+        MotionEvent ev = obtain();
+        ev.mNativePtr = nativeCopy(ev.mNativePtr, other.mNativePtr, false /*keepHistory*/);
+        return ev;
+!!!8763525.java!!!	copy() : MotionEvent
+        return obtain(this);
+!!!8763653.java!!!	recycle() : void
+        super.recycle();
+
+        synchronized (gRecyclerLock) {
+            if (gRecyclerUsed < MAX_RECYCLED) {
+                gRecyclerUsed++;
+                mNext = gRecyclerTop;
+                gRecyclerTop = this;
+            }
+        }
+!!!8763781.java!!!	scale(in scale : float) : void
+        if (scale != 1.0f) {
+            nativeScale(mNativePtr, scale);
+        }
+!!!8763909.java!!!	getDeviceId() : int
+        return nativeGetDeviceId(mNativePtr);
+!!!8764037.java!!!	getSource() : int
+        return nativeGetSource(mNativePtr);
+!!!8764165.java!!!	setSource(in source : int) : void
+        nativeSetSource(mNativePtr, source);
+!!!8764293.java!!!	getAction() : int
+        return nativeGetAction(mNativePtr);
+!!!8764421.java!!!	getActionMasked() : int
+        return nativeGetAction(mNativePtr) & ACTION_MASK;
+!!!8764549.java!!!	getActionIndex() : int
+        return (nativeGetAction(mNativePtr) & ACTION_POINTER_INDEX_MASK)
+                >> ACTION_POINTER_INDEX_SHIFT;
+!!!8764677.java!!!	isTouchEvent() : boolean
+        return nativeIsTouchEvent(mNativePtr);
+!!!8764805.java!!!	getFlags() : int
+        return nativeGetFlags(mNativePtr);
+!!!8764933.java!!!	isTainted() : boolean
+        final int flags = getFlags();
+        return (flags & FLAG_TAINTED) != 0;
+!!!8765061.java!!!	setTainted(inout tainted : boolean) : void
+        final int flags = getFlags();
+        nativeSetFlags(mNativePtr, tainted ? flags | FLAG_TAINTED : flags & ~FLAG_TAINTED);
+!!!8765189.java!!!	isTargetAccessibilityFocus() : boolean
+        final int flags = getFlags();
+        return (flags & FLAG_TARGET_ACCESSIBILITY_FOCUS) != 0;
+!!!8765317.java!!!	setTargetAccessibilityFocus(inout targetsFocus : boolean) : void
+        final int flags = getFlags();
+        nativeSetFlags(mNativePtr, targetsFocus
+                ? flags | FLAG_TARGET_ACCESSIBILITY_FOCUS
+                : flags & ~FLAG_TARGET_ACCESSIBILITY_FOCUS);
+!!!8765445.java!!!	isHoverExitPending() : boolean
+        final int flags = getFlags();
+        return (flags & FLAG_HOVER_EXIT_PENDING) != 0;
+!!!8765573.java!!!	setHoverExitPending(inout hoverExitPending : boolean) : void
+        final int flags = getFlags();
+        nativeSetFlags(mNativePtr, hoverExitPending
+                ? flags | FLAG_HOVER_EXIT_PENDING
+                : flags & ~FLAG_HOVER_EXIT_PENDING);
+!!!8765701.java!!!	getDownTime() : long
+        return nativeGetDownTimeNanos(mNativePtr) / NS_PER_MS;
+!!!8765829.java!!!	setDownTime(in downTime : long) : void
+        nativeSetDownTimeNanos(mNativePtr, downTime * NS_PER_MS);
+!!!8765957.java!!!	getEventTime() : long
+        return nativeGetEventTimeNanos(mNativePtr, HISTORY_CURRENT) / NS_PER_MS;
+!!!8766085.java!!!	getEventTimeNano() : long
+        return nativeGetEventTimeNanos(mNativePtr, HISTORY_CURRENT);
+!!!8766213.java!!!	getX() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_X, 0, HISTORY_CURRENT);
+!!!8766341.java!!!	getY() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_Y, 0, HISTORY_CURRENT);
+!!!8766469.java!!!	getPressure() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_PRESSURE, 0, HISTORY_CURRENT);
+!!!8766597.java!!!	getSize() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_SIZE, 0, HISTORY_CURRENT);
+!!!8766725.java!!!	getTouchMajor() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MAJOR, 0, HISTORY_CURRENT);
+!!!8766853.java!!!	getTouchMinor() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MINOR, 0, HISTORY_CURRENT);
+!!!8766981.java!!!	getToolMajor() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MAJOR, 0, HISTORY_CURRENT);
+!!!8767109.java!!!	getToolMinor() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MINOR, 0, HISTORY_CURRENT);
+!!!8767237.java!!!	getOrientation() : float
+        return nativeGetAxisValue(mNativePtr, AXIS_ORIENTATION, 0, HISTORY_CURRENT);
+!!!8767365.java!!!	getAxisValue(in axis : int) : float
+        return nativeGetAxisValue(mNativePtr, axis, 0, HISTORY_CURRENT);
+!!!8767493.java!!!	getPointerCount() : int
+        return nativeGetPointerCount(mNativePtr);
+!!!8767621.java!!!	getPointerId(in pointerIndex : int) : int
+        return nativeGetPointerId(mNativePtr, pointerIndex);
+!!!8767749.java!!!	getToolType(in pointerIndex : int) : int
+        return nativeGetToolType(mNativePtr, pointerIndex);
+!!!8767877.java!!!	findPointerIndex(in pointerId : int) : int
+        return nativeFindPointerIndex(mNativePtr, pointerId);
+!!!8768005.java!!!	getX(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_X, pointerIndex, HISTORY_CURRENT);
+!!!8768133.java!!!	getY(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_Y, pointerIndex, HISTORY_CURRENT);
+!!!8768261.java!!!	getPressure(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_PRESSURE, pointerIndex, HISTORY_CURRENT);
+!!!8768389.java!!!	getSize(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_SIZE, pointerIndex, HISTORY_CURRENT);
+!!!8768517.java!!!	getTouchMajor(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MAJOR, pointerIndex, HISTORY_CURRENT);
+!!!8768645.java!!!	getTouchMinor(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MINOR, pointerIndex, HISTORY_CURRENT);
+!!!8768773.java!!!	getToolMajor(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MAJOR, pointerIndex, HISTORY_CURRENT);
+!!!8768901.java!!!	getToolMinor(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MINOR, pointerIndex, HISTORY_CURRENT);
+!!!8769029.java!!!	getOrientation(in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_ORIENTATION, pointerIndex, HISTORY_CURRENT);
+!!!8769157.java!!!	getAxisValue(in axis : int, in pointerIndex : int) : float
+        return nativeGetAxisValue(mNativePtr, axis, pointerIndex, HISTORY_CURRENT);
+!!!8769285.java!!!	getPointerCoords(in pointerIndex : int, inout outPointerCoords : MotionEvent::PointerCoords) : void
+        nativeGetPointerCoords(mNativePtr, pointerIndex, HISTORY_CURRENT, outPointerCoords);
+!!!8769413.java!!!	getPointerProperties(in pointerIndex : int, inout outPointerProperties : MotionEvent::PointerProperties) : void
+        nativeGetPointerProperties(mNativePtr, pointerIndex, outPointerProperties);
+!!!8769541.java!!!	getMetaState() : int
+        return nativeGetMetaState(mNativePtr);
+!!!8769669.java!!!	getButtonState() : int
+        return nativeGetButtonState(mNativePtr);
+!!!8769797.java!!!	setButtonState(in buttonState : int) : void
+        nativeSetButtonState(mNativePtr, buttonState);
+!!!8769925.java!!!	getActionButton() : int
+        return nativeGetActionButton(mNativePtr);
+!!!8770053.java!!!	setActionButton(in button : int) : void
+        nativeSetActionButton(mNativePtr, button);
+!!!8770181.java!!!	getRawX() : float
+        return nativeGetRawAxisValue(mNativePtr, AXIS_X, 0, HISTORY_CURRENT);
+!!!8770309.java!!!	getRawY() : float
+        return nativeGetRawAxisValue(mNativePtr, AXIS_Y, 0, HISTORY_CURRENT);
+!!!8770437.java!!!	getXPrecision() : float
+        return nativeGetXPrecision(mNativePtr);
+!!!8770565.java!!!	getYPrecision() : float
+        return nativeGetYPrecision(mNativePtr);
+!!!8770693.java!!!	getHistorySize() : int
+        return nativeGetHistorySize(mNativePtr);
+!!!8770821.java!!!	getHistoricalEventTime(in pos : int) : long
+        return nativeGetEventTimeNanos(mNativePtr, pos) / NS_PER_MS;
+!!!8770949.java!!!	getHistoricalEventTimeNano(in pos : int) : long
+        return nativeGetEventTimeNanos(mNativePtr, pos);
+!!!8771077.java!!!	getHistoricalX(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_X, 0, pos);
+!!!8771205.java!!!	getHistoricalY(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_Y, 0, pos);
+!!!8771333.java!!!	getHistoricalPressure(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_PRESSURE, 0, pos);
+!!!8771461.java!!!	getHistoricalSize(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_SIZE, 0, pos);
+!!!8771589.java!!!	getHistoricalTouchMajor(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MAJOR, 0, pos);
+!!!8771717.java!!!	getHistoricalTouchMinor(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MINOR, 0, pos);
+!!!8771845.java!!!	getHistoricalToolMajor(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MAJOR, 0, pos);
+!!!8771973.java!!!	getHistoricalToolMinor(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MINOR, 0, pos);
+!!!8772101.java!!!	getHistoricalOrientation(in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_ORIENTATION, 0, pos);
+!!!8772229.java!!!	getHistoricalAxisValue(in axis : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, axis, 0, pos);
+!!!8772357.java!!!	getHistoricalX(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_X, pointerIndex, pos);
+!!!8772485.java!!!	getHistoricalY(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_Y, pointerIndex, pos);
+!!!8772613.java!!!	getHistoricalPressure(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_PRESSURE, pointerIndex, pos);
+!!!8772741.java!!!	getHistoricalSize(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_SIZE, pointerIndex, pos);
+!!!8772869.java!!!	getHistoricalTouchMajor(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MAJOR, pointerIndex, pos);
+!!!8772997.java!!!	getHistoricalTouchMinor(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOUCH_MINOR, pointerIndex, pos);
+!!!8773125.java!!!	getHistoricalToolMajor(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MAJOR, pointerIndex, pos);
+!!!8773253.java!!!	getHistoricalToolMinor(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_TOOL_MINOR, pointerIndex, pos);
+!!!8773381.java!!!	getHistoricalOrientation(in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, AXIS_ORIENTATION, pointerIndex, pos);
+!!!8773509.java!!!	getHistoricalAxisValue(in axis : int, in pointerIndex : int, in pos : int) : float
+        return nativeGetAxisValue(mNativePtr, axis, pointerIndex, pos);
+!!!8773637.java!!!	getHistoricalPointerCoords(in pointerIndex : int, in pos : int, inout outPointerCoords : MotionEvent::PointerCoords) : void
+        nativeGetPointerCoords(mNativePtr, pointerIndex, pos, outPointerCoords);
+!!!8773765.java!!!	getEdgeFlags() : int
+        return nativeGetEdgeFlags(mNativePtr);
+!!!8773893.java!!!	setEdgeFlags(in flags : int) : void
+        nativeSetEdgeFlags(mNativePtr, flags);
+!!!8774021.java!!!	setAction(in action : int) : void
+        nativeSetAction(mNativePtr, action);
+!!!8774149.java!!!	offsetLocation(in deltaX : float, in deltaY : float) : void
+        if (deltaX != 0.0f || deltaY != 0.0f) {
+            nativeOffsetLocation(mNativePtr, deltaX, deltaY);
+        }
+!!!8774277.java!!!	setLocation(in x : float, in y : float) : void
+        float oldX = getX();
+        float oldY = getY();
+        offsetLocation(x - oldX, y - oldY);
+!!!8774405.java!!!	transform(inout matrix : Matrix) : void
+        if (matrix == null) {
+            throw new IllegalArgumentException("matrix must not be null");
+        }
+
+        nativeTransform(mNativePtr, matrix.native_instance);
+!!!8774533.java!!!	addBatch(in eventTime : long, in x : float, in y : float, in pressure : float, in size : float, in metaState : int) : void
+        synchronized (gSharedTempLock) {
+            ensureSharedTempPointerCapacity(1);
+            final PointerCoords[] pc = gSharedTempPointerCoords;
+            pc[0].clear();
+            pc[0].x = x;
+            pc[0].y = y;
+            pc[0].pressure = pressure;
+            pc[0].size = size;
+
+            nativeAddBatch(mNativePtr, eventTime * NS_PER_MS, pc, metaState);
+        }
+!!!8774661.java!!!	addBatch(in eventTime : long, inout pointerCoords : MotionEvent::PointerCoords [[]], in metaState : int) : void
+        nativeAddBatch(mNativePtr, eventTime * NS_PER_MS, pointerCoords, metaState);
+!!!8774789.java!!!	addBatch(inout event : MotionEvent) : boolean
+        final int action = nativeGetAction(mNativePtr);
+        if (action != ACTION_MOVE && action != ACTION_HOVER_MOVE) {
+            return false;
+        }
+        if (action != nativeGetAction(event.mNativePtr)) {
+            return false;
+        }
+
+        if (nativeGetDeviceId(mNativePtr) != nativeGetDeviceId(event.mNativePtr)
+                || nativeGetSource(mNativePtr) != nativeGetSource(event.mNativePtr)
+                || nativeGetFlags(mNativePtr) != nativeGetFlags(event.mNativePtr)) {
+            return false;
+        }
+
+        final int pointerCount = nativeGetPointerCount(mNativePtr);
+        if (pointerCount != nativeGetPointerCount(event.mNativePtr)) {
+            return false;
+        }
+
+        synchronized (gSharedTempLock) {
+            ensureSharedTempPointerCapacity(Math.max(pointerCount, 2));
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            final PointerCoords[] pc = gSharedTempPointerCoords;
+
+            for (int i = 0; i < pointerCount; i++) {
+                nativeGetPointerProperties(mNativePtr, i, pp[0]);
+                nativeGetPointerProperties(event.mNativePtr, i, pp[1]);
+                if (!pp[0].equals(pp[1])) {
+                    return false;
+                }
+            }
+
+            final int metaState = nativeGetMetaState(event.mNativePtr);
+            final int historySize = nativeGetHistorySize(event.mNativePtr);
+            for (int h = 0; h <= historySize; h++) {
+                final int historyPos = (h == historySize ? HISTORY_CURRENT : h);
+
+                for (int i = 0; i < pointerCount; i++) {
+                    nativeGetPointerCoords(event.mNativePtr, i, historyPos, pc[i]);
+                }
+
+                final long eventTimeNanos = nativeGetEventTimeNanos(event.mNativePtr, historyPos);
+                nativeAddBatch(mNativePtr, eventTimeNanos, pc, metaState);
+            }
+        }
+        return true;
+!!!8774917.java!!!	isWithinBoundsNoHistory(in left : float, in top : float, in right : float, in bottom : float) : boolean
+        final int pointerCount = nativeGetPointerCount(mNativePtr);
+        for (int i = 0; i < pointerCount; i++) {
+            final float x = nativeGetAxisValue(mNativePtr, AXIS_X, i, HISTORY_CURRENT);
+            final float y = nativeGetAxisValue(mNativePtr, AXIS_Y, i, HISTORY_CURRENT);
+            if (x < left || x > right || y < top || y > bottom) {
+                return false;
+            }
+        }
+        return true;
+!!!8775045.java!!!	clamp(in value : float, in low : float, in high : float) : float
+        if (value < low) {
+            return low;
+        } else if (value > high) {
+            return high;
+        }
+        return value;
+!!!8775173.java!!!	clampNoHistory(in left : float, in top : float, in right : float, in bottom : float) : MotionEvent
+        MotionEvent ev = obtain();
+        synchronized (gSharedTempLock) {
+            final int pointerCount = nativeGetPointerCount(mNativePtr);
+
+            ensureSharedTempPointerCapacity(pointerCount);
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            final PointerCoords[] pc = gSharedTempPointerCoords;
+
+            for (int i = 0; i < pointerCount; i++) {
+                nativeGetPointerProperties(mNativePtr, i, pp[i]);
+                nativeGetPointerCoords(mNativePtr, i, HISTORY_CURRENT, pc[i]);
+                pc[i].x = clamp(pc[i].x, left, right);
+                pc[i].y = clamp(pc[i].y, top, bottom);
+            }
+            ev.mNativePtr = nativeInitialize(ev.mNativePtr,
+                    nativeGetDeviceId(mNativePtr), nativeGetSource(mNativePtr),
+                    nativeGetAction(mNativePtr), nativeGetFlags(mNativePtr),
+                    nativeGetEdgeFlags(mNativePtr), nativeGetMetaState(mNativePtr),
+                    nativeGetButtonState(mNativePtr),
+                    nativeGetXOffset(mNativePtr), nativeGetYOffset(mNativePtr),
+                    nativeGetXPrecision(mNativePtr), nativeGetYPrecision(mNativePtr),
+                    nativeGetDownTimeNanos(mNativePtr),
+                    nativeGetEventTimeNanos(mNativePtr, HISTORY_CURRENT),
+                    pointerCount, pp, pc);
+            return ev;
+        }
+!!!8775301.java!!!	getPointerIdBits() : int
+        int idBits = 0;
+        final int pointerCount = nativeGetPointerCount(mNativePtr);
+        for (int i = 0; i < pointerCount; i++) {
+            idBits |= 1 << nativeGetPointerId(mNativePtr, i);
+        }
+        return idBits;
+!!!8775429.java!!!	split(in idBits : int) : MotionEvent
+        MotionEvent ev = obtain();
+        synchronized (gSharedTempLock) {
+            final int oldPointerCount = nativeGetPointerCount(mNativePtr);
+            ensureSharedTempPointerCapacity(oldPointerCount);
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            final PointerCoords[] pc = gSharedTempPointerCoords;
+            final int[] map = gSharedTempPointerIndexMap;
+
+            final int oldAction = nativeGetAction(mNativePtr);
+            final int oldActionMasked = oldAction & ACTION_MASK;
+            final int oldActionPointerIndex = (oldAction & ACTION_POINTER_INDEX_MASK)
+                    >> ACTION_POINTER_INDEX_SHIFT;
+            int newActionPointerIndex = -1;
+            int newPointerCount = 0;
+            int newIdBits = 0;
+            for (int i = 0; i < oldPointerCount; i++) {
+                nativeGetPointerProperties(mNativePtr, i, pp[newPointerCount]);
+                final int idBit = 1 << pp[newPointerCount].id;
+                if ((idBit & idBits) != 0) {
+                    if (i == oldActionPointerIndex) {
+                        newActionPointerIndex = newPointerCount;
+                    }
+                    map[newPointerCount] = i;
+                    newPointerCount += 1;
+                    newIdBits |= idBit;
+                }
+            }
+
+            if (newPointerCount == 0) {
+                throw new IllegalArgumentException("idBits did not match any ids in the event");
+            }
+
+            final int newAction;
+            if (oldActionMasked == ACTION_POINTER_DOWN || oldActionMasked == ACTION_POINTER_UP) {
+                if (newActionPointerIndex < 0) {
+                    // An unrelated pointer changed.
+                    newAction = ACTION_MOVE;
+                } else if (newPointerCount == 1) {
+                    // The first/last pointer went down/up.
+                    newAction = oldActionMasked == ACTION_POINTER_DOWN
+                            ? ACTION_DOWN : ACTION_UP;
+                } else {
+                    // A secondary pointer went down/up.
+                    newAction = oldActionMasked
+                            | (newActionPointerIndex << ACTION_POINTER_INDEX_SHIFT);
+                }
+            } else {
+                // Simple up/down/cancel/move or other motion action.
+                newAction = oldAction;
+            }
+
+            final int historySize = nativeGetHistorySize(mNativePtr);
+            for (int h = 0; h <= historySize; h++) {
+                final int historyPos = h == historySize ? HISTORY_CURRENT : h;
+
+                for (int i = 0; i < newPointerCount; i++) {
+                    nativeGetPointerCoords(mNativePtr, map[i], historyPos, pc[i]);
+                }
+
+                final long eventTimeNanos = nativeGetEventTimeNanos(mNativePtr, historyPos);
+                if (h == 0) {
+                    ev.mNativePtr = nativeInitialize(ev.mNativePtr,
+                            nativeGetDeviceId(mNativePtr), nativeGetSource(mNativePtr),
+                            newAction, nativeGetFlags(mNativePtr),
+                            nativeGetEdgeFlags(mNativePtr), nativeGetMetaState(mNativePtr),
+                            nativeGetButtonState(mNativePtr),
+                            nativeGetXOffset(mNativePtr), nativeGetYOffset(mNativePtr),
+                            nativeGetXPrecision(mNativePtr), nativeGetYPrecision(mNativePtr),
+                            nativeGetDownTimeNanos(mNativePtr), eventTimeNanos,
+                            newPointerCount, pp, pc);
+                } else {
+                    nativeAddBatch(ev.mNativePtr, eventTimeNanos, pc, 0);
+                }
+            }
+            return ev;
+        }
+!!!8775557.java!!!	toString() : String
+        StringBuilder msg = new StringBuilder();
+        msg.append("MotionEvent { action=").append(actionToString(getAction()));
+        msg.append(", actionButton=").append(buttonStateToString(getActionButton()));
+
+        final int pointerCount = getPointerCount();
+        for (int i = 0; i < pointerCount; i++) {
+            msg.append(", id[").append(i).append("]=").append(getPointerId(i));
+            msg.append(", x[").append(i).append("]=").append(getX(i));
+            msg.append(", y[").append(i).append("]=").append(getY(i));
+            msg.append(", toolType[").append(i).append("]=").append(
+                    toolTypeToString(getToolType(i)));
+        }
+
+        msg.append(", buttonState=").append(MotionEvent.buttonStateToString(getButtonState()));
+        msg.append(", metaState=").append(KeyEvent.metaStateToString(getMetaState()));
+        msg.append(", flags=0x").append(Integer.toHexString(getFlags()));
+        msg.append(", edgeFlags=0x").append(Integer.toHexString(getEdgeFlags()));
+        msg.append(", pointerCount=").append(pointerCount);
+        msg.append(", historySize=").append(getHistorySize());
+        msg.append(", eventTime=").append(getEventTime());
+        msg.append(", downTime=").append(getDownTime());
+        msg.append(", deviceId=").append(getDeviceId());
+        msg.append(", source=0x").append(Integer.toHexString(getSource()));
+        msg.append(" }");
+        return msg.toString();
+!!!8775685.java!!!	actionToString(in action : int) : String
+        switch (action) {
+            case ACTION_DOWN:
+                return "ACTION_DOWN";
+            case ACTION_UP:
+                return "ACTION_UP";
+            case ACTION_CANCEL:
+                return "ACTION_CANCEL";
+            case ACTION_OUTSIDE:
+                return "ACTION_OUTSIDE";
+            case ACTION_MOVE:
+                return "ACTION_MOVE";
+            case ACTION_HOVER_MOVE:
+                return "ACTION_HOVER_MOVE";
+            case ACTION_SCROLL:
+                return "ACTION_SCROLL";
+            case ACTION_HOVER_ENTER:
+                return "ACTION_HOVER_ENTER";
+            case ACTION_HOVER_EXIT:
+                return "ACTION_HOVER_EXIT";
+            case ACTION_BUTTON_PRESS:
+                return "ACTION_BUTTON_PRESS";
+            case ACTION_BUTTON_RELEASE:
+                return "ACTION_BUTTON_RELEASE";
+        }
+        int index = (action & ACTION_POINTER_INDEX_MASK) >> ACTION_POINTER_INDEX_SHIFT;
+        switch (action & ACTION_MASK) {
+            case ACTION_POINTER_DOWN:
+                return "ACTION_POINTER_DOWN(" + index + ")";
+            case ACTION_POINTER_UP:
+                return "ACTION_POINTER_UP(" + index + ")";
+            default:
+                return Integer.toString(action);
+        }
+!!!8775813.java!!!	axisToString(in axis : int) : String
+        String symbolicName = nativeAxisToString(axis);
+        return symbolicName != null ? LABEL_PREFIX + symbolicName : Integer.toString(axis);
+!!!8775941.java!!!	axisFromString(in symbolicName : String) : int
+        if (symbolicName.startsWith(LABEL_PREFIX)) {
+            symbolicName = symbolicName.substring(LABEL_PREFIX.length());
+            int axis = nativeAxisFromString(symbolicName);
+            if (axis >= 0) {
+                return axis;
+            }
+        }
+        try {
+            return Integer.parseInt(symbolicName, 10);
+        } catch (NumberFormatException ex) {
+            return -1;
+        }
+!!!8776069.java!!!	buttonStateToString(in buttonState : int) : String
+        if (buttonState == 0) {
+            return "0";
+        }
+        StringBuilder result = null;
+        int i = 0;
+        while (buttonState != 0) {
+            final boolean isSet = (buttonState & 1) != 0;
+            buttonState >>>= 1; // unsigned shift!
+            if (isSet) {
+                final String name = BUTTON_SYMBOLIC_NAMES[i];
+                if (result == null) {
+                    if (buttonState == 0) {
+                        return name;
+                    }
+                    result = new StringBuilder(name);
+                } else {
+                    result.append('|');
+                    result.append(name);
+                }
+            }
+            i += 1;
+        }
+        return result.toString();
+!!!8776197.java!!!	toolTypeToString(in toolType : int) : String
+        String symbolicName = TOOL_TYPE_SYMBOLIC_NAMES.get(toolType);
+        return symbolicName != null ? symbolicName : Integer.toString(toolType);
+!!!8776325.java!!!	isButtonPressed(in button : int) : boolean
+        if (button == 0) {
+            return false;
+        }
+        return (getButtonState() & button) == button;
+!!!8776453.java!!!	createFromParcelBody(inout in : Parcel) : MotionEvent
+        MotionEvent ev = obtain();
+        ev.mNativePtr = nativeReadFromParcel(ev.mNativePtr, in);
+        return ev;
+!!!8776581.java!!!	cancel() : void
+        setAction(ACTION_CANCEL);
+!!!8776709.java!!!	writeToParcel(inout out : Parcel, in flags : int) : void
+        out.writeInt(PARCEL_TOKEN_MOTION_EVENT);
+        nativeWriteToParcel(mNativePtr, out);

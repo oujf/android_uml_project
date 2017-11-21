@@ -1,0 +1,35 @@
+class MidiDispatcher
+!!!9954309.java!!!	MidiDispatcher()
+        this(null);
+!!!9954437.java!!!	MidiDispatcher(inout failureHandler : MidiDispatcher::MidiReceiverFailureHandler)
+        mFailureHandler = failureHandler;
+!!!9954565.java!!!	getReceiverCount() : int
+        return mReceivers.size();
+!!!9954693.java!!!	getSender() : MidiSender
+        return mSender;
+!!!9954821.java!!!	onSend(inout msg : byte [[]], in offset : int, in count : int, in timestamp : long) : void
+       for (MidiReceiver receiver : mReceivers) {
+            try {
+                receiver.send(msg, offset, count, timestamp);
+            } catch (IOException e) {
+                // If the receiver fails we remove the receiver but do not propagate the exception.
+                // Note that this may also happen if the client code stalls, and thus underlying
+                // MidiInputPort.onSend has raised IOException for EAGAIN / EWOULDBLOCK error.
+                mReceivers.remove(receiver);
+                if (mFailureHandler != null) {
+                    mFailureHandler.onReceiverFailure(receiver, e);
+                }
+            }
+        }
+!!!9954949.java!!!	onFlush() : void
+       for (MidiReceiver receiver : mReceivers) {
+            try {
+                receiver.flush();
+            } catch (IOException e) {
+                // This is just a special case of 'send' thus handle in the same way.
+                mReceivers.remove(receiver);
+                if (mFailureHandler != null) {
+                    mFailureHandler.onReceiverFailure(receiver, e);
+                }
+            }
+       }

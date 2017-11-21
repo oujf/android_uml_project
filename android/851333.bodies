@@ -1,0 +1,95 @@
+class RemoteInputController
+!!!3766149.java!!!	RemoteInputController(inout headsUpManager : HeadsUpManager)
+        addCallback(Dependency.get(StatusBarWindowManager.class));
+        mHeadsUpManager = headsUpManager;
+!!!3766277.java!!!	addRemoteInput(inout entry : NotificationData::Entry, inout token : Object) : void
+        Preconditions.checkNotNull(entry);
+        Preconditions.checkNotNull(token);
+
+        boolean found = pruneWeakThenRemoveAndContains(
+                entry /* contains */, null /* remove */, token /* removeToken */);
+        if (!found) {
+            mOpen.add(new Pair<>(new WeakReference<>(entry), token));
+        }
+
+        apply(entry);
+!!!3766405.java!!!	removeRemoteInput(inout entry : NotificationData::Entry, inout token : Object) : void
+        Preconditions.checkNotNull(entry);
+
+        pruneWeakThenRemoveAndContains(null /* contains */, entry /* remove */, token);
+
+        apply(entry);
+!!!3766533.java!!!	addSpinning(in key : String, inout token : Object) : void
+        Preconditions.checkNotNull(key);
+        Preconditions.checkNotNull(token);
+
+        mSpinning.put(key, token);
+!!!3766661.java!!!	removeSpinning(in key : String, inout token : Object) : void
+        Preconditions.checkNotNull(key);
+
+        if (token == null || mSpinning.get(key) == token) {
+            mSpinning.remove(key);
+        }
+!!!3766789.java!!!	isSpinning(in key : String) : boolean
+        return mSpinning.containsKey(key);
+!!!3766917.java!!!	apply(inout entry : NotificationData::Entry) : void
+        mHeadsUpManager.setRemoteInputActive(entry, isRemoteInputActive(entry));
+        boolean remoteInputActive = isRemoteInputActive();
+        int N = mCallbacks.size();
+        for (int i = 0; i < N; i++) {
+            mCallbacks.get(i).onRemoteInputActive(remoteInputActive);
+        }
+!!!3767045.java!!!	isRemoteInputActive(inout entry : NotificationData::Entry) : boolean
+        return pruneWeakThenRemoveAndContains(entry /* contains */, null /* remove */,
+                null /* removeToken */);
+!!!3767173.java!!!	isRemoteInputActive() : boolean
+        pruneWeakThenRemoveAndContains(null /* contains */, null /* remove */,
+                null /* removeToken */);
+        return !mOpen.isEmpty();
+!!!3767301.java!!!	pruneWeakThenRemoveAndContains(inout contains : NotificationData::Entry, inout remove : NotificationData::Entry, inout removeToken : Object) : boolean
+        boolean found = false;
+        for (int i = mOpen.size() - 1; i >= 0; i--) {
+            NotificationData.Entry item = mOpen.get(i).first.get();
+            Object itemToken = mOpen.get(i).second;
+            boolean removeTokenMatches = (removeToken == null || itemToken == removeToken);
+
+            if (item == null || (item == remove && removeTokenMatches)) {
+                mOpen.remove(i);
+            } else if (item == contains) {
+                if (removeToken != null && removeToken != itemToken) {
+                    // We need to update the token. Remove here and let caller reinsert it.
+                    mOpen.remove(i);
+                } else {
+                    found = true;
+                }
+            }
+        }
+        return found;
+!!!3767429.java!!!	addCallback(inout callback : RemoteInputController::Callback) : void
+        Preconditions.checkNotNull(callback);
+        mCallbacks.add(callback);
+!!!3767557.java!!!	remoteInputSent(inout entry : NotificationData::Entry) : void
+        int N = mCallbacks.size();
+        for (int i = 0; i < N; i++) {
+            mCallbacks.get(i).onRemoteInputSent(entry);
+        }
+!!!3767685.java!!!	closeRemoteInputs() : void
+        if (mOpen.size() == 0) {
+            return;
+        }
+
+        // Make a copy because closing the remote inputs will modify mOpen.
+        ArrayList<NotificationData.Entry> list = new ArrayList<>(mOpen.size());
+        for (int i = mOpen.size() - 1; i >= 0; i--) {
+            NotificationData.Entry item = mOpen.get(i).first.get();
+            if (item != null && item.row != null) {
+                list.add(item);
+            }
+        }
+
+        for (int i = list.size() - 1; i >= 0; i--) {
+            NotificationData.Entry item = list.get(i);
+            if (item.row != null) {
+                item.row.closeRemoteInput();
+            }
+        }

@@ -1,0 +1,182 @@
+class KeyguardAbsKeyInputView
+!!!4315269.java!!!	KeyguardAbsKeyInputView(inout context : Context)
+        this(context, null);
+!!!4315397.java!!!	KeyguardAbsKeyInputView(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!4315525.java!!!	setKeyguardCallback(inout callback : KeyguardSecurityCallback) : void
+        mCallback = callback;
+!!!4315653.java!!!	setLockPatternUtils(inout utils : LockPatternUtils) : void
+        mLockPatternUtils = utils;
+        mEnableHaptics = mLockPatternUtils.isTactileFeedbackEnabled();
+!!!4315781.java!!!	reset() : void
+        // start fresh
+        mDismissing = false;
+        resetPasswordText(false /* animate */, false /* announce */);
+        // if the user is currently locked out, enforce it.
+        long deadline = mLockPatternUtils.getLockoutAttemptDeadline(
+                KeyguardUpdateMonitor.getCurrentUser());
+        if (shouldLockout(deadline)) {
+            handleAttemptLockout(deadline);
+        } else {
+            resetState();
+        }
+!!!4315909.java!!!	shouldLockout(in deadline : long) : boolean
+        return deadline != 0;
+!!!4316293.java!!!	onFinishInflate() : void
+        mLockPatternUtils = new LockPatternUtils(mContext);
+        mSecurityMessageDisplay = KeyguardMessageArea.findSecurityMessageDisplay(this);
+        mEcaView = findViewById(R.id.keyguard_selector_fade_container);
+
+        EmergencyButton button = findViewById(R.id.emergency_call_button);
+        if (button != null) {
+            button.setCallback(this);
+        }
+!!!4316421.java!!!	onEmergencyButtonClickedWhenInCall() : void
+        mCallback.reset();
+!!!4316549.java!!!	getWrongPasswordStringId() : int
+        return R.string.kg_wrong_password;
+!!!4316677.java!!!	verifyPasswordAndUnlock() : void
+        if (mDismissing) return; // already verified but haven't been dismissed; don't do it again.
+
+        final String entry = getPasswordText();
+        setPasswordEntryInputEnabled(false);
+        if (mPendingLockCheck != null) {
+            mPendingLockCheck.cancel(false);
+        }
+
+        final int userId = KeyguardUpdateMonitor.getCurrentUser();
+        if (entry.length() <= MINIMUM_PASSWORD_LENGTH_BEFORE_REPORT) {
+            // to avoid accidental lockout, only count attempts that are long enough to be a
+            // real password. This may require some tweaking.
+            setPasswordEntryInputEnabled(true);
+            onPasswordChecked(userId, false /* matched */, 0, false /* not valid - too short */);
+            return;
+        }
+
+        if (LatencyTracker.isEnabled(mContext)) {
+            LatencyTracker.getInstance(mContext).onActionStart(ACTION_CHECK_CREDENTIAL);
+            LatencyTracker.getInstance(mContext).onActionStart(ACTION_CHECK_CREDENTIAL_UNLOCKED);
+        }
+        mPendingLockCheck = LockPatternChecker.checkPassword(
+                mLockPatternUtils,
+                entry,
+                userId,
+                new LockPatternChecker.OnCheckCallback() {
+
+                    @Override
+                    public void onEarlyMatched() {
+                        if (LatencyTracker.isEnabled(mContext)) {
+                            LatencyTracker.getInstance(mContext).onActionEnd(
+                                    ACTION_CHECK_CREDENTIAL);
+                        }
+                        onPasswordChecked(userId, true /* matched */, 0 /* timeoutMs */,
+                                true /* isValidPassword */);
+                    }
+
+                    @Override
+                    public void onChecked(boolean matched, int timeoutMs) {
+                        if (LatencyTracker.isEnabled(mContext)) {
+                            LatencyTracker.getInstance(mContext).onActionEnd(
+                                    ACTION_CHECK_CREDENTIAL_UNLOCKED);
+                        }
+                        setPasswordEntryInputEnabled(true);
+                        mPendingLockCheck = null;
+                        if (!matched) {
+                            onPasswordChecked(userId, false /* matched */, timeoutMs,
+                                    true /* isValidPassword */);
+                        }
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                        // We already got dismissed with the early matched callback, so we cancelled
+                        // the check. However, we still need to note down the latency.
+                        if (LatencyTracker.isEnabled(mContext)) {
+                            LatencyTracker.getInstance(mContext).onActionEnd(
+                                    ACTION_CHECK_CREDENTIAL_UNLOCKED);
+                        }
+                    }
+                });
+!!!4316805.java!!!	onPasswordChecked(in userId : int, inout matched : boolean, in timeoutMs : int, inout isValidPassword : boolean) : void
+        boolean dismissKeyguard = KeyguardUpdateMonitor.getCurrentUser() == userId;
+        if (matched) {
+            mCallback.reportUnlockAttempt(userId, true, 0);
+            if (dismissKeyguard) {
+                mDismissing = true;
+                mCallback.dismiss(true, userId);
+            }
+        } else {
+            if (isValidPassword) {
+                mCallback.reportUnlockAttempt(userId, false, timeoutMs);
+                if (timeoutMs > 0) {
+                    long deadline = mLockPatternUtils.setLockoutAttemptDeadline(
+                            userId, timeoutMs);
+                    handleAttemptLockout(deadline);
+                }
+            }
+            if (timeoutMs == 0) {
+                mSecurityMessageDisplay.setMessage(getWrongPasswordStringId());
+            }
+        }
+        resetPasswordText(true /* animate */, !matched /* announce deletion if no match */);
+!!!4317445.java!!!	handleAttemptLockout(in elapsedRealtimeDeadline : long) : void
+        setPasswordEntryEnabled(false);
+        long elapsedRealtime = SystemClock.elapsedRealtime();
+        long secondsInFuture = (long) Math.ceil(
+                (elapsedRealtimeDeadline - elapsedRealtime) / 1000.0);
+        mCountdownTimer = new CountDownTimer(secondsInFuture * 1000, 1000) {
+
+            @Override
+            public void onTick(long millisUntilFinished) {
+                int secondsRemaining = (int) Math.round(millisUntilFinished / 1000.0);
+                mSecurityMessageDisplay.formatMessage(
+                        R.string.kg_too_many_failed_attempts_countdown, secondsRemaining);
+            }
+
+            @Override
+            public void onFinish() {
+                mSecurityMessageDisplay.setMessage("");
+                resetState();
+            }
+        }.start();
+!!!4317573.java!!!	onUserInput() : void
+        if (mCallback != null) {
+            mCallback.userActivity();
+        }
+        mSecurityMessageDisplay.setMessage("");
+!!!4317701.java!!!	onKeyDown(in keyCode : int, inout event : KeyEvent) : boolean
+        onUserInput();
+        return false;
+!!!4317829.java!!!	needsInput() : boolean
+        return false;
+!!!4317957.java!!!	onPause() : void
+        if (mCountdownTimer != null) {
+            mCountdownTimer.cancel();
+            mCountdownTimer = null;
+        }
+        if (mPendingLockCheck != null) {
+            mPendingLockCheck.cancel(false);
+            mPendingLockCheck = null;
+        }
+!!!4318085.java!!!	onResume(in reason : int) : void
+        reset();
+!!!4318213.java!!!	getCallback() : KeyguardSecurityCallback
+        return mCallback;
+!!!4318341.java!!!	showPromptReason(in reason : int) : void
+        if (reason != PROMPT_REASON_NONE) {
+            int promtReasonStringRes = getPromtReasonStringRes(reason);
+            if (promtReasonStringRes != 0) {
+                mSecurityMessageDisplay.setMessage(promtReasonStringRes);
+            }
+        }
+!!!4318469.java!!!	showMessage(in message : String, in color : int) : void
+        mSecurityMessageDisplay.setNextMessageColor(color);
+        mSecurityMessageDisplay.setMessage(message);
+!!!4318725.java!!!	doHapticKeyClick() : void
+        if (mEnableHaptics) {
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY,
+                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+                    | HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+        }
+!!!4318853.java!!!	startDisappearAnimation(inout finishRunnable : Runnable) : boolean
+        return false;

@@ -1,0 +1,116 @@
+class BnAAudioService
+!!!665733.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    aaudio_handle_t stream;
+    aaudio::AAudioStreamRequest request;
+    aaudio::AAudioStreamConfiguration configuration;
+    pid_t pid;
+    pid_t tid;
+    int64_t nanoseconds;
+    aaudio_result_t result;
+    ALOGV("BnAAudioService::onTransact(%i) %i", code, flags);
+    data.checkInterface(this);
+
+    switch(code) {
+        case OPEN_STREAM: {
+            request.readFromParcel(&data);
+
+            //ALOGD("BnAAudioService::client openStream request dump --------------------");
+            //request.dump();
+
+            stream = openStream(request, configuration);
+            //ALOGD("BnAAudioService::onTransact OPEN_STREAM server handle = 0x%08X", stream);
+            reply->writeInt32(stream);
+            configuration.writeToParcel(reply);
+            return NO_ERROR;
+        } break;
+
+        case CLOSE_STREAM: {
+            data.readInt32(&stream);
+            result = closeStream(stream);
+            //ALOGD("BnAAudioService::onTransact CLOSE_STREAM 0x%08X, result = %d",
+            //      stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case GET_STREAM_DESCRIPTION: {
+            data.readInt32(&stream);
+            aaudio::AudioEndpointParcelable parcelable;
+            result = getStreamDescription(stream, parcelable);
+            if (result != AAUDIO_OK) {
+                return AAudioConvert_aaudioToAndroidStatus(result);
+            }
+            result = parcelable.validate();
+            if (result != AAUDIO_OK) {
+                ALOGE("BnAAudioService::onTransact getStreamDescription() returns %d", result);
+                parcelable.dump();
+                return AAudioConvert_aaudioToAndroidStatus(result);
+            }
+            reply->writeInt32(result);
+            parcelable.writeToParcel(reply);
+            return NO_ERROR;
+        } break;
+
+        case START_STREAM: {
+            data.readInt32(&stream);
+            result = startStream(stream);
+            ALOGV("BnAAudioService::onTransact START_STREAM 0x%08X, result = %d",
+                    stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case PAUSE_STREAM: {
+            data.readInt32(&stream);
+            result = pauseStream(stream);
+            ALOGV("BnAAudioService::onTransact PAUSE_STREAM 0x%08X, result = %d",
+                  stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case STOP_STREAM: {
+            data.readInt32(&stream);
+            result = stopStream(stream);
+            ALOGV("BnAAudioService::onTransact STOP_STREAM 0x%08X, result = %d",
+                  stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case FLUSH_STREAM: {
+            data.readInt32(&stream);
+            result = flushStream(stream);
+            ALOGV("BnAAudioService::onTransact FLUSH_STREAM 0x%08X, result = %d",
+                    stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case REGISTER_AUDIO_THREAD: {
+            data.readInt32(&stream);
+            data.readInt32(&pid);
+            data.readInt32(&tid);
+            data.readInt64(&nanoseconds);
+            result = registerAudioThread(stream, pid, tid, nanoseconds);
+            ALOGV("BnAAudioService::onTransact REGISTER_AUDIO_THREAD 0x%08X, result = %d",
+                    stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        case UNREGISTER_AUDIO_THREAD: {
+            data.readInt32(&stream);
+            data.readInt32(&pid);
+            data.readInt32(&tid);
+            result = unregisterAudioThread(stream, pid, tid);
+            ALOGV("BnAAudioService::onTransact UNREGISTER_AUDIO_THREAD 0x%08X, result = %d",
+                    stream, result);
+            reply->writeInt32(result);
+            return NO_ERROR;
+        } break;
+
+        default:
+            // ALOGW("BnAAudioService::onTransact not handled %u", code);
+            return BBinder::onTransact(code, data, reply, flags);
+    }

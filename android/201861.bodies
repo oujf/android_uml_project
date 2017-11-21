@@ -1,0 +1,233 @@
+class TagMonitor
+!!!513669.cpp!!!	parseTagsToMonitor(in tagNames : String8) : void
+    std::lock_guard<std::mutex> lock(mMonitorMutex);
+
+    // Expand shorthands
+    if (ssize_t idx = tagNames.find("3a") != -1) {
+        ssize_t end = tagNames.find(",", idx);
+        char* start = tagNames.lockBuffer(tagNames.size());
+        start[idx] = '\0';
+        char* rest = (end != -1) ? (start + end) : (start + tagNames.size());
+        tagNames = String8::format("%s%s%s", start, k3aTags, rest);
+    }
+
+    sp<VendorTagDescriptor> vTags =
+            VendorTagDescriptor::getGlobalVendorTagDescriptor();
+    if ((nullptr == vTags.get()) || (0 >= vTags->getTagCount())) {
+        sp<VendorTagDescriptorCache> cache =
+                VendorTagDescriptorCache::getGlobalVendorTagCache();
+        if (cache.get()) {
+            cache->getVendorTagDescriptor(mVendorTagId, &vTags);
+        }
+    }
+
+    bool gotTag = false;
+
+    char *tokenized = tagNames.lockBuffer(tagNames.size());
+    char *savePtr;
+    char *nextTagName = strtok_r(tokenized, ", ", &savePtr);
+    while (nextTagName != nullptr) {
+        uint32_t tag;
+        status_t res = CameraMetadata::getTagFromName(nextTagName, vTags.get(), &tag);
+        if (res != OK) {
+            ALOGW("%s: Unknown tag %s, ignoring", __FUNCTION__, nextTagName);
+        } else {
+            if (!gotTag) {
+                mMonitoredTagList.clear();
+                gotTag = true;
+            }
+            mMonitoredTagList.push_back(tag);
+        }
+        nextTagName = strtok_r(nullptr, ", ", &savePtr);
+    }
+
+    tagNames.unlockBuffer();
+
+    if (gotTag) {
+        // Got at least one new tag
+        mMonitoringEnabled = true;
+    }
+!!!513797.cpp!!!	disableMonitoring() : void
+    mMonitoringEnabled = false;
+    mLastMonitoredRequestValues.clear();
+    mLastMonitoredResultValues.clear();
+!!!513925.cpp!!!	monitorMetadata(in source : TagMonitor::eventSource, in frameNumber : int64_t, in timestamp : nsecs_t, in metadata : CameraMetadata) : void
+    if (!mMonitoringEnabled) return;
+
+    std::lock_guard<std::mutex> lock(mMonitorMutex);
+
+    if (timestamp == 0) {
+        timestamp = systemTime(SYSTEM_TIME_BOOTTIME);
+    }
+
+    for (auto tag : mMonitoredTagList) {
+        camera_metadata_ro_entry entry = metadata.find(tag);
+        CameraMetadata &lastValues = (source == REQUEST) ?
+                mLastMonitoredRequestValues : mLastMonitoredResultValues;
+        if (lastValues.isEmpty()) {
+            lastValues = CameraMetadata(mMonitoredTagList.size());
+            const camera_metadata_t *metaBuffer =
+                    lastValues.getAndLock();
+            set_camera_metadata_vendor_id(
+                    const_cast<camera_metadata_t *> (metaBuffer), mVendorTagId);
+            lastValues.unlock(metaBuffer);
+        }
+
+        camera_metadata_entry lastEntry = lastValues.find(tag);
+
+        if (entry.count > 0) {
+            bool isDifferent = false;
+            if (lastEntry.count > 0) {
+                // Have a last value, compare to see if changed
+                if (lastEntry.type == entry.type &&
+                        lastEntry.count == entry.count) {
+                    // Same type and count, compare values
+                    size_t bytesPerValue = camera_metadata_type_size[lastEntry.type];
+                    size_t entryBytes = bytesPerValue * lastEntry.count;
+                    int cmp = memcmp(entry.data.u8, lastEntry.data.u8, entryBytes);
+                    if (cmp != 0) {
+                        isDifferent = true;
+                    }
+                } else {
+                    // Count or type has changed
+                    isDifferent = true;
+                }
+            } else {
+                // No last entry, so always consider to be different
+                isDifferent = true;
+            }
+
+            if (isDifferent) {
+                ALOGV("%s: Tag %s changed", __FUNCTION__,
+                      get_local_camera_metadata_tag_name_vendor_id(
+                              tag, mVendorTagId));
+                lastValues.update(entry);
+                mMonitoringEvents.emplace(source, frameNumber, timestamp, entry);
+            }
+        } else if (lastEntry.count > 0) {
+            // Value has been removed
+            ALOGV("%s: Tag %s removed", __FUNCTION__,
+                  get_local_camera_metadata_tag_name_vendor_id(
+                          tag, mVendorTagId));
+            lastValues.erase(tag);
+            entry.tag = tag;
+            entry.type = get_local_camera_metadata_tag_type_vendor_id(tag,
+                    mVendorTagId);
+            entry.count = 0;
+            mMonitoringEvents.emplace(source, frameNumber, timestamp, entry);
+        }
+    }
+!!!514053.cpp!!!	dumpMonitoredMetadata(in fd : int) : void
+    std::lock_guard<std::mutex> lock(mMonitorMutex);
+
+    if (mMonitoringEnabled) {
+        dprintf(fd, "     Tag monitoring enabled for tags:\n");
+        for (uint32_t tag : mMonitoredTagList) {
+            dprintf(fd, "        %s.%s\n",
+                    get_local_camera_metadata_section_name_vendor_id(tag,
+                            mVendorTagId),
+                    get_local_camera_metadata_tag_name_vendor_id(tag,
+                            mVendorTagId));
+        }
+    } else {
+        dprintf(fd, "     Tag monitoring disabled (enable with -m <name1,..,nameN>)\n");
+    }
+    if (mMonitoringEvents.size() > 0) {
+        dprintf(fd, "     Monitored tag event log:\n");
+        for (const auto& event : mMonitoringEvents) {
+            int indentation = (event.source == REQUEST) ? 15 : 30;
+            dprintf(fd, "        f%d:%" PRId64 "ns: %*s%s.%s: ",
+                    event.frameNumber, event.timestamp,
+                    indentation,
+                    event.source == REQUEST ? "REQ:" : "RES:",
+                    get_local_camera_metadata_section_name_vendor_id(event.tag,
+                            mVendorTagId),
+                    get_local_camera_metadata_tag_name_vendor_id(event.tag,
+                            mVendorTagId));
+            if (event.newData.size() == 0) {
+                dprintf(fd, " (Removed)\n");
+            } else {
+                printData(fd, event.newData.data(), event.tag,
+                        event.type, event.newData.size() / camera_metadata_type_size[event.type],
+                        indentation + 18);
+            }
+        }
+    }
+
+!!!514181.cpp!!!	printData(in fd : int, in data_ptr : uint8_t, in tag : uint32_t, in type : int, in count : int, in indentation : int) : void
+    static int values_per_line[NUM_TYPES] = {
+        [TYPE_BYTE]     = 16,
+        [TYPE_INT32]    = 8,
+        [TYPE_FLOAT]    = 8,
+        [TYPE_INT64]    = 4,
+        [TYPE_DOUBLE]   = 4,
+        [TYPE_RATIONAL] = 4,
+    };
+    size_t type_size = camera_metadata_type_size[type];
+    char value_string_tmp[CAMERA_METADATA_ENUM_STRING_MAX_SIZE];
+    uint32_t value;
+
+    int lines = count / values_per_line[type];
+    if (count % values_per_line[type] != 0) lines++;
+
+    int index = 0;
+    int j, k;
+    for (j = 0; j < lines; j++) {
+        dprintf(fd, "%*s[", (j != 0) ? indentation + 4 : 0, "");
+        for (k = 0;
+             k < values_per_line[type] && count > 0;
+             k++, count--, index += type_size) {
+
+            switch (type) {
+                case TYPE_BYTE:
+                    value = *(data_ptr + index);
+                    if (camera_metadata_enum_snprint(tag,
+                                                     value,
+                                                     value_string_tmp,
+                                                     sizeof(value_string_tmp))
+                        == OK) {
+                        dprintf(fd, "%s ", value_string_tmp);
+                    } else {
+                        dprintf(fd, "%hhu ",
+                                *(data_ptr + index));
+                    }
+                    break;
+                case TYPE_INT32:
+                    value =
+                            *(int32_t*)(data_ptr + index);
+                    if (camera_metadata_enum_snprint(tag,
+                                                     value,
+                                                     value_string_tmp,
+                                                     sizeof(value_string_tmp))
+                        == OK) {
+                        dprintf(fd, "%s ", value_string_tmp);
+                    } else {
+                        dprintf(fd, "%" PRId32 " ",
+                                *(int32_t*)(data_ptr + index));
+                    }
+                    break;
+                case TYPE_FLOAT:
+                    dprintf(fd, "%0.8f ",
+                            *(float*)(data_ptr + index));
+                    break;
+                case TYPE_INT64:
+                    dprintf(fd, "%" PRId64 " ",
+                            *(int64_t*)(data_ptr + index));
+                    break;
+                case TYPE_DOUBLE:
+                    dprintf(fd, "%0.8f ",
+                            *(double*)(data_ptr + index));
+                    break;
+                case TYPE_RATIONAL: {
+                    int32_t numerator = *(int32_t*)(data_ptr + index);
+                    int32_t denominator = *(int32_t*)(data_ptr + index + 4);
+                    dprintf(fd, "(%d / %d) ",
+                            numerator, denominator);
+                    break;
+                }
+                default:
+                    dprintf(fd, "??? ");
+            }
+        }
+        dprintf(fd, "]\n");
+    }

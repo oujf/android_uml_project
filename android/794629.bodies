@@ -1,0 +1,195 @@
+class SignalDrawable
+!!!4076677.java!!!	SignalDrawable(inout context : Context)
+        mDarkModeBackgroundColor =
+                Utils.getDefaultColor(context, R.color.dark_mode_icon_color_dual_tone_background);
+        mDarkModeFillColor =
+                Utils.getDefaultColor(context, R.color.dark_mode_icon_color_dual_tone_fill);
+        mLightModeBackgroundColor =
+                Utils.getDefaultColor(context, R.color.light_mode_icon_color_dual_tone_background);
+        mLightModeFillColor =
+                Utils.getDefaultColor(context, R.color.light_mode_icon_color_dual_tone_fill);
+        mIntrinsicSize = context.getResources().getDimensionPixelSize(R.dimen.signal_icon_size);
+
+        mHandler = new Handler();
+        setDarkIntensity(0);
+!!!4076805.java!!!	setIntrinsicSize(in size : int) : void
+        mIntrinsicSize = size;
+!!!4076933.java!!!	getIntrinsicWidth() : int
+        return mIntrinsicSize;
+!!!4077061.java!!!	getIntrinsicHeight() : int
+        return mIntrinsicSize;
+!!!4077189.java!!!	setNumLevels(in levels : int) : void
+        if (levels == mNumLevels) return;
+        mNumLevels = levels;
+        invalidateSelf();
+!!!4077317.java!!!	setSignalState(in state : int) : void
+        if (state == mState) return;
+        mState = state;
+        updateAnimation();
+        invalidateSelf();
+!!!4077445.java!!!	updateAnimation() : void
+        boolean shouldAnimate = (mState == STATE_CARRIER_CHANGE) && mVisible;
+        if (shouldAnimate == mAnimating) return;
+        mAnimating = shouldAnimate;
+        if (shouldAnimate) {
+            mChangeDot.run();
+        } else {
+            mHandler.removeCallbacks(mChangeDot);
+        }
+!!!4077573.java!!!	onLevelChange(in state : int) : boolean
+        setNumLevels(getNumLevels(state));
+        setSignalState(getState(state));
+        int level = getLevel(state);
+        if (level != mLevel) {
+            mLevel = level;
+            invalidateSelf();
+        }
+        return true;
+!!!4077701.java!!!	setDarkIntensity(in darkIntensity : float) : void
+        if (darkIntensity == mOldDarkIntensity) {
+            return;
+        }
+        mPaint.setColor(getBackgroundColor(darkIntensity));
+        mForegroundPaint.setColor(getFillColor(darkIntensity));
+        mOldDarkIntensity = darkIntensity;
+        invalidateSelf();
+!!!4077829.java!!!	getFillColor(in darkIntensity : float) : int
+        return getColorForDarkIntensity(
+                darkIntensity, mLightModeFillColor, mDarkModeFillColor);
+!!!4077957.java!!!	getBackgroundColor(in darkIntensity : float) : int
+        return getColorForDarkIntensity(
+                darkIntensity, mLightModeBackgroundColor, mDarkModeBackgroundColor);
+!!!4078085.java!!!	getColorForDarkIntensity(in darkIntensity : float, in lightColor : int, in darkColor : int) : int
+        return (int) ArgbEvaluator.getInstance().evaluate(darkIntensity, lightColor, darkColor);
+!!!4078213.java!!!	onBoundsChange(inout bounds : Rect) : void
+        super.onBoundsChange(bounds);
+        invalidateSelf();
+!!!4078341.java!!!	draw(inout canvas : Canvas) : void
+        boolean isRtl = getLayoutDirection() == LayoutDirection.RTL;
+        if (isRtl) {
+            canvas.save();
+            // Mirror the drawable
+            canvas.translate(canvas.getWidth(), 0);
+            canvas.scale(-1.0f, 1.0f);
+        }
+        mFullPath.reset();
+        mFullPath.setFillType(FillType.WINDING);
+        float width = getBounds().width();
+        float height = getBounds().height();
+        float padding = Math.round(PAD * width);
+        mFullPath.moveTo(width - padding, height - padding);
+        mFullPath.lineTo(width - padding, padding);
+        mFullPath.lineTo(padding, height - padding);
+        mFullPath.lineTo(width - padding, height - padding);
+
+        if (mState == STATE_CARRIER_CHANGE) {
+            float cutWidth = (DOT_CUT_WIDTH * width);
+            float cutHeight = (DOT_CUT_HEIGHT * width);
+            float dotSize = (DOT_SIZE * height);
+            float dotPadding = (DOT_PADDING * height);
+
+            mFullPath.moveTo(width - padding, height - padding);
+            mFullPath.rLineTo(-cutWidth, 0);
+            mFullPath.rLineTo(0, -cutHeight);
+            mFullPath.rLineTo(cutWidth, 0);
+            mFullPath.rLineTo(0, cutHeight);
+            float dotSpacing = dotPadding * 2 + dotSize;
+            float x = width - padding - dotSize;
+            float y = height - padding - dotSize;
+            mForegroundPath.reset();
+            drawDot(mFullPath, mForegroundPath, x, y, dotSize, 2);
+            drawDot(mFullPath, mForegroundPath, x - dotSpacing, y, dotSize, 1);
+            drawDot(mFullPath, mForegroundPath, x - dotSpacing * 2, y, dotSize, 0);
+        } else if (mState == STATE_CUT) {
+            float cut = (CUT_OUT * width);
+            mFullPath.moveTo(width - padding, height - padding);
+            mFullPath.rLineTo(-cut, 0);
+            mFullPath.rLineTo(0, -cut);
+            mFullPath.rLineTo(cut, 0);
+            mFullPath.rLineTo(0, cut);
+        }
+
+        if (mState == STATE_EMPTY) {
+            final float cutWidth = CUT_WIDTH_DP * height;
+            final float cutDiagInset = cutWidth * INV_TAN;
+
+            // Cut out a smaller triangle from the center of mFullPath
+            mCutPath.reset();
+            mCutPath.setFillType(FillType.WINDING);
+            mCutPath.moveTo(width - padding - cutWidth,
+                    height - padding - cutWidth);
+            mCutPath.lineTo(width - padding - cutWidth, padding + cutDiagInset);
+            mCutPath.lineTo(padding + cutDiagInset, height - padding - cutWidth);
+            mCutPath.lineTo(width - padding - cutWidth,
+                    height - padding - cutWidth);
+
+            // Draw empty state as only background
+            mForegroundPath.reset();
+            mFullPath.op(mCutPath, Path.Op.DIFFERENCE);
+        } else if (mState == STATE_AIRPLANE) {
+            // Airplane mode is slashed, full-signal
+            mForegroundPath.set(mFullPath);
+            mFullPath.reset();
+            mSlash.draw((int) height, (int) width, canvas, mForegroundPaint);
+        } else if (mState != STATE_CARRIER_CHANGE) {
+            mForegroundPath.reset();
+            int sigWidth = Math.round(calcFit(mLevel / (mNumLevels - 1)) * (width - 2 * padding));
+            mForegroundPath.addRect(padding, padding, padding + sigWidth, height - padding,
+                    Direction.CW);
+            mForegroundPath.op(mFullPath, Op.INTERSECT);
+        }
+
+        canvas.drawPath(mFullPath, mPaint);
+        canvas.drawPath(mForegroundPath, mForegroundPaint);
+        if (mState == STATE_CUT) {
+            mXPath.reset();
+            mXPath.moveTo(X_PATH[0][0] * width, X_PATH[0][1] * height);
+            for (int i = 1; i < X_PATH.length; i++) {
+                mXPath.rLineTo(X_PATH[i][0] * width, X_PATH[i][1] * height);
+            }
+            canvas.drawPath(mXPath, mForegroundPaint);
+        }
+        if (isRtl) {
+            canvas.restore();
+        }
+!!!4078469.java!!!	drawDot(inout fullPath : Path, inout foregroundPath : Path, in x : float, in y : float, in dotSize : float, in i : int) : void
+        Path p = (i == mCurrentDot) ? foregroundPath : fullPath;
+        p.addRect(x, y, x + dotSize, y + dotSize, Direction.CW);
+!!!4078597.java!!!	calcFit(in v : float) : float
+        float ret = 0;
+        float t = v;
+        for (int i = 0; i < FIT.length; i++) {
+            ret += FIT[i] * t;
+            t *= v;
+        }
+        return ret;
+!!!4078725.java!!!	getAlpha() : int
+        return mPaint.getAlpha();
+!!!4078853.java!!!	setAlpha(in alpha : int) : void
+        mPaint.setAlpha(alpha);
+        mForegroundPaint.setAlpha(alpha);
+!!!4078981.java!!!	setColorFilter(inout colorFilter : ColorFilter) : void
+        mPaint.setColorFilter(colorFilter);
+        mForegroundPaint.setColorFilter(colorFilter);
+!!!4079109.java!!!	getOpacity() : int
+        return 255;
+!!!4079237.java!!!	setVisible(inout visible : boolean, inout restart : boolean) : boolean
+        mVisible = visible;
+        updateAnimation();
+        return super.setVisible(visible, restart);
+!!!4079365.java!!!	getLevel(in fullState : int) : int
+        return fullState & LEVEL_MASK;
+!!!4079493.java!!!	getState(in fullState : int) : int
+        return (fullState & STATE_MASK) >> STATE_SHIFT;
+!!!4079621.java!!!	getNumLevels(in fullState : int) : int
+        return (fullState & NUM_LEVEL_MASK) >> NUM_LEVEL_SHIFT;
+!!!4079749.java!!!	getState(in level : int, in numLevels : int, inout cutOut : boolean) : int
+        return ((cutOut ? STATE_CUT : 0) << STATE_SHIFT)
+                | (numLevels << NUM_LEVEL_SHIFT)
+                | level;
+!!!4079877.java!!!	getCarrierChangeState(in numLevels : int) : int
+        return (STATE_CARRIER_CHANGE << STATE_SHIFT) | (numLevels << NUM_LEVEL_SHIFT);
+!!!4080005.java!!!	getEmptyState(in numLevels : int) : int
+        return (STATE_EMPTY << STATE_SHIFT) | (numLevels << NUM_LEVEL_SHIFT);
+!!!4080133.java!!!	getAirplaneModeState(in numLevels : int) : int
+        return (STATE_AIRPLANE << STATE_SHIFT) | (numLevels << NUM_LEVEL_SHIFT);

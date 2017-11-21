@@ -1,0 +1,234 @@
+class NetworkScorerAppManager
+!!!10791813.java!!!	NetworkScorerAppManager(inout context : Context)
+      this(context, new SettingsFacade());
+!!!10791941.java!!!	NetworkScorerAppManager(inout context : Context, inout settingsFacade : NetworkScorerAppManager::SettingsFacade)
+        mContext = context;
+        mSettingsFacade = settingsFacade;
+!!!10792069.java!!!	getAllValidScorers() : NetworkScorerAppData
+        if (VERBOSE) Log.v(TAG, "getAllValidScorers()");
+        final PackageManager pm = mContext.getPackageManager();
+        final Intent serviceIntent = new Intent(NetworkScoreManager.ACTION_RECOMMEND_NETWORKS);
+        final List<ResolveInfo> resolveInfos =
+                pm.queryIntentServices(serviceIntent, PackageManager.GET_META_DATA);
+        if (resolveInfos == null || resolveInfos.isEmpty()) {
+            if (DEBUG) Log.d(TAG, "Found 0 Services able to handle " + serviceIntent);
+            return Collections.emptyList();
+        }
+
+        List<NetworkScorerAppData> appDataList = new ArrayList<>();
+        for (int i = 0; i < resolveInfos.size(); i++) {
+            final ServiceInfo serviceInfo = resolveInfos.get(i).serviceInfo;
+            if (hasPermissions(serviceInfo.packageName)) {
+                if (VERBOSE) {
+                    Log.v(TAG, serviceInfo.packageName + " is a valid scorer/recommender.");
+                }
+                final ComponentName serviceComponentName =
+                        new ComponentName(serviceInfo.packageName, serviceInfo.name);
+                final String serviceLabel = getRecommendationServiceLabel(serviceInfo, pm);
+                final ComponentName useOpenWifiNetworksActivity =
+                        findUseOpenWifiNetworksActivity(serviceInfo);
+                final String networkAvailableNotificationChannelId =
+                        getNetworkAvailableNotificationChannelId(serviceInfo);
+                appDataList.add(
+                        new NetworkScorerAppData(serviceInfo.applicationInfo.uid,
+                                serviceComponentName, serviceLabel, useOpenWifiNetworksActivity,
+                                networkAvailableNotificationChannelId));
+            } else {
+                if (VERBOSE) Log.v(TAG, serviceInfo.packageName
+                        + " is NOT a valid scorer/recommender.");
+            }
+        }
+
+        return appDataList;
+!!!10792197.java!!!	getRecommendationServiceLabel(inout serviceInfo : ServiceInfo, inout pm : PackageManager) : String
+        if (serviceInfo.metaData != null) {
+            final String label = serviceInfo.metaData
+                    .getString(NetworkScoreManager.RECOMMENDATION_SERVICE_LABEL_META_DATA);
+            if (!TextUtils.isEmpty(label)) {
+                return label;
+            }
+        }
+        CharSequence label = serviceInfo.loadLabel(pm);
+        return label == null ? null : label.toString();
+!!!10792325.java!!!	findUseOpenWifiNetworksActivity(inout serviceInfo : ServiceInfo) : ComponentName
+        if (serviceInfo.metaData == null) {
+            if (DEBUG) {
+                Log.d(TAG, "No metadata found on " + serviceInfo.getComponentName());
+            }
+            return null;
+        }
+        final String useOpenWifiPackage = serviceInfo.metaData
+                .getString(NetworkScoreManager.USE_OPEN_WIFI_PACKAGE_META_DATA);
+        if (TextUtils.isEmpty(useOpenWifiPackage)) {
+            if (DEBUG) {
+                Log.d(TAG, "No use_open_wifi_package metadata found on "
+                        + serviceInfo.getComponentName());
+            }
+            return null;
+        }
+        final Intent enableUseOpenWifiIntent = new Intent(NetworkScoreManager.ACTION_CUSTOM_ENABLE)
+                .setPackage(useOpenWifiPackage);
+        final ResolveInfo resolveActivityInfo = mContext.getPackageManager()
+                .resolveActivity(enableUseOpenWifiIntent, 0 /* flags */);
+        if (VERBOSE) {
+            Log.d(TAG, "Resolved " + enableUseOpenWifiIntent + " to " + resolveActivityInfo);
+        }
+
+        if (resolveActivityInfo != null && resolveActivityInfo.activityInfo != null) {
+            return resolveActivityInfo.activityInfo.getComponentName();
+        }
+
+        return null;
+!!!10792453.java!!!	getNetworkAvailableNotificationChannelId(inout serviceInfo : ServiceInfo) : String
+        if (serviceInfo.metaData == null) {
+            if (DEBUG) {
+                Log.d(TAG, "No metadata found on " + serviceInfo.getComponentName());
+            }
+            return null;
+        }
+
+        return serviceInfo.metaData.getString(
+                NetworkScoreManager.NETWORK_AVAILABLE_NOTIFICATION_CHANNEL_ID_META_DATA);
+!!!10792581.java!!!	getActiveScorer() : NetworkScorerAppData
+        final int enabledSetting = getNetworkRecommendationsEnabledSetting();
+        if (enabledSetting == NetworkScoreManager.RECOMMENDATIONS_ENABLED_FORCED_OFF) {
+            return null;
+        }
+
+        return getScorer(getNetworkRecommendationsPackage());
+!!!10792709.java!!!	getScorer(in packageName : String) : NetworkScorerAppData
+        if (TextUtils.isEmpty(packageName)) {
+            return null;
+        }
+
+        // Otherwise return the recommendation provider (which may be null).
+        List<NetworkScorerAppData> apps = getAllValidScorers();
+        for (int i = 0; i < apps.size(); i++) {
+            NetworkScorerAppData app = apps.get(i);
+            if (app.getRecommendationServicePackageName().equals(packageName)) {
+                return app;
+            }
+        }
+
+        return null;
+!!!10792837.java!!!	hasPermissions(in packageName : String) : boolean
+        final PackageManager pm = mContext.getPackageManager();
+        return pm.checkPermission(permission.SCORE_NETWORKS, packageName)
+                == PackageManager.PERMISSION_GRANTED;
+!!!10792965.java!!!	setActiveScorer(in packageName : String) : boolean
+        final String oldPackageName = getNetworkRecommendationsPackage();
+
+        if (TextUtils.equals(oldPackageName, packageName)) {
+            // No change.
+            return true;
+        }
+
+        if (TextUtils.isEmpty(packageName)) {
+            Log.i(TAG, "Network scorer forced off, was: " + oldPackageName);
+            setNetworkRecommendationsPackage(null);
+            setNetworkRecommendationsEnabledSetting(
+                    NetworkScoreManager.RECOMMENDATIONS_ENABLED_FORCED_OFF);
+            return true;
+        }
+
+        // We only make the change if the new package is valid.
+        if (getScorer(packageName) != null) {
+            Log.i(TAG, "Changing network scorer from " + oldPackageName + " to " + packageName);
+            setNetworkRecommendationsPackage(packageName);
+            setNetworkRecommendationsEnabledSetting(NetworkScoreManager.RECOMMENDATIONS_ENABLED_ON);
+            return true;
+        } else {
+            Log.w(TAG, "Requested network scorer is not valid: " + packageName);
+            return false;
+        }
+!!!10793093.java!!!	updateState() : void
+        final int enabledSetting = getNetworkRecommendationsEnabledSetting();
+        if (enabledSetting == NetworkScoreManager.RECOMMENDATIONS_ENABLED_FORCED_OFF) {
+            // Don't change anything if it's forced off.
+            if (DEBUG) Log.d(TAG, "Recommendations forced off.");
+            return;
+        }
+
+        // First, see if the current package is still valid. If so, then we can exit early.
+        final String currentPackageName = getNetworkRecommendationsPackage();
+        if (getScorer(currentPackageName) != null) {
+            if (VERBOSE) Log.v(TAG, currentPackageName + " is the active scorer.");
+            setNetworkRecommendationsEnabledSetting(NetworkScoreManager.RECOMMENDATIONS_ENABLED_ON);
+            return;
+        }
+
+        // the active scorer isn't valid, revert to the default if it's different
+        final String defaultPackageName = getDefaultPackageSetting();
+        if (!TextUtils.equals(currentPackageName, defaultPackageName)) {
+            setNetworkRecommendationsPackage(defaultPackageName);
+            if (DEBUG) {
+                Log.d(TAG, "Defaulted the network recommendations app to: " + defaultPackageName);
+            }
+            if (getScorer(defaultPackageName) != null) { // the default is valid
+                if (DEBUG) Log.d(TAG, defaultPackageName + " is now the active scorer.");
+                setNetworkRecommendationsEnabledSetting(
+                        NetworkScoreManager.RECOMMENDATIONS_ENABLED_ON);
+            } else { // the default isn't valid either, we're disabled at this point
+                if (DEBUG) Log.d(TAG, defaultPackageName + " is not an active scorer.");
+                setNetworkRecommendationsEnabledSetting(
+                        NetworkScoreManager.RECOMMENDATIONS_ENABLED_OFF);
+            }
+        }
+!!!10793221.java!!!	migrateNetworkScorerAppSettingIfNeeded() : void
+        final String scorerAppPkgNameSetting =
+                mSettingsFacade.getString(mContext, Settings.Global.NETWORK_SCORER_APP);
+        if (TextUtils.isEmpty(scorerAppPkgNameSetting)) {
+            // Early exit, nothing to do.
+            return;
+        }
+
+        final NetworkScorerAppData currentAppData = getActiveScorer();
+        if (currentAppData == null) {
+            // Don't touch anything until we have an active scorer to work with.
+            return;
+        }
+
+        if (DEBUG) {
+            Log.d(TAG, "Migrating Settings.Global.NETWORK_SCORER_APP "
+                    + "(" + scorerAppPkgNameSetting + ")...");
+        }
+
+        // If the new (useOpenWifi) Setting isn't set and the old Setting's value matches the
+        // new metadata value then update the new Setting with the old value. Otherwise it's a
+        // mismatch so we shouldn't enable the Setting automatically.
+        final ComponentName enableUseOpenWifiActivity =
+                currentAppData.getEnableUseOpenWifiActivity();
+        final String useOpenWifiSetting =
+                mSettingsFacade.getString(mContext, Settings.Global.USE_OPEN_WIFI_PACKAGE);
+        if (TextUtils.isEmpty(useOpenWifiSetting)
+                && enableUseOpenWifiActivity != null
+                && scorerAppPkgNameSetting.equals(enableUseOpenWifiActivity.getPackageName())) {
+            mSettingsFacade.putString(mContext, Settings.Global.USE_OPEN_WIFI_PACKAGE,
+                    scorerAppPkgNameSetting);
+            if (DEBUG) {
+                Log.d(TAG, "Settings.Global.USE_OPEN_WIFI_PACKAGE set to "
+                        + "'" + scorerAppPkgNameSetting + "'.");
+            }
+        }
+
+        // Clear out the old setting so we don't run through the migration code again.
+        mSettingsFacade.putString(mContext, Settings.Global.NETWORK_SCORER_APP, null);
+        if (DEBUG) {
+            Log.d(TAG, "Settings.Global.NETWORK_SCORER_APP migration complete.");
+            final String setting =
+                    mSettingsFacade.getString(mContext, Settings.Global.USE_OPEN_WIFI_PACKAGE);
+            Log.d(TAG, "Settings.Global.USE_OPEN_WIFI_PACKAGE is: '" + setting + "'.");
+        }
+!!!10793349.java!!!	getDefaultPackageSetting() : String
+        return mContext.getResources().getString(
+                R.string.config_defaultNetworkRecommendationProviderPackage);
+!!!10793477.java!!!	getNetworkRecommendationsPackage() : String
+        return mSettingsFacade.getString(mContext, Settings.Global.NETWORK_RECOMMENDATIONS_PACKAGE);
+!!!10793605.java!!!	setNetworkRecommendationsPackage(in packageName : String) : void
+        mSettingsFacade.putString(mContext,
+                Settings.Global.NETWORK_RECOMMENDATIONS_PACKAGE, packageName);
+!!!10793733.java!!!	getNetworkRecommendationsEnabledSetting() : int
+        return mSettingsFacade.getInt(mContext, Settings.Global.NETWORK_RECOMMENDATIONS_ENABLED, 0);
+!!!10793861.java!!!	setNetworkRecommendationsEnabledSetting(in value : int) : void
+        mSettingsFacade.putInt(mContext,
+                Settings.Global.NETWORK_RECOMMENDATIONS_ENABLED, value);

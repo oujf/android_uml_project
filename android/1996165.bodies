@@ -1,0 +1,94 @@
+class BitTube
+!!!14203269.cpp!!!	BitTube(in bufsize : size_t)
+    init(bufsize, bufsize);
+!!!14203525.cpp!!!	BitTube(in data : Parcel)
+    readFromParcel(&data);
+!!!14203781.cpp!!!	initCheck() : status_t
+    if (mReceiveFd < 0) {
+        return status_t(mReceiveFd);
+    }
+    return NO_ERROR;
+!!!14203909.cpp!!!	getFd() : int
+    return mReceiveFd;
+!!!14204037.cpp!!!	getSendFd() : int
+    return mSendFd;
+!!!14204165.cpp!!!	moveReceiveFd() : base::unique_fd
+    return std::move(mReceiveFd);
+!!!14204293.cpp!!!	setReceiveFd(inout receiveFd : base::unique_fd) : void
+    mReceiveFd = std::move(receiveFd);
+!!!14204677.cpp!!!	writeToParcel(inout reply : Parcel) : status_t
+    if (mReceiveFd < 0) return -EINVAL;
+
+    status_t result = reply->writeDupFileDescriptor(mReceiveFd);
+    mReceiveFd.reset();
+    return result;
+!!!14204805.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    mReceiveFd.reset(dup(parcel->readFileDescriptor()));
+    if (mReceiveFd < 0) {
+        mReceiveFd.reset();
+        int error = errno;
+        ALOGE("BitTube::readFromParcel: can't dup file descriptor (%s)", strerror(error));
+        return -error;
+    }
+    return NO_ERROR;
+!!!14204933.cpp!!!	init(in rcvbuf : size_t, in sndbuf : size_t) : void
+    int sockets[2];
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets) == 0) {
+        size_t size = DEFAULT_SOCKET_BUFFER_SIZE;
+        setsockopt(sockets[0], SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+        setsockopt(sockets[1], SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+        // since we don't use the "return channel", we keep it small...
+        setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+        setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+        fcntl(sockets[0], F_SETFL, O_NONBLOCK);
+        fcntl(sockets[1], F_SETFL, O_NONBLOCK);
+        mReceiveFd.reset(sockets[0]);
+        mSendFd.reset(sockets[1]);
+    } else {
+        mReceiveFd.reset();
+        ALOGE("BitTube: pipe creation failed (%s)", strerror(errno));
+    }
+!!!14205061.cpp!!!	write(in vaddr : void, in size : size_t) : ssize_t
+    ssize_t err, len;
+    do {
+        len = ::send(mSendFd, vaddr, size, MSG_DONTWAIT | MSG_NOSIGNAL);
+        // cannot return less than size, since we're using SOCK_SEQPACKET
+        err = len < 0 ? errno : 0;
+    } while (err == EINTR);
+    return err == 0 ? len : -err;
+!!!14205189.cpp!!!	read(inout vaddr : void, in size : size_t) : ssize_t
+    ssize_t err, len;
+    do {
+        len = ::recv(mReceiveFd, vaddr, size, MSG_DONTWAIT);
+        err = len < 0 ? errno : 0;
+    } while (err == EINTR);
+    if (err == EAGAIN || err == EWOULDBLOCK) {
+        // EAGAIN means that we have non-blocking I/O but there was no data to be read. Nothing the
+        // client should care about.
+        return 0;
+    }
+    return err == 0 ? len : -err;
+!!!14205317.cpp!!!	sendObjects(inout tube : BitTube, in events : void, in count : size_t, in objSize : size_t) : ssize_t
+    const char* vaddr = reinterpret_cast<const char*>(events);
+    ssize_t size = tube->write(vaddr, count * objSize);
+
+    // should never happen because of SOCK_SEQPACKET
+    LOG_ALWAYS_FATAL_IF((size >= 0) && (size % static_cast<ssize_t>(objSize)),
+                        "BitTube::sendObjects(count=%zu, size=%zu), res=%zd (partial events were "
+                        "sent!)",
+                        count, objSize, size);
+
+    // ALOGE_IF(size<0, "error %d sending %d events", size, count);
+    return size < 0 ? size : size / static_cast<ssize_t>(objSize);
+!!!14205445.cpp!!!	recvObjects(inout tube : BitTube, inout events : void, in count : size_t, in objSize : size_t) : ssize_t
+    char* vaddr = reinterpret_cast<char*>(events);
+    ssize_t size = tube->read(vaddr, count * objSize);
+
+    // should never happen because of SOCK_SEQPACKET
+    LOG_ALWAYS_FATAL_IF((size >= 0) && (size % static_cast<ssize_t>(objSize)),
+                        "BitTube::recvObjects(count=%zu, size=%zu), res=%zd (partial events were "
+                        "received!)",
+                        count, objSize, size);
+
+    // ALOGE_IF(size<0, "error %d receiving %d events", size, count);
+    return size < 0 ? size : size / static_cast<ssize_t>(objSize);

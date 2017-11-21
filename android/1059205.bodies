@@ -1,0 +1,79 @@
+class DexLoadReporter
+!!!5349509.java!!!	DexLoadReporter()
+        mDataDirs = new HashSet<>();
+!!!5349637.java!!!	getInstance() : DexLoadReporter
+        return INSTANCE;
+!!!5349765.java!!!	registerAppDataDir(in packageName : String, in dataDir : String) : void
+        if (DEBUG) {
+            Slog.i(TAG, "Package " + packageName + " registering data dir: " + dataDir);
+        }
+        // TODO(calin): A few code paths imply that the data dir
+        // might be null. Investigate when that can happen.
+        if (dataDir != null) {
+            synchronized (mDataDirs) {
+                mDataDirs.add(dataDir);
+            }
+        }
+!!!5349893.java!!!	report(inout dexPaths : List<String>) : void
+        if (dexPaths.isEmpty()) {
+            return;
+        }
+        // Notify the package manager about the dex loads unconditionally.
+        // The load might be for either a primary or secondary dex file.
+        notifyPackageManager(dexPaths);
+        // Check for secondary dex files and register them for profiling if
+        // possible.
+        registerSecondaryDexForProfiling(dexPaths);
+!!!5350021.java!!!	notifyPackageManager(inout dexPaths : List<String>) : void
+        String packageName = ActivityThread.currentPackageName();
+        try {
+            ActivityThread.getPackageManager().notifyDexLoad(
+                    packageName, dexPaths, VMRuntime.getRuntime().vmInstructionSet());
+        } catch (RemoteException re) {
+            Slog.e(TAG, "Failed to notify PM about dex load for package " + packageName, re);
+        }
+!!!5350149.java!!!	registerSecondaryDexForProfiling(inout dexPaths : List<String>) : void
+        if (!SystemProperties.getBoolean("dalvik.vm.dexopt.secondary", false)) {
+            return;
+        }
+        // Make a copy of the current data directories so that we don't keep the lock
+        // while registering for profiling. The registration will perform I/O to
+        // check for or create the profile.
+        String[] dataDirs;
+        synchronized (mDataDirs) {
+            dataDirs = mDataDirs.toArray(new String[0]);
+        }
+        for (String dexPath : dexPaths) {
+            registerSecondaryDexForProfiling(dexPath, dataDirs);
+        }
+!!!5350277.java!!!	registerSecondaryDexForProfiling(in dexPath : String, inout dataDirs : String [[]]) : void
+        if (!isSecondaryDexFile(dexPath, dataDirs)) {
+            // The dex path is not a secondary dex file. Nothing to do.
+            return;
+        }
+        File secondaryProfile = getSecondaryProfileFile(dexPath);
+        try {
+            // Create the profile if not already there.
+            // Returns true if the file was created, false if the file already exists.
+            // or throws exceptions in case of errors.
+            boolean created = secondaryProfile.createNewFile();
+            if (DEBUG && created) {
+                Slog.i(TAG, "Created profile for secondary dex: " + secondaryProfile);
+            }
+        } catch (IOException ex) {
+            Slog.e(TAG, "Failed to create profile for secondary dex " + secondaryProfile +
+                    ":" + ex.getMessage());
+            // Don't move forward with the registration if we failed to create the profile.
+            return;
+        }
+
+        VMRuntime.registerAppInfo(secondaryProfile.getPath(), new String[] { dexPath });
+!!!5350405.java!!!	isSecondaryDexFile(in dexPath : String, inout dataDirs : String [[]]) : boolean
+        for (String dataDir : dataDirs) {
+            if (FileUtils.contains(dataDir, dexPath)) {
+                return true;
+            }
+        }
+        return false;
+!!!5350533.java!!!	getSecondaryProfileFile(in dexPath : String) : File
+        return new File(dexPath + ".prof");

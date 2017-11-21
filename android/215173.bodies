@@ -1,0 +1,180 @@
+class Tuner
+!!!547717.cpp!!!	Tuner(in callback : sp<TunerCallbackInterface>, in module : sp<RadioHalHidl>)
+    // Make sure the handler we are passing in only deals with const members,
+    // as it can be called on an arbitrary thread.
+    const auto& self = this;
+    HalDeathHandler::getInstance()->registerAtExitHandler(
+            this, [&self]() { self->sendHwFailureEvent(); });
+!!!547845.cpp!!!	setConfiguration(in config : radio_hal_band_config_t) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    BandConfig halConfig;
+    HidlUtils::convertBandConfigToHal(&halConfig, config);
+
+    Return<Result> hidlResult = mHalTuner->setConfiguration(halConfig);
+    return HidlUtils::convertHalResult(hidlResult);
+!!!547973.cpp!!!	getConfiguration(inout config : radio_hal_band_config_t) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    BandConfig halConfig;
+    Result halResult;
+    Return<void> hidlReturn =
+            mHalTuner->getConfiguration([&](Result result, const BandConfig& config) {
+                    halResult = result;
+                    if (result == Result::OK) {
+                        halConfig = config;
+                    }
+                });
+    if (hidlReturn.isOk() && halResult == Result::OK) {
+        HidlUtils::convertBandConfigFromHal(config, &halConfig);
+    }
+    return HidlUtils::convertHalResult(halResult);
+!!!548101.cpp!!!	scan(in direction : radio_direction_t, in skip_sub_channel : bool) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    Return<Result> hidlResult =
+            mHalTuner->scan(static_cast<Direction>(direction), skip_sub_channel);
+    return HidlUtils::convertHalResult(hidlResult);
+!!!548229.cpp!!!	step(in direction : radio_direction_t, in skip_sub_channel : bool) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    Return<Result> hidlResult =
+            mHalTuner->step(static_cast<Direction>(direction), skip_sub_channel);
+    return HidlUtils::convertHalResult(hidlResult);
+!!!548357.cpp!!!	tune(in channel : uint, in sub_channel : uint) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    Return<Result> hidlResult =
+            mHalTuner->tune(channel, sub_channel);
+    return HidlUtils::convertHalResult(hidlResult);
+!!!548485.cpp!!!	cancel() : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    Return<Result> hidlResult = mHalTuner->cancel();
+    return HidlUtils::convertHalResult(hidlResult);
+!!!548613.cpp!!!	getProgramInformation(inout info : radio_program_info_t) : int
+    ALOGV("%s IN mHalTuner %p", __FUNCTION__, mHalTuner.get());
+    if (mHalTuner == 0) {
+        return -ENODEV;
+    }
+    if (info == nullptr || info->metadata == nullptr) {
+        return BAD_VALUE;
+    }
+    ProgramInfo halInfo;
+    Result halResult;
+    Return<void> hidlReturn = mHalTuner->getProgramInformation(
+        [&](Result result, const ProgramInfo& info) {
+            halResult = result;
+            if (result == Result::OK) {
+                halInfo = info;
+            }
+        });
+    if (hidlReturn.isOk() && halResult == Result::OK) {
+        HidlUtils::convertProgramInfoFromHal(info, &halInfo);
+    }
+    return HidlUtils::convertHalResult(halResult);
+!!!548741.cpp!!!	hardwareFailure() : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    handleHwFailure();
+    return Return<void>();
+!!!548869.cpp!!!	configChange(in result : Result, in config : BandConfig) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event;
+    memset(&event, 0, sizeof(radio_hal_event_t));
+    event.type = RADIO_EVENT_CONFIG;
+    event.status = HidlUtils::convertHalResult(result);
+    HidlUtils::convertBandConfigFromHal(&event.config, &config);
+    onCallback(&event);
+    return Return<void>();
+!!!548997.cpp!!!	tuneComplete(in result : Result, in info : ProgramInfo) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event = {};
+    RadioMetadataWrapper metadataWrapper(&event.info.metadata);
+
+    event.type = RADIO_EVENT_TUNED;
+    event.status = HidlUtils::convertHalResult(result);
+    HidlUtils::convertProgramInfoFromHal(&event.info, &info);
+    onCallback(&event);
+    return Return<void>();
+!!!549125.cpp!!!	afSwitch(in info : ProgramInfo) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event = {};
+    RadioMetadataWrapper metadataWrapper(&event.info.metadata);
+
+    event.type = RADIO_EVENT_AF_SWITCH;
+    HidlUtils::convertProgramInfoFromHal(&event.info, &info);
+    onCallback(&event);
+    return Return<void>();
+!!!549253.cpp!!!	antennaStateChange(in connected : bool) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event;
+    memset(&event, 0, sizeof(radio_hal_event_t));
+    event.type = RADIO_EVENT_ANTENNA;
+    event.on = connected;
+    onCallback(&event);
+    return Return<void>();
+!!!549381.cpp!!!	trafficAnnouncement(in active : bool) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event;
+    memset(&event, 0, sizeof(radio_hal_event_t));
+    event.type = RADIO_EVENT_TA;
+    event.on = active;
+    onCallback(&event);
+    return Return<void>();
+!!!549509.cpp!!!	emergencyAnnouncement(in active : bool) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event;
+    memset(&event, 0, sizeof(radio_hal_event_t));
+    event.type = RADIO_EVENT_EA;
+    event.on = active;
+    onCallback(&event);
+    return Return<void>();
+!!!549637.cpp!!!	newMetadata(in channel : uint32_t, in subChannel : uint32_t, in metadata : ::android::hardware::hidl_vec<MetaData>) : Return<void>
+    ALOGV("%s IN", __FUNCTION__);
+    radio_hal_event_t event = {};
+    RadioMetadataWrapper metadataWrapper(&event.metadata);
+
+    event.type = RADIO_EVENT_METADATA;
+    HidlUtils::convertMetaDataFromHal(&event.metadata, metadata, channel, subChannel);
+    onCallback(&event);
+    return Return<void>();
+!!!549765.cpp!!!	setHalTuner(inout halTuner : sp<ITuner>) : void
+    if (mHalTuner != 0) {
+        mHalTuner->unlinkToDeath(HalDeathHandler::getInstance());
+    }
+    mHalTuner = halTuner;
+    if (mHalTuner != 0) {
+        mHalTuner->linkToDeath(HalDeathHandler::getInstance(), 0 /*cookie*/);
+    }
+!!!550021.cpp!!!	~Tuner()
+    HalDeathHandler::getInstance()->unregisterAtExitHandler(this);
+!!!550149.cpp!!!	onCallback(inout halEvent : radio_hal_event_t) : void
+    if (mCallback != 0) {
+        mCallback->onEvent(halEvent);
+    }
+!!!550277.cpp!!!	handleHwFailure() : void
+    ALOGV("%s IN", __FUNCTION__);
+    sp<RadioHalHidl> parentModule = mParentModule.promote();
+    if (parentModule != 0) {
+        parentModule->clearService();
+    }
+    sendHwFailureEvent();
+    mHalTuner.clear();
+!!!550405.cpp!!!	sendHwFailureEvent() : void
+    radio_hal_event_t event;
+    memset(&event, 0, sizeof(radio_hal_event_t));
+    event.type = RADIO_EVENT_HW_FAILURE;
+    onCallback(&event);

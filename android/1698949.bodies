@@ -1,0 +1,642 @@
+class JobStatus
+!!!11727877.java!!!	getServiceToken() : int
+        return callingUid;
+!!!11728005.java!!!	JobStatus(inout job : JobInfo, in callingUid : int, in sourcePackageName : String, in sourceUserId : int, in tag : String, in numFailures : int, in earliestRunTimeElapsedMillis : long, in latestRunTimeElapsedMillis : long)
+        this.job = job;
+        this.callingUid = callingUid;
+
+        int tempSourceUid = -1;
+        if (sourceUserId != -1 && sourcePackageName != null) {
+            try {
+                tempSourceUid = AppGlobals.getPackageManager().getPackageUid(sourcePackageName, 0,
+                        sourceUserId);
+            } catch (RemoteException ex) {
+                // Can't happen, PackageManager runs in the same process.
+            }
+        }
+        if (tempSourceUid == -1) {
+            this.sourceUid = callingUid;
+            this.sourceUserId = UserHandle.getUserId(callingUid);
+            this.sourcePackageName = job.getService().getPackageName();
+            this.sourceTag = null;
+        } else {
+            this.sourceUid = tempSourceUid;
+            this.sourceUserId = sourceUserId;
+            this.sourcePackageName = sourcePackageName;
+            this.sourceTag = tag;
+        }
+
+        this.batteryName = this.sourceTag != null
+                ? this.sourceTag + ":" + job.getService().getPackageName()
+                : job.getService().flattenToShortString();
+        this.tag = "*job*/" + this.batteryName;
+
+        this.earliestRunTimeElapsedMillis = earliestRunTimeElapsedMillis;
+        this.latestRunTimeElapsedMillis = latestRunTimeElapsedMillis;
+        this.numFailures = numFailures;
+
+        int requiredConstraints = job.getConstraintFlags();
+
+        switch (job.getNetworkType()) {
+            case JobInfo.NETWORK_TYPE_NONE:
+                // No constraint.
+                break;
+            case JobInfo.NETWORK_TYPE_ANY:
+                requiredConstraints |= CONSTRAINT_CONNECTIVITY;
+                break;
+            case JobInfo.NETWORK_TYPE_UNMETERED:
+                requiredConstraints |= CONSTRAINT_UNMETERED;
+                break;
+            case JobInfo.NETWORK_TYPE_NOT_ROAMING:
+                requiredConstraints |= CONSTRAINT_NOT_ROAMING;
+                break;
+            case JobInfo.NETWORK_TYPE_METERED:
+                requiredConstraints |= CONSTRAINT_METERED;
+                break;
+            default:
+                Slog.w(TAG, "Unrecognized networking constraint " + job.getNetworkType());
+                break;
+        }
+
+        if (earliestRunTimeElapsedMillis != NO_EARLIEST_RUNTIME) {
+            requiredConstraints |= CONSTRAINT_TIMING_DELAY;
+        }
+        if (latestRunTimeElapsedMillis != NO_LATEST_RUNTIME) {
+            requiredConstraints |= CONSTRAINT_DEADLINE;
+        }
+        if (job.getTriggerContentUris() != null) {
+            requiredConstraints |= CONSTRAINT_CONTENT_TRIGGER;
+        }
+        this.requiredConstraints = requiredConstraints;
+!!!11728133.java!!!	JobStatus(inout jobStatus : JobStatus)
+        this(jobStatus.getJob(), jobStatus.getUid(),
+                jobStatus.getSourcePackageName(), jobStatus.getSourceUserId(),
+                jobStatus.getSourceTag(), jobStatus.getNumFailures(),
+                jobStatus.getEarliestRunTime(), jobStatus.getLatestRunTimeElapsed());
+!!!11728261.java!!!	JobStatus(inout job : JobInfo, in callingUid : int, in sourcePackageName : String, in sourceUserId : int, in sourceTag : String, in earliestRunTimeElapsedMillis : long, in latestRunTimeElapsedMillis : long)
+        this(job, callingUid, sourcePackageName, sourceUserId, sourceTag, 0,
+                earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis);
+!!!11728389.java!!!	JobStatus(inout rescheduling : JobStatus, in newEarliestRuntimeElapsedMillis : long, in newLatestRuntimeElapsedMillis : long, in backoffAttempt : int)
+        this(rescheduling.job, rescheduling.getUid(),
+                rescheduling.getSourcePackageName(), rescheduling.getSourceUserId(),
+                rescheduling.getSourceTag(), backoffAttempt, newEarliestRuntimeElapsedMillis,
+                newLatestRuntimeElapsedMillis);
+!!!11728517.java!!!	createFromJobInfo(inout job : JobInfo, in callingUid : int, in sourcePackageName : String, in sourceUserId : int, in tag : String) : JobStatus
+        final long elapsedNow = SystemClock.elapsedRealtime();
+        final long earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis;
+        if (job.isPeriodic()) {
+            latestRunTimeElapsedMillis = elapsedNow + job.getIntervalMillis();
+            earliestRunTimeElapsedMillis = latestRunTimeElapsedMillis - job.getFlexMillis();
+        } else {
+            earliestRunTimeElapsedMillis = job.hasEarlyConstraint() ?
+                    elapsedNow + job.getMinLatencyMillis() : NO_EARLIEST_RUNTIME;
+            latestRunTimeElapsedMillis = job.hasLateConstraint() ?
+                    elapsedNow + job.getMaxExecutionDelayMillis() : NO_LATEST_RUNTIME;
+        }
+        return new JobStatus(job, callingUid, sourcePackageName, sourceUserId, tag, 0,
+                earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis);
+!!!11728645.java!!!	enqueueWorkLocked(inout am : IActivityManager, inout work : JobWorkItem) : void
+        if (pendingWork == null) {
+            pendingWork = new ArrayList<>();
+        }
+        work.setWorkId(nextPendingWorkId);
+        nextPendingWorkId++;
+        if (work.getIntent() != null
+                && GrantedUriPermissions.checkGrantFlags(work.getIntent().getFlags())) {
+            work.setGrants(GrantedUriPermissions.createFromIntent(am, work.getIntent(), sourceUid,
+                    sourcePackageName, sourceUserId, toShortString()));
+        }
+        pendingWork.add(work);
+!!!11728773.java!!!	dequeueWorkLocked() : JobWorkItem
+        if (pendingWork != null && pendingWork.size() > 0) {
+            JobWorkItem work = pendingWork.remove(0);
+            if (work != null) {
+                if (executingWork == null) {
+                    executingWork = new ArrayList<>();
+                }
+                executingWork.add(work);
+                work.bumpDeliveryCount();
+            }
+            return work;
+        }
+        return null;
+!!!11728901.java!!!	hasWorkLocked() : boolean
+        return (pendingWork != null && pendingWork.size() > 0) || hasExecutingWorkLocked();
+!!!11729029.java!!!	hasExecutingWorkLocked() : boolean
+        return executingWork != null && executingWork.size() > 0;
+!!!11729157.java!!!	ungrantWorkItem(inout am : IActivityManager, inout work : JobWorkItem) : void
+        if (work.getGrants() != null) {
+            ((GrantedUriPermissions)work.getGrants()).revoke(am);
+        }
+!!!11729285.java!!!	completeWorkLocked(inout am : IActivityManager, in workId : int) : boolean
+        if (executingWork != null) {
+            final int N = executingWork.size();
+            for (int i = 0; i < N; i++) {
+                JobWorkItem work = executingWork.get(i);
+                if (work.getWorkId() == workId) {
+                    executingWork.remove(i);
+                    ungrantWorkItem(am, work);
+                    return true;
+                }
+            }
+        }
+        return false;
+!!!11729413.java!!!	ungrantWorkList(inout am : IActivityManager, inout list : ArrayList<JobWorkItem>) : void
+        if (list != null) {
+            final int N = list.size();
+            for (int i = 0; i < N; i++) {
+                ungrantWorkItem(am, list.get(i));
+            }
+        }
+!!!11729541.java!!!	stopTrackingJobLocked(inout am : IActivityManager, inout incomingJob : JobStatus) : void
+        if (incomingJob != null) {
+            // We are replacing with a new job -- transfer the work!  We do any executing
+            // work first, since that was originally at the front of the pending work.
+            if (executingWork != null && executingWork.size() > 0) {
+                incomingJob.pendingWork = executingWork;
+            }
+            if (incomingJob.pendingWork == null) {
+                incomingJob.pendingWork = pendingWork;
+            } else if (pendingWork != null && pendingWork.size() > 0) {
+                incomingJob.pendingWork.addAll(pendingWork);
+            }
+            pendingWork = null;
+            executingWork = null;
+            incomingJob.nextPendingWorkId = nextPendingWorkId;
+        } else {
+            // We are completely stopping the job...  need to clean up work.
+            ungrantWorkList(am, pendingWork);
+            pendingWork = null;
+            ungrantWorkList(am, executingWork);
+            executingWork = null;
+        }
+!!!11729669.java!!!	prepareLocked(inout am : IActivityManager) : void
+        if (prepared) {
+            Slog.wtf(TAG, "Already prepared: " + this);
+            return;
+        }
+        prepared = true;
+        if (DEBUG_PREPARE) {
+            unpreparedPoint = null;
+        }
+        final ClipData clip = job.getClipData();
+        if (clip != null) {
+            uriPerms = GrantedUriPermissions.createFromClip(am, clip, sourceUid, sourcePackageName,
+                    sourceUserId, job.getClipGrantFlags(), toShortString());
+        }
+!!!11729797.java!!!	unprepareLocked(inout am : IActivityManager) : void
+        if (!prepared) {
+            Slog.wtf(TAG, "Hasn't been prepared: " + this);
+            if (DEBUG_PREPARE && unpreparedPoint != null) {
+                Slog.e(TAG, "Was already unprepared at ", unpreparedPoint);
+            }
+            return;
+        }
+        prepared = false;
+        if (DEBUG_PREPARE) {
+            unpreparedPoint = new Throwable().fillInStackTrace();
+        }
+        if (uriPerms != null) {
+            uriPerms.revoke(am);
+            uriPerms = null;
+        }
+!!!11729925.java!!!	isPreparedLocked() : boolean
+        return prepared;
+!!!11730053.java!!!	getJob() : JobInfo
+        return job;
+!!!11730181.java!!!	getJobId() : int
+        return job.getId();
+!!!11730309.java!!!	printUniqueId(inout pw : PrintWriter) : void
+        UserHandle.formatUid(pw, callingUid);
+        pw.print("/");
+        pw.print(job.getId());
+!!!11730437.java!!!	getNumFailures() : int
+        return numFailures;
+!!!11730565.java!!!	getServiceComponent() : ComponentName
+        return job.getService();
+!!!11730693.java!!!	getSourcePackageName() : String
+        return sourcePackageName;
+!!!11730821.java!!!	getSourceUid() : int
+        return sourceUid;
+!!!11730949.java!!!	getSourceUserId() : int
+        return sourceUserId;
+!!!11731077.java!!!	getUserId() : int
+        return UserHandle.getUserId(callingUid);
+!!!11731205.java!!!	getSourceTag() : String
+        return sourceTag;
+!!!11731333.java!!!	getUid() : int
+        return callingUid;
+!!!11731461.java!!!	getBatteryName() : String
+        return batteryName;
+!!!11731589.java!!!	getTag() : String
+        return tag;
+!!!11731717.java!!!	getPriority() : int
+        return job.getPriority();
+!!!11731845.java!!!	getFlags() : int
+        return job.getFlags();
+!!!11731973.java!!!	hasConnectivityConstraint() : boolean
+        return (requiredConstraints&CONNECTIVITY_MASK) != 0;
+!!!11732101.java!!!	needsAnyConnectivity() : boolean
+        return (requiredConstraints&CONSTRAINT_CONNECTIVITY) != 0;
+!!!11732229.java!!!	needsUnmeteredConnectivity() : boolean
+        return (requiredConstraints&CONSTRAINT_UNMETERED) != 0;
+!!!11732357.java!!!	needsMeteredConnectivity() : boolean
+        return (requiredConstraints&CONSTRAINT_METERED) != 0;
+!!!11732485.java!!!	needsNonRoamingConnectivity() : boolean
+        return (requiredConstraints&CONSTRAINT_NOT_ROAMING) != 0;
+!!!11732613.java!!!	hasChargingConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_CHARGING) != 0;
+!!!11732741.java!!!	hasBatteryNotLowConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_BATTERY_NOT_LOW) != 0;
+!!!11732869.java!!!	hasPowerConstraint() : boolean
+        return (requiredConstraints&(CONSTRAINT_CHARGING|CONSTRAINT_BATTERY_NOT_LOW)) != 0;
+!!!11732997.java!!!	hasStorageNotLowConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_STORAGE_NOT_LOW) != 0;
+!!!11733125.java!!!	hasTimingDelayConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_TIMING_DELAY) != 0;
+!!!11733253.java!!!	hasDeadlineConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_DEADLINE) != 0;
+!!!11733381.java!!!	hasIdleConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_IDLE) != 0;
+!!!11733509.java!!!	hasContentTriggerConstraint() : boolean
+        return (requiredConstraints&CONSTRAINT_CONTENT_TRIGGER) != 0;
+!!!11733637.java!!!	getTriggerContentUpdateDelay() : long
+        long time = job.getTriggerContentUpdateDelay();
+        if (time < 0) {
+            return DEFAULT_TRIGGER_UPDATE_DELAY;
+        }
+        return Math.max(time, MIN_TRIGGER_UPDATE_DELAY);
+!!!11733765.java!!!	getTriggerContentMaxDelay() : long
+        long time = job.getTriggerContentMaxDelay();
+        if (time < 0) {
+            return DEFAULT_TRIGGER_MAX_DELAY;
+        }
+        return Math.max(time, MIN_TRIGGER_MAX_DELAY);
+!!!11733893.java!!!	isPersisted() : boolean
+        return job.isPersisted();
+!!!11734021.java!!!	getEarliestRunTime() : long
+        return earliestRunTimeElapsedMillis;
+!!!11734149.java!!!	getLatestRunTimeElapsed() : long
+        return latestRunTimeElapsedMillis;
+!!!11734277.java!!!	setChargingConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_CHARGING, state);
+!!!11734405.java!!!	setBatteryNotLowConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_BATTERY_NOT_LOW, state);
+!!!11734533.java!!!	setStorageNotLowConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_STORAGE_NOT_LOW, state);
+!!!11734661.java!!!	setTimingDelayConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_TIMING_DELAY, state);
+!!!11734789.java!!!	setDeadlineConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_DEADLINE, state);
+!!!11734917.java!!!	setIdleConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_IDLE, state);
+!!!11735045.java!!!	setConnectivityConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_CONNECTIVITY, state);
+!!!11735173.java!!!	setUnmeteredConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_UNMETERED, state);
+!!!11735301.java!!!	setMeteredConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_METERED, state);
+!!!11735429.java!!!	setNotRoamingConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_NOT_ROAMING, state);
+!!!11735557.java!!!	setAppNotIdleConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_APP_NOT_IDLE, state);
+!!!11735685.java!!!	setContentTriggerConstraintSatisfied(inout state : boolean) : boolean
+        return setConstraintSatisfied(CONSTRAINT_CONTENT_TRIGGER, state);
+!!!11735813.java!!!	setDeviceNotDozingConstraintSatisfied(inout state : boolean, inout whitelisted : boolean) : boolean
+        dozeWhitelisted = whitelisted;
+        return setConstraintSatisfied(CONSTRAINT_DEVICE_NOT_DOZING, state);
+!!!11735941.java!!!	setConstraintSatisfied(in constraint : int, inout state : boolean) : boolean
+        boolean old = (satisfiedConstraints&constraint) != 0;
+        if (old == state) {
+            return false;
+        }
+        satisfiedConstraints = (satisfiedConstraints&~constraint) | (state ? constraint : 0);
+        return true;
+!!!11736069.java!!!	isConstraintSatisfied(in constraint : int) : boolean
+        return (satisfiedConstraints&constraint) != 0;
+!!!11736197.java!!!	clearTrackingController(in which : int) : boolean
+        if ((trackingControllers&which) != 0) {
+            trackingControllers &= ~which;
+            return true;
+        }
+        return false;
+!!!11736325.java!!!	setTrackingController(in which : int) : void
+        trackingControllers |= which;
+!!!11736453.java!!!	shouldDump(in filterUid : int) : boolean
+        return filterUid == -1 || UserHandle.getAppId(getUid()) == filterUid
+                || UserHandle.getAppId(getSourceUid()) == filterUid;
+!!!11736581.java!!!	isReady() : boolean
+        // Deadline constraint trumps other constraints (except for periodic jobs where deadline
+        // is an implementation detail. A periodic job should only run if its constraints are
+        // satisfied).
+        // AppNotIdle implicit constraint must be satisfied
+        // DeviceNotDozing implicit constraint must be satisfied
+        final boolean deadlineSatisfied = (!job.isPeriodic() && hasDeadlineConstraint()
+                && (satisfiedConstraints & CONSTRAINT_DEADLINE) != 0);
+        final boolean notIdle = (satisfiedConstraints & CONSTRAINT_APP_NOT_IDLE) != 0;
+        final boolean notDozing = (satisfiedConstraints & CONSTRAINT_DEVICE_NOT_DOZING) != 0
+                || (job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0;
+        return (isConstraintsSatisfied() || deadlineSatisfied) && notIdle && notDozing;
+!!!11736709.java!!!	isConstraintsSatisfied() : boolean
+        if (overrideState == OVERRIDE_FULL) {
+            // force override: the job is always runnable
+            return true;
+        }
+
+        final int req = requiredConstraints & CONSTRAINTS_OF_INTEREST;
+
+        int sat = satisfiedConstraints & CONSTRAINTS_OF_INTEREST;
+        if (overrideState == OVERRIDE_SOFT) {
+            // override: pretend all 'soft' requirements are satisfied
+            sat |= (requiredConstraints & SOFT_OVERRIDE_CONSTRAINTS);
+        }
+
+        return (sat & req) == req;
+!!!11736837.java!!!	matches(in uid : int, in jobId : int) : boolean
+        return this.job.getId() == jobId && this.callingUid == uid;
+!!!11736965.java!!!	toString() : String
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("JobStatus{");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(" #");
+        UserHandle.formatUid(sb, callingUid);
+        sb.append("/");
+        sb.append(job.getId());
+        sb.append(' ');
+        sb.append(batteryName);
+        sb.append(" u=");
+        sb.append(getUserId());
+        sb.append(" s=");
+        sb.append(getSourceUid());
+        if (earliestRunTimeElapsedMillis != NO_EARLIEST_RUNTIME
+                || latestRunTimeElapsedMillis != NO_LATEST_RUNTIME) {
+            long now = SystemClock.elapsedRealtime();
+            sb.append(" TIME=");
+            formatRunTime(sb, earliestRunTimeElapsedMillis, NO_EARLIEST_RUNTIME, now);
+            sb.append(":");
+            formatRunTime(sb, latestRunTimeElapsedMillis, NO_LATEST_RUNTIME, now);
+        }
+        if (job.getNetworkType() != JobInfo.NETWORK_TYPE_NONE) {
+            sb.append(" NET=");
+            sb.append(job.getNetworkType());
+        }
+        if (job.isRequireCharging()) {
+            sb.append(" CHARGING");
+        }
+        if (job.isRequireBatteryNotLow()) {
+            sb.append(" BATNOTLOW");
+        }
+        if (job.isRequireStorageNotLow()) {
+            sb.append(" STORENOTLOW");
+        }
+        if (job.isRequireDeviceIdle()) {
+            sb.append(" IDLE");
+        }
+        if (job.isPersisted()) {
+            sb.append(" PERSISTED");
+        }
+        if ((satisfiedConstraints&CONSTRAINT_APP_NOT_IDLE) == 0) {
+            sb.append(" WAIT:APP_NOT_IDLE");
+        }
+        if ((satisfiedConstraints&CONSTRAINT_DEVICE_NOT_DOZING) == 0) {
+            sb.append(" WAIT:DEV_NOT_DOZING");
+        }
+        if (job.getTriggerContentUris() != null) {
+            sb.append(" URIS=");
+            sb.append(Arrays.toString(job.getTriggerContentUris()));
+        }
+        if (numFailures != 0) {
+            sb.append(" failures=");
+            sb.append(numFailures);
+        }
+        if (isReady()) {
+            sb.append(" READY");
+        }
+        sb.append("}");
+        return sb.toString();
+!!!11737093.java!!!	formatRunTime(inout pw : PrintWriter, in runtime : long, in defaultValue : long, in now : long) : void
+        if (runtime == defaultValue) {
+            pw.print("none");
+        } else {
+            TimeUtils.formatDuration(runtime - now, pw);
+        }
+!!!11737221.java!!!	formatRunTime(inout sb : StringBuilder, in runtime : long, in defaultValue : long, in now : long) : void
+        if (runtime == defaultValue) {
+            sb.append("none");
+        } else {
+            TimeUtils.formatDuration(runtime - now, sb);
+        }
+!!!11737349.java!!!	toShortString() : String
+        StringBuilder sb = new StringBuilder();
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(" #");
+        UserHandle.formatUid(sb, callingUid);
+        sb.append("/");
+        sb.append(job.getId());
+        sb.append(' ');
+        sb.append(batteryName);
+        return sb.toString();
+!!!11737477.java!!!	toShortStringExceptUniqueId() : String
+        StringBuilder sb = new StringBuilder();
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(' ');
+        sb.append(batteryName);
+        return sb.toString();
+!!!11737605.java!!!	dumpConstraints(inout pw : PrintWriter, in constraints : int) : void
+        if ((constraints&CONSTRAINT_CHARGING) != 0) {
+            pw.print(" CHARGING");
+        }
+        if ((constraints& CONSTRAINT_BATTERY_NOT_LOW) != 0) {
+            pw.print(" BATTERY_NOT_LOW");
+        }
+        if ((constraints& CONSTRAINT_STORAGE_NOT_LOW) != 0) {
+            pw.print(" STORAGE_NOT_LOW");
+        }
+        if ((constraints&CONSTRAINT_TIMING_DELAY) != 0) {
+            pw.print(" TIMING_DELAY");
+        }
+        if ((constraints&CONSTRAINT_DEADLINE) != 0) {
+            pw.print(" DEADLINE");
+        }
+        if ((constraints&CONSTRAINT_IDLE) != 0) {
+            pw.print(" IDLE");
+        }
+        if ((constraints&CONSTRAINT_CONNECTIVITY) != 0) {
+            pw.print(" CONNECTIVITY");
+        }
+        if ((constraints&CONSTRAINT_UNMETERED) != 0) {
+            pw.print(" UNMETERED");
+        }
+        if ((constraints&CONSTRAINT_NOT_ROAMING) != 0) {
+            pw.print(" NOT_ROAMING");
+        }
+        if ((constraints&CONSTRAINT_METERED) != 0) {
+            pw.print(" METERED");
+        }
+        if ((constraints&CONSTRAINT_APP_NOT_IDLE) != 0) {
+            pw.print(" APP_NOT_IDLE");
+        }
+        if ((constraints&CONSTRAINT_CONTENT_TRIGGER) != 0) {
+            pw.print(" CONTENT_TRIGGER");
+        }
+        if ((constraints&CONSTRAINT_DEVICE_NOT_DOZING) != 0) {
+            pw.print(" DEVICE_NOT_DOZING");
+        }
+!!!11737733.java!!!	dumpJobWorkItem(inout pw : PrintWriter, in prefix : String, inout work : JobWorkItem, in index : int) : void
+        pw.print(prefix); pw.print("  #"); pw.print(index); pw.print(": #");
+        pw.print(work.getWorkId()); pw.print(" "); pw.print(work.getDeliveryCount());
+        pw.print("x "); pw.println(work.getIntent());
+        if (work.getGrants() != null) {
+            pw.print(prefix); pw.println("  URI grants:");
+            ((GrantedUriPermissions)work.getGrants()).dump(pw, prefix + "    ");
+        }
+!!!11737861.java!!!	dump(inout pw : PrintWriter, in prefix : String, inout full : boolean, in elapsedRealtimeMillis : long) : void
+        pw.print(prefix); UserHandle.formatUid(pw, callingUid);
+        pw.print(" tag="); pw.println(tag);
+        pw.print(prefix);
+        pw.print("Source: uid="); UserHandle.formatUid(pw, getSourceUid());
+        pw.print(" user="); pw.print(getSourceUserId());
+        pw.print(" pkg="); pw.println(getSourcePackageName());
+        if (full) {
+            pw.print(prefix); pw.println("JobInfo:");
+            pw.print(prefix); pw.print("  Service: ");
+            pw.println(job.getService().flattenToShortString());
+            if (job.isPeriodic()) {
+                pw.print(prefix); pw.print("  PERIODIC: interval=");
+                TimeUtils.formatDuration(job.getIntervalMillis(), pw);
+                pw.print(" flex="); TimeUtils.formatDuration(job.getFlexMillis(), pw);
+                pw.println();
+            }
+            if (job.isPersisted()) {
+                pw.print(prefix); pw.println("  PERSISTED");
+            }
+            if (job.getPriority() != 0) {
+                pw.print(prefix); pw.print("  Priority: "); pw.println(job.getPriority());
+            }
+            if (job.getFlags() != 0) {
+                pw.print(prefix); pw.print("  Flags: ");
+                pw.println(Integer.toHexString(job.getFlags()));
+            }
+            pw.print(prefix); pw.print("  Requires: charging=");
+            pw.print(job.isRequireCharging()); pw.print(" batteryNotLow=");
+            pw.print(job.isRequireBatteryNotLow()); pw.print(" deviceIdle=");
+            pw.println(job.isRequireDeviceIdle());
+            if (job.getTriggerContentUris() != null) {
+                pw.print(prefix); pw.println("  Trigger content URIs:");
+                for (int i = 0; i < job.getTriggerContentUris().length; i++) {
+                    JobInfo.TriggerContentUri trig = job.getTriggerContentUris()[i];
+                    pw.print(prefix); pw.print("    ");
+                    pw.print(Integer.toHexString(trig.getFlags()));
+                    pw.print(' '); pw.println(trig.getUri());
+                }
+                if (job.getTriggerContentUpdateDelay() >= 0) {
+                    pw.print(prefix); pw.print("  Trigger update delay: ");
+                    TimeUtils.formatDuration(job.getTriggerContentUpdateDelay(), pw);
+                    pw.println();
+                }
+                if (job.getTriggerContentMaxDelay() >= 0) {
+                    pw.print(prefix); pw.print("  Trigger max delay: ");
+                    TimeUtils.formatDuration(job.getTriggerContentMaxDelay(), pw);
+                    pw.println();
+                }
+            }
+            if (job.getExtras() != null && !job.getExtras().maybeIsEmpty()) {
+                pw.print(prefix); pw.print("  Extras: ");
+                pw.println(job.getExtras().toShortString());
+            }
+            if (job.getTransientExtras() != null && !job.getTransientExtras().maybeIsEmpty()) {
+                pw.print(prefix); pw.print("  Transient extras: ");
+                pw.println(job.getTransientExtras().toShortString());
+            }
+            if (job.getClipData() != null) {
+                pw.print(prefix); pw.print("  Clip data: ");
+                StringBuilder b = new StringBuilder(128);
+                job.getClipData().toShortString(b);
+                pw.println(b);
+            }
+            if (uriPerms != null) {
+                pw.print(prefix); pw.println("  Granted URI permissions:");
+                uriPerms.dump(pw, prefix + "  ");
+            }
+            if (job.getNetworkType() != JobInfo.NETWORK_TYPE_NONE) {
+                pw.print(prefix); pw.print("  Network type: "); pw.println(job.getNetworkType());
+            }
+            if (job.getMinLatencyMillis() != 0) {
+                pw.print(prefix); pw.print("  Minimum latency: ");
+                TimeUtils.formatDuration(job.getMinLatencyMillis(), pw);
+                pw.println();
+            }
+            if (job.getMaxExecutionDelayMillis() != 0) {
+                pw.print(prefix); pw.print("  Max execution delay: ");
+                TimeUtils.formatDuration(job.getMaxExecutionDelayMillis(), pw);
+                pw.println();
+            }
+            pw.print(prefix); pw.print("  Backoff: policy="); pw.print(job.getBackoffPolicy());
+            pw.print(" initial="); TimeUtils.formatDuration(job.getInitialBackoffMillis(), pw);
+            pw.println();
+            if (job.hasEarlyConstraint()) {
+                pw.print(prefix); pw.println("  Has early constraint");
+            }
+            if (job.hasLateConstraint()) {
+                pw.print(prefix); pw.println("  Has late constraint");
+            }
+        }
+        pw.print(prefix); pw.print("Required constraints:");
+        dumpConstraints(pw, requiredConstraints);
+        pw.println();
+        if (full) {
+            pw.print(prefix); pw.print("Satisfied constraints:");
+            dumpConstraints(pw, satisfiedConstraints);
+            pw.println();
+            pw.print(prefix); pw.print("Unsatisfied constraints:");
+            dumpConstraints(pw, (requiredConstraints & ~satisfiedConstraints));
+            pw.println();
+            if (dozeWhitelisted) {
+                pw.print(prefix); pw.println("Doze whitelisted: true");
+            }
+        }
+        if (trackingControllers != 0) {
+            pw.print(prefix); pw.print("Tracking:");
+            if ((trackingControllers&TRACKING_BATTERY) != 0) pw.print(" BATTERY");
+            if ((trackingControllers&TRACKING_CONNECTIVITY) != 0) pw.print(" CONNECTIVITY");
+            if ((trackingControllers&TRACKING_CONTENT) != 0) pw.print(" CONTENT");
+            if ((trackingControllers&TRACKING_IDLE) != 0) pw.print(" IDLE");
+            if ((trackingControllers&TRACKING_STORAGE) != 0) pw.print(" STORAGE");
+            if ((trackingControllers&TRACKING_TIME) != 0) pw.print(" TIME");
+            pw.println();
+        }
+        if (changedAuthorities != null) {
+            pw.print(prefix); pw.println("Changed authorities:");
+            for (int i=0; i<changedAuthorities.size(); i++) {
+                pw.print(prefix); pw.print("  "); pw.println(changedAuthorities.valueAt(i));
+            }
+            if (changedUris != null) {
+                pw.print(prefix); pw.println("Changed URIs:");
+                for (int i=0; i<changedUris.size(); i++) {
+                    pw.print(prefix); pw.print("  "); pw.println(changedUris.valueAt(i));
+                }
+            }
+        }
+        if (pendingWork != null && pendingWork.size() > 0) {
+            pw.print(prefix); pw.println("Pending work:");
+            for (int i = 0; i < pendingWork.size(); i++) {
+                dumpJobWorkItem(pw, prefix, pendingWork.get(i), i);
+            }
+        }
+        if (executingWork != null && executingWork.size() > 0) {
+            pw.print(prefix); pw.println("Executing work:");
+            for (int i = 0; i < executingWork.size(); i++) {
+                dumpJobWorkItem(pw, prefix, executingWork.get(i), i);
+            }
+        }
+        pw.print(prefix); pw.print("Enqueue time: ");
+        TimeUtils.formatDuration(enqueueTime, elapsedRealtimeMillis, pw);
+        pw.println();
+        pw.print(prefix); pw.print("Run time: earliest=");
+        formatRunTime(pw, earliestRunTimeElapsedMillis, NO_EARLIEST_RUNTIME, elapsedRealtimeMillis);
+        pw.print(", latest=");
+        formatRunTime(pw, latestRunTimeElapsedMillis, NO_LATEST_RUNTIME, elapsedRealtimeMillis);
+        pw.println();
+        if (numFailures != 0) {
+            pw.print(prefix); pw.print("Num failures: "); pw.println(numFailures);
+        }

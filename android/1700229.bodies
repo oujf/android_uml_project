@@ -1,0 +1,67 @@
+class StorageController
+!!!11737989.java!!!	get(inout taskManagerService : JobSchedulerService) : StorageController
+        synchronized (sCreationLock) {
+            if (sController == null) {
+                sController = new StorageController(taskManagerService,
+                        taskManagerService.getContext(), taskManagerService.getLock());
+            }
+        }
+        return sController;
+!!!11738117.java!!!	getTracker() : StorageController::StorageTracker
+        return mStorageTracker;
+!!!11738245.java!!!	getForTesting(inout stateChangedListener : StateChangedListener, inout context : Context) : StorageController
+        return new StorageController(stateChangedListener, context, new Object());
+!!!11738373.java!!!	StorageController(inout stateChangedListener : StateChangedListener, inout context : Context, inout lock : Object)
+        super(stateChangedListener, context, lock);
+        mStorageTracker = new StorageTracker();
+        mStorageTracker.startTracking();
+!!!11738501.java!!!	maybeStartTrackingJobLocked(inout taskStatus : JobStatus, inout lastJob : JobStatus) : void
+        if (taskStatus.hasStorageNotLowConstraint()) {
+            mTrackedTasks.add(taskStatus);
+            taskStatus.setTrackingController(JobStatus.TRACKING_STORAGE);
+            taskStatus.setStorageNotLowConstraintSatisfied(mStorageTracker.isStorageNotLow());
+        }
+!!!11738629.java!!!	maybeStopTrackingJobLocked(inout taskStatus : JobStatus, inout incomingJob : JobStatus, inout forUpdate : boolean) : void
+        if (taskStatus.clearTrackingController(JobStatus.TRACKING_STORAGE)) {
+            mTrackedTasks.remove(taskStatus);
+        }
+!!!11738757.java!!!	maybeReportNewStorageState() : void
+        final boolean storageNotLow = mStorageTracker.isStorageNotLow();
+        boolean reportChange = false;
+        synchronized (mLock) {
+            for (int i = mTrackedTasks.size() - 1; i >= 0; i--) {
+                final JobStatus ts = mTrackedTasks.valueAt(i);
+                boolean previous = ts.setStorageNotLowConstraintSatisfied(storageNotLow);
+                if (previous != storageNotLow) {
+                    reportChange = true;
+                }
+            }
+        }
+        // Let the scheduler know that state has changed. This may or may not result in an
+        // execution.
+        if (reportChange) {
+            mStateChangedListener.onControllerStateChanged();
+        }
+        // Also tell the scheduler that any ready jobs should be flushed.
+        if (storageNotLow) {
+            mStateChangedListener.onRunJobNow(null);
+        }
+!!!11739653.java!!!	dumpControllerStateLocked(inout pw : PrintWriter, in filterUid : int) : void
+        pw.print("Storage: not low = ");
+        pw.print(mStorageTracker.isStorageNotLow());
+        pw.print(", seq=");
+        pw.println(mStorageTracker.getSeq());
+        pw.print("Tracking ");
+        pw.print(mTrackedTasks.size());
+        pw.println(":");
+        for (int i = 0; i < mTrackedTasks.size(); i++) {
+            final JobStatus js = mTrackedTasks.valueAt(i);
+            if (!js.shouldDump(filterUid)) {
+                continue;
+            }
+            pw.print("  #");
+            js.printUniqueId(pw);
+            pw.print(" from ");
+            UserHandle.formatUid(pw, js.getSourceUid());
+            pw.println();
+        }

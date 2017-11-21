@@ -1,0 +1,93 @@
+class ZenModeControllerImpl
+!!!4186629.java!!!	ZenModeControllerImpl(inout context : Context, inout handler : Handler)
+        super(context);
+        mContext = context;
+        mModeSetting = new GlobalSetting(mContext, handler, Global.ZEN_MODE) {
+            @Override
+            protected void handleValueChanged(int value) {
+                fireZenChanged(value);
+            }
+        };
+        mConfigSetting = new GlobalSetting(mContext, handler, Global.ZEN_MODE_CONFIG_ETAG) {
+            @Override
+            protected void handleValueChanged(int value) {
+                updateZenModeConfig();
+            }
+        };
+        mNoMan = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        mConfig = mNoMan.getZenModeConfig();
+        mModeSetting.setListening(true);
+        mConfigSetting.setListening(true);
+        mAlarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        mSetupObserver = new SetupObserver(handler);
+        mSetupObserver.register();
+        mUserManager = context.getSystemService(UserManager.class);
+        startTracking();
+!!!4186757.java!!!	isVolumeRestricted() : boolean
+        return mUserManager.hasUserRestriction(UserManager.DISALLOW_ADJUST_VOLUME,
+                new UserHandle(mUserId));
+!!!4186885.java!!!	addCallback(inout callback : ZenModeController::Callback) : void
+        mCallbacks.add(callback);
+!!!4187013.java!!!	removeCallback(inout callback : ZenModeController::Callback) : void
+        mCallbacks.remove(callback);
+!!!4187141.java!!!	getZen() : int
+        return mModeSetting.getValue();
+!!!4187269.java!!!	setZen(in zen : int, inout conditionId : Uri, in reason : String) : void
+        mNoMan.setZenMode(zen, conditionId, reason);
+!!!4187397.java!!!	isZenAvailable() : boolean
+        return mSetupObserver.isDeviceProvisioned() && mSetupObserver.isUserSetup();
+!!!4187525.java!!!	getManualRule() : ZenRule
+        return mConfig == null ? null : mConfig.manualRule;
+!!!4187653.java!!!	getConfig() : ZenModeConfig
+        return mConfig;
+!!!4187781.java!!!	getNextAlarm() : long
+        final AlarmManager.AlarmClockInfo info = mAlarmManager.getNextAlarmClock(mUserId);
+        return info != null ? info.getTriggerTime() : 0;
+!!!4187909.java!!!	onUserSwitched(in userId : int) : void
+        mUserId = userId;
+        if (mRegistered) {
+            mContext.unregisterReceiver(mReceiver);
+        }
+        final IntentFilter filter = new IntentFilter(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED);
+        filter.addAction(NotificationManager.ACTION_EFFECTS_SUPPRESSOR_CHANGED);
+        mContext.registerReceiverAsUser(mReceiver, new UserHandle(mUserId), filter, null, null);
+        mRegistered = true;
+        mSetupObserver.register();
+!!!4188037.java!!!	getEffectsSuppressor() : ComponentName
+        return NotificationManager.from(mContext).getEffectsSuppressor();
+!!!4188165.java!!!	isCountdownConditionSupported() : boolean
+        return NotificationManager.from(mContext)
+                .isSystemConditionProviderEnabled(ZenModeConfig.COUNTDOWN_PATH);
+!!!4188293.java!!!	getCurrentUser() : int
+        return ActivityManager.getCurrentUser();
+!!!4188421.java!!!	fireNextAlarmChanged() : void
+        Utils.safeForeach(mCallbacks, c -> c.onNextAlarmChanged());
+!!!4188549.java!!!	fireEffectsSuppressorChanged() : void
+        Utils.safeForeach(mCallbacks, c -> c.onEffectsSupressorChanged());
+!!!4188677.java!!!	fireZenChanged(in zen : int) : void
+        Utils.safeForeach(mCallbacks, c -> c.onZenChanged(zen));
+!!!4188805.java!!!	fireZenAvailableChanged(inout available : boolean) : void
+        Utils.safeForeach(mCallbacks, c -> c.onZenAvailableChanged(available));
+!!!4188933.java!!!	fireConditionsChanged(inout conditions : Condition [[]]) : void
+        Utils.safeForeach(mCallbacks, c -> c.onConditionsChanged(conditions));
+!!!4189061.java!!!	fireManualRuleChanged(inout rule : ZenRule) : void
+        Utils.safeForeach(mCallbacks, c -> c.onManualRuleChanged(rule));
+!!!4189189.java!!!	fireConfigChanged(inout config : ZenModeConfig) : void
+        Utils.safeForeach(mCallbacks, c -> c.onConfigChanged(config));
+!!!4189317.java!!!	updateConditions(inout conditions : Condition [[]]) : void
+        if (conditions == null || conditions.length == 0) return;
+        for (Condition c : conditions) {
+            if ((c.flags & Condition.FLAG_RELEVANT_NOW) == 0) continue;
+            mConditions.put(c.id, c);
+        }
+        fireConditionsChanged(
+                mConditions.values().toArray(new Condition[mConditions.values().size()]));
+!!!4189445.java!!!	updateZenModeConfig() : void
+        final ZenModeConfig config = mNoMan.getZenModeConfig();
+        if (Objects.equals(config, mConfig)) return;
+        final ZenRule oldRule = mConfig != null ? mConfig.manualRule : null;
+        mConfig = config;
+        fireConfigChanged(config);
+        final ZenRule newRule = config != null ? config.manualRule : null;
+        if (Objects.equals(oldRule, newRule)) return;
+        fireManualRuleChanged(newRule);

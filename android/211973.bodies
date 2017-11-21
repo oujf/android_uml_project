@@ -1,0 +1,67 @@
+class AAudioServiceEndpoint
+!!!532485.cpp!!!	open(in deviceId : int32_t) : aaudio_result_t
+    mStreamInternal = getStreamInternal();
+
+    AudioStreamBuilder builder;
+    builder.setSharingMode(AAUDIO_SHARING_MODE_EXCLUSIVE);
+    // Don't fall back to SHARED because that would cause recursion.
+    builder.setSharingModeMatchRequired(true);
+    builder.setDeviceId(deviceId);
+    builder.setDirection(getDirection());
+    builder.setBufferCapacity(DEFAULT_BUFFER_CAPACITY);
+
+    return getStreamInternal()->open(builder);
+!!!532997.cpp!!!	registerStream(inout sharedStream : AAudioServiceStreamShared) : aaudio_result_t
+    std::lock_guard<std::mutex> lock(mLockStreams);
+    mRegisteredStreams.push_back(sharedStream);
+    return AAUDIO_OK;
+!!!533125.cpp!!!	unregisterStream(inout sharedStream : AAudioServiceStreamShared) : aaudio_result_t
+    std::lock_guard<std::mutex> lock(mLockStreams);
+    mRegisteredStreams.erase(std::remove(mRegisteredStreams.begin(), mRegisteredStreams.end(), sharedStream),
+              mRegisteredStreams.end());
+    return AAUDIO_OK;
+!!!533253.cpp!!!	startStream(inout sharedStream : AAudioServiceStreamShared) : aaudio_result_t
+    // TODO use real-time technique to avoid mutex, eg. atomic command FIFO
+    std::lock_guard<std::mutex> lock(mLockStreams);
+    mRunningStreams.push_back(sharedStream);
+    if (mRunningStreams.size() == 1) {
+        startSharingThread_l();
+    }
+    return AAUDIO_OK;
+!!!533381.cpp!!!	stopStream(inout sharedStream : AAudioServiceStreamShared) : aaudio_result_t
+    int numRunningStreams = 0;
+    {
+        std::lock_guard<std::mutex> lock(mLockStreams);
+        mRunningStreams.erase(
+                std::remove(mRunningStreams.begin(), mRunningStreams.end(), sharedStream),
+                mRunningStreams.end());
+        numRunningStreams = mRunningStreams.size();
+    }
+    if (numRunningStreams == 0) {
+        // Don't call this under a lock because the callbackLoop also uses the lock.
+        stopSharingThread();
+    }
+    return AAUDIO_OK;
+!!!533509.cpp!!!	close() : aaudio_result_t
+    return getStreamInternal()->close();
+!!!533893.cpp!!!	disconnectRegisteredStreams() : void
+    std::lock_guard<std::mutex> lock(mLockStreams);
+    for(AAudioServiceStreamShared *sharedStream : mRunningStreams) {
+        sharedStream->onStop();
+    }
+    mRunningStreams.clear();
+    for(AAudioServiceStreamShared *sharedStream : mRegisteredStreams) {
+        sharedStream->onDisconnect();
+    }
+    mRegisteredStreams.clear();
+!!!534533.cpp!!!	startSharingThread_l() : aaudio_result_t
+    // Launch the callback loop thread.
+    int64_t periodNanos = getStreamInternal()->getFramesPerBurst()
+                          * AAUDIO_NANOS_PER_SECOND
+                          / getSampleRate();
+    mCallbackEnabled.store(true);
+    return getStreamInternal()->createThread(periodNanos, aaudio_endpoint_thread_proc, this);
+!!!534661.cpp!!!	stopSharingThread() : aaudio_result_t
+    mCallbackEnabled.store(false);
+    aaudio_result_t result = getStreamInternal()->joinThread(NULL);
+    return result;

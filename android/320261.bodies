@@ -1,0 +1,115 @@
+class BnMediaMetadataRetriever
+!!!838149.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+        case DISCONNECT: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+            disconnect();
+            return NO_ERROR;
+        } break;
+        case SET_DATA_SOURCE_URL: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+
+            sp<IMediaHTTPService> httpService;
+            if (data.readInt32()) {
+                httpService =
+                    interface_cast<IMediaHTTPService>(data.readStrongBinder());
+            }
+
+            const char* srcUrl = data.readCString();
+
+            if (httpService == NULL || srcUrl == NULL) {
+                reply->writeInt32(BAD_VALUE);
+                return NO_ERROR;
+            }
+
+            KeyedVector<String8, String8> headers;
+            size_t numHeaders = (size_t) data.readInt64();
+            for (size_t i = 0; i < numHeaders; ++i) {
+                String8 key = data.readString8();
+                String8 value = data.readString8();
+                headers.add(key, value);
+            }
+
+            reply->writeInt32(
+                    setDataSource(
+                        httpService, srcUrl, numHeaders > 0 ? &headers : NULL));
+
+            return NO_ERROR;
+        } break;
+        case SET_DATA_SOURCE_FD: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+            int fd = data.readFileDescriptor();
+            int64_t offset = data.readInt64();
+            int64_t length = data.readInt64();
+            reply->writeInt32(setDataSource(fd, offset, length));
+            return NO_ERROR;
+        } break;
+        case SET_DATA_SOURCE_CALLBACK: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+            sp<IDataSource> source =
+                interface_cast<IDataSource>(data.readStrongBinder());
+            if (source == NULL) {
+                reply->writeInt32(BAD_VALUE);
+            } else {
+                reply->writeInt32(setDataSource(source));
+            }
+            return NO_ERROR;
+        } break;
+        case GET_FRAME_AT_TIME: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+            int64_t timeUs = data.readInt64();
+            int option = data.readInt32();
+            ALOGV("getTimeAtTime: time(%" PRId64 " us) and option(%d)", timeUs, option);
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            setSchedPolicy(data);
+#endif
+            sp<IMemory> bitmap = getFrameAtTime(timeUs, option);
+            if (bitmap != 0) {  // Don't send NULL across the binder interface
+                reply->writeInt32(NO_ERROR);
+                reply->writeStrongBinder(IInterface::asBinder(bitmap));
+            } else {
+                reply->writeInt32(UNKNOWN_ERROR);
+            }
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            restoreSchedPolicy();
+#endif
+            return NO_ERROR;
+        } break;
+        case EXTRACT_ALBUM_ART: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            setSchedPolicy(data);
+#endif
+            sp<IMemory> albumArt = extractAlbumArt();
+            if (albumArt != 0) {  // Don't send NULL across the binder interface
+                reply->writeInt32(NO_ERROR);
+                reply->writeStrongBinder(IInterface::asBinder(albumArt));
+            } else {
+                reply->writeInt32(UNKNOWN_ERROR);
+            }
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            restoreSchedPolicy();
+#endif
+            return NO_ERROR;
+        } break;
+        case EXTRACT_METADATA: {
+            CHECK_INTERFACE(IMediaMetadataRetriever, data, reply);
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            setSchedPolicy(data);
+#endif
+            int keyCode = data.readInt32();
+            const char* value = extractMetadata(keyCode);
+            if (value != NULL) {  // Don't send NULL across the binder interface
+                reply->writeInt32(NO_ERROR);
+                reply->writeCString(value);
+            } else {
+                reply->writeInt32(UNKNOWN_ERROR);
+            }
+#ifndef DISABLE_GROUP_SCHEDULE_HACK
+            restoreSchedPolicy();
+#endif
+            return NO_ERROR;
+        } break;
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

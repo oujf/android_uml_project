@@ -1,0 +1,87 @@
+class AudioStreamLegacy
+!!!698629.cpp!!!	getLegacyCallback() : aaudio_legacy_callback_t
+    return AudioStreamLegacy_callback;
+!!!698885.cpp!!!	processCallbackCommon(in opcode : aaudio_callback_operation_t, inout info : void) : void
+    aaudio_data_callback_result_t callbackResult;
+
+    if (!mCallbackEnabled.load()) {
+        return;
+    }
+
+    switch (opcode) {
+        case AAUDIO_CALLBACK_OPERATION_PROCESS_DATA: {
+            if (getState() != AAUDIO_STREAM_STATE_DISCONNECTED) {
+                // Note that this code assumes an AudioTrack::Buffer is the same as
+                // AudioRecord::Buffer
+                // TODO define our own AudioBuffer and pass it from the subclasses.
+                AudioTrack::Buffer *audioBuffer = static_cast<AudioTrack::Buffer *>(info);
+                if (audioBuffer->frameCount == 0) return;
+
+                // If the caller specified an exact size then use a block size adapter.
+                if (mBlockAdapter != nullptr) {
+                    int32_t byteCount = audioBuffer->frameCount * getBytesPerFrame();
+                    callbackResult = mBlockAdapter->processVariableBlock(
+                            (uint8_t *) audioBuffer->raw, byteCount);
+                } else {
+                    // Call using the AAudio callback interface.
+                    callbackResult = (*getDataCallbackProc())(
+                            (AAudioStream *) this,
+                            getDataCallbackUserData(),
+                            audioBuffer->raw,
+                            audioBuffer->frameCount
+                            );
+                }
+                if (callbackResult == AAUDIO_CALLBACK_RESULT_CONTINUE) {
+                    audioBuffer->size = audioBuffer->frameCount * getBytesPerFrame();
+                    incrementClientFrameCounter(audioBuffer->frameCount);
+                } else {
+                    audioBuffer->size = 0;
+                }
+                break;
+            }
+        }
+        /// FALL THROUGH
+
+            // Stream got rerouted so we disconnect.
+        case AAUDIO_CALLBACK_OPERATION_DISCONNECTED: {
+            setState(AAUDIO_STREAM_STATE_DISCONNECTED);
+            ALOGD("processCallbackCommon() stream disconnected");
+            if (getErrorCallbackProc() != nullptr) {
+                (*getErrorCallbackProc())(
+                        (AAudioStream *) this,
+                        getErrorCallbackUserData(),
+                        AAUDIO_ERROR_DISCONNECTED
+                        );
+            }
+            mCallbackEnabled.store(false);
+        }
+            break;
+
+        default:
+            break;
+    }
+!!!699013.cpp!!!	onProcessFixedBlock(inout buffer : uint8_t, in numBytes : int32_t) : int32_t
+    int32_t frameCount = numBytes / getBytesPerFrame();
+    // Call using the AAudio callback interface.
+    AAudioStream_dataCallback appCallback = getDataCallbackProc();
+    return (*appCallback)(
+            (AAudioStream *) this,
+            getDataCallbackUserData(),
+            buffer,
+            frameCount);
+!!!699781.cpp!!!	onAudioDeviceUpdate(in deviceId : audio_port_handle_t) : void
+    ALOGD("onAudioDeviceUpdate() deviceId %d", (int)deviceId);
+    if (getDeviceId() != AAUDIO_UNSPECIFIED && getDeviceId() != deviceId &&
+            getState() != AAUDIO_STREAM_STATE_DISCONNECTED) {
+        setState(AAUDIO_STREAM_STATE_DISCONNECTED);
+        // if we have a data callback and the stream is active, send the error callback from
+        // data callback thread when it sees the DISCONNECTED state
+        if (!isDataCallbackActive() && getErrorCallbackProc() != nullptr) {
+            (*getErrorCallbackProc())(
+                    (AAudioStream *) this,
+                    getErrorCallbackUserData(),
+                    AAUDIO_ERROR_DISCONNECTED
+                    );
+        }
+    }
+    setDeviceId(deviceId);

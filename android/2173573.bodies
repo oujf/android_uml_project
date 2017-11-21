@@ -1,0 +1,171 @@
+class Value
+!!!14729221.cpp!!!	~Value()
+    delete mContent;
+!!!14729349.cpp!!!	swap(inout rhs : Value) : Value
+    std::swap(mContent, rhs.mContent);
+    return *this;
+!!!14729477.cpp!!!	empty() : bool
+    return mContent == NULL;
+!!!14729605.cpp!!!	clear() : void
+    delete mContent;
+    mContent = NULL;
+!!!14729733.cpp!!!	type() : std::type_info
+    return mContent != NULL
+        ? mContent->type()
+        : typeid(void);
+!!!14729861.cpp!!!	parcelType() : int32_t
+    const void* t_info(mContent ? mContent->type_ptr() : NULL);
+
+    if (t_info == internal_type_ptr<bool>()) return VAL_BOOLEAN;
+    if (t_info == internal_type_ptr<uint8_t>()) return VAL_BYTE;
+    if (t_info == internal_type_ptr<int32_t>()) return VAL_INTEGER;
+    if (t_info == internal_type_ptr<int64_t>()) return VAL_LONG;
+    if (t_info == internal_type_ptr<double>()) return VAL_DOUBLE;
+    if (t_info == internal_type_ptr<String16>()) return VAL_STRING;
+
+    if (t_info == internal_type_ptr<vector<bool>>()) return VAL_BOOLEANARRAY;
+    if (t_info == internal_type_ptr<vector<uint8_t>>()) return VAL_BYTEARRAY;
+    if (t_info == internal_type_ptr<vector<int32_t>>()) return VAL_INTARRAY;
+    if (t_info == internal_type_ptr<vector<int64_t>>()) return VAL_LONGARRAY;
+    if (t_info == internal_type_ptr<vector<double>>()) return VAL_DOUBLEARRAY;
+    if (t_info == internal_type_ptr<vector<String16>>()) return VAL_STRINGARRAY;
+
+    if (t_info == internal_type_ptr<Map>()) return VAL_MAP;
+    if (t_info == internal_type_ptr<PersistableBundle>()) return VAL_PERSISTABLEBUNDLE;
+
+    return VAL_NULL;
+!!!14729989.cpp!!!	operator ==(in rhs : Value) : bool
+    const Value& lhs(*this);
+
+    if (lhs.empty() && rhs.empty()) {
+        return true;
+    }
+
+    if ( (lhs.mContent == NULL)
+      || (rhs.mContent == NULL)
+    ) {
+        return false;
+    }
+
+    return *lhs.mContent == *rhs.mContent;
+!!!14732165.cpp!!!	operator =(in rhs : Value) : Value
+    delete mContent;
+    mContent = rhs.mContent
+        ? rhs.mContent->clone()
+        : NULL;
+    return *this;
+!!!14740357.cpp!!!	getString(inout out : ::std::string) : bool
+    String8 val;
+    bool ret = getString(&val);
+    if (ret) {
+        *out = val.string();
+    }
+    return ret;
+!!!14740485.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    // This implementation needs to be kept in sync with the writeValue
+    // implementation in frameworks/base/core/java/android/os/Parcel.java
+
+#define BEGIN_HANDLE_WRITE()                                                                      \
+    do {                                                                                          \
+        const void* t_info(mContent?mContent->type_ptr():NULL);                                   \
+        if (false) { }
+#define HANDLE_WRITE_TYPE(T, TYPEVAL, TYPEMETHOD)                                                 \
+    else if (t_info == internal_type_ptr<T>()) {                                                  \
+        RETURN_IF_FAILED(parcel->writeInt32(TYPEVAL));                                            \
+        RETURN_IF_FAILED(parcel->TYPEMETHOD(static_cast<const Content<T>*>(mContent)->mValue));   \
+    }
+#define HANDLE_WRITE_PARCELABLE(T, TYPEVAL)                                                       \
+    else if (t_info == internal_type_ptr<T>()) {                                                  \
+        RETURN_IF_FAILED(parcel->writeInt32(TYPEVAL));                                            \
+        RETURN_IF_FAILED(static_cast<const Content<T>*>(mContent)->mValue.writeToParcel(parcel)); \
+    }
+#define END_HANDLE_WRITE()                                                                        \
+        else {                                                                                    \
+            ALOGE("writeToParcel: Type not supported");                                           \
+            return BAD_TYPE;                                                                      \
+        }                                                                                         \
+    } while (false);
+
+    BEGIN_HANDLE_WRITE()
+
+    HANDLE_WRITE_TYPE(bool,     VAL_BOOLEAN, writeBool)
+    HANDLE_WRITE_TYPE(int8_t,   VAL_BYTE,    writeByte)
+    HANDLE_WRITE_TYPE(int8_t,   VAL_BYTE,    writeByte)
+    HANDLE_WRITE_TYPE(int32_t,  VAL_INTEGER, writeInt32)
+    HANDLE_WRITE_TYPE(int64_t,  VAL_LONG,    writeInt64)
+    HANDLE_WRITE_TYPE(double,   VAL_DOUBLE,  writeDouble)
+    HANDLE_WRITE_TYPE(String16, VAL_STRING,  writeString16)
+
+    HANDLE_WRITE_TYPE(vector<bool>,     VAL_BOOLEANARRAY, writeBoolVector)
+    HANDLE_WRITE_TYPE(vector<uint8_t>,  VAL_BYTEARRAY,    writeByteVector)
+    HANDLE_WRITE_TYPE(vector<int8_t>,   VAL_BYTEARRAY,    writeByteVector)
+    HANDLE_WRITE_TYPE(vector<int32_t>,  VAL_INTARRAY,     writeInt32Vector)
+    HANDLE_WRITE_TYPE(vector<int64_t>,  VAL_LONGARRAY,    writeInt64Vector)
+    HANDLE_WRITE_TYPE(vector<double>,   VAL_DOUBLEARRAY,  writeDoubleVector)
+    HANDLE_WRITE_TYPE(vector<String16>, VAL_STRINGARRAY,  writeString16Vector)
+
+    HANDLE_WRITE_PARCELABLE(PersistableBundle, VAL_PERSISTABLEBUNDLE)
+
+    END_HANDLE_WRITE()
+
+    return NO_ERROR;
+
+#undef BEGIN_HANDLE_WRITE
+#undef HANDLE_WRITE_TYPE
+#undef HANDLE_WRITE_PARCELABLE
+#undef END_HANDLE_WRITE
+!!!14740613.cpp!!!	readFromParcel(in parcel : Parcel) : status_t
+    // This implementation needs to be kept in sync with the readValue
+    // implementation in frameworks/base/core/java/android/os/Parcel.javai
+
+#define BEGIN_HANDLE_READ()                                                                      \
+    switch(value_type) {                                                                         \
+        default:                                                                                 \
+            ALOGE("readFromParcel: Parcel type %d is not supported", value_type);                \
+            return BAD_TYPE;
+#define HANDLE_READ_TYPE(T, TYPEVAL, TYPEMETHOD)                                                 \
+        case TYPEVAL:                                                                            \
+            mContent = new Content<T>();                                                         \
+            RETURN_IF_FAILED(parcel->TYPEMETHOD(&static_cast<Content<T>*>(mContent)->mValue));   \
+            break;
+#define HANDLE_READ_PARCELABLE(T, TYPEVAL)                                                       \
+        case TYPEVAL:                                                                            \
+            mContent = new Content<T>();                                                         \
+            RETURN_IF_FAILED(static_cast<Content<T>*>(mContent)->mValue.readFromParcel(parcel)); \
+            break;
+#define END_HANDLE_READ()                                                                        \
+    }
+
+    int32_t value_type = VAL_NULL;
+
+    delete mContent;
+    mContent = NULL;
+
+    RETURN_IF_FAILED(parcel->readInt32(&value_type));
+
+    BEGIN_HANDLE_READ()
+
+    HANDLE_READ_TYPE(bool,     VAL_BOOLEAN, readBool)
+    HANDLE_READ_TYPE(int8_t,   VAL_BYTE,    readByte)
+    HANDLE_READ_TYPE(int32_t,  VAL_INTEGER, readInt32)
+    HANDLE_READ_TYPE(int64_t,  VAL_LONG,    readInt64)
+    HANDLE_READ_TYPE(double,   VAL_DOUBLE,  readDouble)
+    HANDLE_READ_TYPE(String16, VAL_STRING,  readString16)
+
+    HANDLE_READ_TYPE(vector<bool>,     VAL_BOOLEANARRAY, readBoolVector)
+    HANDLE_READ_TYPE(vector<uint8_t>,  VAL_BYTEARRAY,    readByteVector)
+    HANDLE_READ_TYPE(vector<int32_t>,  VAL_INTARRAY,     readInt32Vector)
+    HANDLE_READ_TYPE(vector<int64_t>,  VAL_LONGARRAY,    readInt64Vector)
+    HANDLE_READ_TYPE(vector<double>,   VAL_DOUBLEARRAY,  readDoubleVector)
+    HANDLE_READ_TYPE(vector<String16>, VAL_STRINGARRAY,  readString16Vector)
+
+    HANDLE_READ_PARCELABLE(PersistableBundle, VAL_PERSISTABLEBUNDLE)
+
+    END_HANDLE_READ()
+
+    return NO_ERROR;
+
+#undef BEGIN_HANDLE_READ
+#undef HANDLE_READ_TYPE
+#undef HANDLE_READ_PARCELABLE
+#undef END_HANDLE_READ

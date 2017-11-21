@@ -1,0 +1,58 @@
+class AccessibilityButtonChooserActivity
+!!!9750789.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.accessibility_button_chooser);
+
+        final ResolverDrawerLayout rdl = findViewById(R.id.contentPanel);
+        if (rdl != null) {
+            rdl.setOnDismissedListener(this::finish);
+        }
+
+        String component = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_BUTTON_TARGET_COMPONENT);
+        if (TextUtils.isEmpty(component)) {
+            TextView prompt = findViewById(R.id.accessibility_button_prompt);
+            prompt.setVisibility(View.VISIBLE);
+        }
+
+        mMagnificationTarget = new AccessibilityButtonTarget(this, MAGNIFICATION_COMPONENT_ID,
+                R.string.accessibility_magnification_chooser_text,
+                R.drawable.ic_accessibility_magnification);
+
+        mTargets = getServiceAccessibilityButtonTargets(this);
+        if (Settings.Secure.getInt(getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_NAVBAR_ENABLED, 0) == 1) {
+            mTargets.add(mMagnificationTarget);
+        }
+
+        if (mTargets.size() < 2) {
+            // Why are we here?
+            finish();
+        }
+
+        GridView gridview = findViewById(R.id.accessibility_button_chooser_grid);
+        gridview.setAdapter(new TargetAdapter());
+        gridview.setOnItemClickListener((parent, view, position, id) -> {
+            onTargetSelected(mTargets.get(position));
+        });
+!!!9750917.java!!!	getServiceAccessibilityButtonTargets(inout context : Context) : AccessibilityButtonChooserActivity::AccessibilityButtonTarget
+        AccessibilityManager ams = (AccessibilityManager) context.getSystemService(
+                Context.ACCESSIBILITY_SERVICE);
+        List<AccessibilityServiceInfo> services = ams.getEnabledAccessibilityServiceList(
+                AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+        if (services == null) {
+            return Collections.emptyList();
+        }
+
+        ArrayList<AccessibilityButtonTarget> targets = new ArrayList<>(services.size());
+        for (AccessibilityServiceInfo info : services) {
+            if ((info.flags & AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON) != 0) {
+                targets.add(new AccessibilityButtonTarget(context, info));
+            }
+        }
+
+        return targets;
+!!!9751045.java!!!	onTargetSelected(inout target : AccessibilityButtonChooserActivity::AccessibilityButtonTarget) : void
+        Settings.Secure.putString(getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_BUTTON_TARGET_COMPONENT, target.getId());
+        finish();

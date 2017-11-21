@@ -1,0 +1,67 @@
+class ShortcutParser
+!!!4234885.java!!!	ShortcutParser(inout context : Context, inout component : ComponentName)
+        this(context, component.getPackageName(), component.getClassName(),
+                getResId(context, component));
+!!!4235013.java!!!	getResId(inout context : Context, inout component : ComponentName) : int
+        ActivityInfo i = context.getPackageManager().getActivityInfo(
+                component, PackageManager.GET_META_DATA);
+        int resId = 0;
+        if (i.metaData != null && i.metaData.containsKey(SHORTCUTS)) {
+            resId = i.metaData.getInt(SHORTCUTS);
+        }
+        return resId;
+!!!4235141.java!!!	ShortcutParser(inout context : Context, in pkg : String, in name : String, in resId : int)
+        mContext = context;
+        mPkg = pkg;
+        mResId = resId;
+        mName = name;
+!!!4235269.java!!!	getShortcuts() : ShortcutParser::Shortcut
+        List<Shortcut> list = new ArrayList<>();
+        if (mResId != 0) {
+            try {
+                mResources = mContext.getPackageManager().getResourcesForApplication(mPkg);
+                XmlResourceParser parser = mResources.getXml(mResId);
+                mAttrs = Xml.asAttributeSet(parser);
+                int type;
+                while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                    if (type != XmlPullParser.START_TAG) {
+                        continue;
+                    }
+                    if (parser.getName().equals(SHORTCUT)) {
+                        Shortcut c = parseShortcut(parser);
+                        if (c != null) {
+                            list.add(c);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        return list;
+!!!4235397.java!!!	parseShortcut(inout parser : XmlResourceParser) : ShortcutParser::Shortcut
+        final TypedArray sa = mResources.obtainAttributes(mAttrs, R.styleable.Shortcut);
+        Shortcut c = new Shortcut();
+
+        final boolean enabled = sa.getBoolean(R.styleable.Shortcut_enabled, true);
+        if (!enabled) return null;
+        final String id = sa.getString(R.styleable.Shortcut_shortcutId);
+        final int iconResId = sa.getResourceId(R.styleable.Shortcut_icon, 0);
+        final int titleResId = sa.getResourceId(R.styleable.Shortcut_shortcutShortLabel, 0);
+
+        c.pkg = mPkg;
+        c.icon = Icon.createWithResource(mPkg, iconResId);
+        c.id = id;
+        c.label = mResources.getString(titleResId);
+        c.name = mName;
+        int type;
+        while ((type = parser.next()) != XmlPullParser.END_TAG) {
+            if (type != XmlPullParser.START_TAG) {
+                continue;
+            }
+            if (parser.getName().equals(INTENT)) {
+                c.intent = Intent.parseIntent(mResources, parser, mAttrs);
+            }
+        }
+        return c.intent != null ? c : null;

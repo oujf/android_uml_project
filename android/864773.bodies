@@ -1,0 +1,227 @@
+class StatusBarWindowManager
+!!!4093317.java!!!	StatusBarWindowManager(inout context : Context)
+        mContext = context;
+        mWindowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        mActivityManager = ActivityManager.getService();
+        mKeyguardScreenRotation = shouldEnableKeyguardScreenRotation();
+        mScreenBrightnessDoze = mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_screenBrightnessDoze) / 255f;
+!!!4093445.java!!!	shouldEnableKeyguardScreenRotation() : boolean
+        Resources res = mContext.getResources();
+        return SystemProperties.getBoolean("lockscreen.rot_override", false)
+                || res.getBoolean(R.bool.config_enableLockScreenRotation);
+!!!4093573.java!!!	add(inout statusBarView : View, in barHeight : int) : void
+
+        // Now that the status bar window encompasses the sliding panel and its
+        // translucent backdrop, the entire thing is made TRANSLUCENT and is
+        // hardware-accelerated.
+        mLp = new WindowManager.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                barHeight,
+                WindowManager.LayoutParams.TYPE_STATUS_BAR,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_TOUCHABLE_WHEN_WAKING
+                        | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                        | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS,
+                PixelFormat.TRANSLUCENT);
+        mLp.token = new Binder();
+        mLp.flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+        mLp.gravity = Gravity.TOP;
+        mLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+        mLp.setTitle("StatusBar");
+        mLp.packageName = mContext.getPackageName();
+        mStatusBarView = statusBarView;
+        mBarHeight = barHeight;
+        mWindowManager.addView(mStatusBarView, mLp);
+        mLpChanged = new WindowManager.LayoutParams();
+        mLpChanged.copyFrom(mLp);
+!!!4093701.java!!!	applyKeyguardFlags(inout state : StatusBarWindowManager::State) : void
+        if (state.keyguardShowing) {
+            mLpChanged.privateFlags |= WindowManager.LayoutParams.PRIVATE_FLAG_KEYGUARD;
+        } else {
+            mLpChanged.privateFlags &= ~WindowManager.LayoutParams.PRIVATE_FLAG_KEYGUARD;
+        }
+
+        if (state.keyguardShowing && !state.backdropShowing && !state.dozing) {
+            mLpChanged.flags |= WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
+        } else {
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
+        }
+!!!4093829.java!!!	adjustScreenOrientation(inout state : StatusBarWindowManager::State) : void
+        if (state.isKeyguardShowingAndNotOccluded()) {
+            if (mKeyguardScreenRotation) {
+                mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_USER;
+            } else {
+                mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;
+            }
+        } else {
+            mLpChanged.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        }
+!!!4093957.java!!!	applyFocusableFlag(inout state : StatusBarWindowManager::State) : void
+        boolean panelFocusable = state.statusBarFocusable && state.panelExpanded;
+        if (state.bouncerShowing && (state.keyguardOccluded || state.keyguardNeedsInput)
+                || StatusBar.ENABLE_REMOTE_INPUT && state.remoteInputActive) {
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        } else if (state.isKeyguardShowingAndNotOccluded() || panelFocusable) {
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            mLpChanged.flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        } else {
+            mLpChanged.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
+        }
+
+        mLpChanged.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+!!!4094085.java!!!	applyHeight(inout state : StatusBarWindowManager::State) : void
+        boolean expanded = isExpanded(state);
+        if (state.forcePluginOpen) {
+            mListener.setWouldOtherwiseCollapse(expanded);
+            expanded = true;
+        }
+        if (expanded) {
+            mLpChanged.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        } else {
+            mLpChanged.height = mBarHeight;
+        }
+!!!4094213.java!!!	isExpanded(inout state : StatusBarWindowManager::State) : boolean
+        return !state.forceCollapsed && (state.isKeyguardShowingAndNotOccluded()
+                || state.panelVisible || state.keyguardFadingAway || state.bouncerShowing
+                || state.headsUpShowing);
+!!!4094341.java!!!	applyFitsSystemWindows(inout state : StatusBarWindowManager::State) : void
+        boolean fitsSystemWindows = !state.isKeyguardShowingAndNotOccluded();
+        if (mStatusBarView.getFitsSystemWindows() != fitsSystemWindows) {
+            mStatusBarView.setFitsSystemWindows(fitsSystemWindows);
+            mStatusBarView.requestApplyInsets();
+        }
+!!!4094469.java!!!	applyUserActivityTimeout(inout state : StatusBarWindowManager::State) : void
+        if (state.isKeyguardShowingAndNotOccluded()
+                && state.statusBarState == StatusBarState.KEYGUARD
+                && !state.qsExpanded) {
+            mLpChanged.userActivityTimeout = KeyguardViewMediator.AWAKE_INTERVAL_DEFAULT_MS;
+        } else {
+            mLpChanged.userActivityTimeout = -1;
+        }
+!!!4094597.java!!!	applyInputFeatures(inout state : StatusBarWindowManager::State) : void
+        if (state.isKeyguardShowingAndNotOccluded()
+                && state.statusBarState == StatusBarState.KEYGUARD
+                && !state.qsExpanded && !state.forceUserActivity) {
+            mLpChanged.inputFeatures |=
+                    WindowManager.LayoutParams.INPUT_FEATURE_DISABLE_USER_ACTIVITY;
+        } else {
+            mLpChanged.inputFeatures &=
+                    ~WindowManager.LayoutParams.INPUT_FEATURE_DISABLE_USER_ACTIVITY;
+        }
+!!!4094725.java!!!	apply(inout state : StatusBarWindowManager::State) : void
+        applyKeyguardFlags(state);
+        applyForceStatusBarVisibleFlag(state);
+        applyFocusableFlag(state);
+        adjustScreenOrientation(state);
+        applyHeight(state);
+        applyUserActivityTimeout(state);
+        applyInputFeatures(state);
+        applyFitsSystemWindows(state);
+        applyModalFlag(state);
+        applyBrightness(state);
+        applyHasTopUi(state);
+        if (mLp.copyFrom(mLpChanged) != 0) {
+            mWindowManager.updateViewLayout(mStatusBarView, mLp);
+        }
+        if (mHasTopUi != mHasTopUiChanged) {
+            try {
+                mActivityManager.setHasTopUi(mHasTopUiChanged);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Failed to call setHasTopUi", e);
+            }
+            mHasTopUi = mHasTopUiChanged;
+        }
+!!!4094853.java!!!	applyForceStatusBarVisibleFlag(inout state : StatusBarWindowManager::State) : void
+        if (state.forceStatusBarVisible) {
+            mLpChanged.privateFlags |= WindowManager
+                    .LayoutParams.PRIVATE_FLAG_FORCE_STATUS_BAR_VISIBLE_TRANSPARENT;
+        } else {
+            mLpChanged.privateFlags &= ~WindowManager
+                    .LayoutParams.PRIVATE_FLAG_FORCE_STATUS_BAR_VISIBLE_TRANSPARENT;
+        }
+!!!4094981.java!!!	applyModalFlag(inout state : StatusBarWindowManager::State) : void
+        if (state.headsUpShowing) {
+            mLpChanged.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        } else {
+            mLpChanged.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        }
+!!!4095109.java!!!	applyBrightness(inout state : StatusBarWindowManager::State) : void
+        if (state.forceDozeBrightness) {
+            mLpChanged.screenBrightness = mScreenBrightnessDoze;
+        } else {
+            mLpChanged.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+        }
+!!!4095237.java!!!	applyHasTopUi(inout state : StatusBarWindowManager::State) : void
+        mHasTopUiChanged = isExpanded(state);
+!!!4095365.java!!!	setKeyguardShowing(inout showing : boolean) : void
+        mCurrentState.keyguardShowing = showing;
+        apply(mCurrentState);
+!!!4095493.java!!!	setKeyguardOccluded(inout occluded : boolean) : void
+        mCurrentState.keyguardOccluded = occluded;
+        apply(mCurrentState);
+!!!4095621.java!!!	setKeyguardNeedsInput(inout needsInput : boolean) : void
+        mCurrentState.keyguardNeedsInput = needsInput;
+        apply(mCurrentState);
+!!!4095749.java!!!	setPanelVisible(inout visible : boolean) : void
+        mCurrentState.panelVisible = visible;
+        mCurrentState.statusBarFocusable = visible;
+        apply(mCurrentState);
+!!!4095877.java!!!	setStatusBarFocusable(inout focusable : boolean) : void
+        mCurrentState.statusBarFocusable = focusable;
+        apply(mCurrentState);
+!!!4096005.java!!!	setBouncerShowing(inout showing : boolean) : void
+        mCurrentState.bouncerShowing = showing;
+        apply(mCurrentState);
+!!!4096133.java!!!	setBackdropShowing(inout showing : boolean) : void
+        mCurrentState.backdropShowing = showing;
+        apply(mCurrentState);
+!!!4096261.java!!!	setKeyguardFadingAway(inout keyguardFadingAway : boolean) : void
+        mCurrentState.keyguardFadingAway = keyguardFadingAway;
+        apply(mCurrentState);
+!!!4096389.java!!!	setQsExpanded(inout expanded : boolean) : void
+        mCurrentState.qsExpanded = expanded;
+        apply(mCurrentState);
+!!!4096517.java!!!	setForceUserActivity(inout forceUserActivity : boolean) : void
+        mCurrentState.forceUserActivity = forceUserActivity;
+        apply(mCurrentState);
+!!!4096645.java!!!	setHeadsUpShowing(inout showing : boolean) : void
+        mCurrentState.headsUpShowing = showing;
+        apply(mCurrentState);
+!!!4096773.java!!!	setStatusBarState(in state : int) : void
+        mCurrentState.statusBarState = state;
+        apply(mCurrentState);
+!!!4096901.java!!!	setForceStatusBarVisible(inout forceStatusBarVisible : boolean) : void
+        mCurrentState.forceStatusBarVisible = forceStatusBarVisible;
+        apply(mCurrentState);
+!!!4097029.java!!!	setForceWindowCollapsed(inout force : boolean) : void
+        mCurrentState.forceCollapsed = force;
+        apply(mCurrentState);
+!!!4097157.java!!!	setPanelExpanded(inout isExpanded : boolean) : void
+        mCurrentState.panelExpanded = isExpanded;
+        apply(mCurrentState);
+!!!4097285.java!!!	onRemoteInputActive(inout remoteInputActive : boolean) : void
+        mCurrentState.remoteInputActive = remoteInputActive;
+        apply(mCurrentState);
+!!!4097413.java!!!	setForceDozeBrightness(inout forceDozeBrightness : boolean) : void
+        mCurrentState.forceDozeBrightness = forceDozeBrightness;
+        apply(mCurrentState);
+!!!4097541.java!!!	setDozing(inout dozing : boolean) : void
+        mCurrentState.dozing = dozing;
+        apply(mCurrentState);
+!!!4097669.java!!!	setBarHeight(in barHeight : int) : void
+        mBarHeight = barHeight;
+        apply(mCurrentState);
+!!!4097797.java!!!	setForcePluginOpen(inout forcePluginOpen : boolean) : void
+        mCurrentState.forcePluginOpen = forcePluginOpen;
+        apply(mCurrentState);
+!!!4097925.java!!!	setStateListener(inout listener : StatusBarWindowManager::OtherwisedCollapsedListener) : void
+        mListener = listener;
+!!!4098053.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.println("StatusBarWindowManager state:");
+        pw.println(mCurrentState);
+!!!4098181.java!!!	isShowingWallpaper() : boolean
+        return !mCurrentState.backdropShowing;

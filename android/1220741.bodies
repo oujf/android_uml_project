@@ -1,0 +1,126 @@
+class WakeLock
+!!!7554565.java!!!	WakeLock(in flags : int, in tag : String, in packageName : String)
+            mFlags = flags;
+            mTag = tag;
+            mPackageName = packageName;
+            mToken = new Binder();
+            mTraceName = "WakeLock (" + mTag + ")";
+!!!7554693.java!!!	finalize() : void
+            synchronized (mToken) {
+                if (mHeld) {
+                    Log.wtf(TAG, "WakeLock finalized while still held: " + mTag);
+                    Trace.asyncTraceEnd(Trace.TRACE_TAG_POWER, mTraceName, 0);
+                    try {
+                        mService.releaseWakeLock(mToken, 0);
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                }
+            }
+!!!7554821.java!!!	setReferenceCounted(inout value : boolean) : void
+            synchronized (mToken) {
+                mRefCounted = value;
+            }
+!!!7554949.java!!!	acquire() : void
+            synchronized (mToken) {
+                acquireLocked();
+            }
+!!!7555077.java!!!	acquire(in timeout : long) : void
+            synchronized (mToken) {
+                acquireLocked();
+                mHandler.postDelayed(mReleaser, timeout);
+            }
+!!!7555205.java!!!	acquireLocked() : void
+            if (!mRefCounted || mCount++ == 0) {
+                // Do this even if the wake lock is already thought to be held (mHeld == true)
+                // because non-reference counted wake locks are not always properly released.
+                // For example, the keyguard's wake lock might be forcibly released by the
+                // power manager without the keyguard knowing.  A subsequent call to acquire
+                // should immediately acquire the wake lock once again despite never having
+                // been explicitly released by the keyguard.
+                mHandler.removeCallbacks(mReleaser);
+                Trace.asyncTraceBegin(Trace.TRACE_TAG_POWER, mTraceName, 0);
+                try {
+                    mService.acquireWakeLock(mToken, mFlags, mTag, mPackageName, mWorkSource,
+                            mHistoryTag);
+                } catch (RemoteException e) {
+                    throw e.rethrowFromSystemServer();
+                }
+                mHeld = true;
+            }
+!!!7555333.java!!!	release() : void
+            release(0);
+!!!7555461.java!!!	release(in flags : int) : void
+            synchronized (mToken) {
+                if (!mRefCounted || --mCount == 0) {
+                    mHandler.removeCallbacks(mReleaser);
+                    if (mHeld) {
+                        Trace.asyncTraceEnd(Trace.TRACE_TAG_POWER, mTraceName, 0);
+                        try {
+                            mService.releaseWakeLock(mToken, flags);
+                        } catch (RemoteException e) {
+                            throw e.rethrowFromSystemServer();
+                        }
+                        mHeld = false;
+                    }
+                }
+                if (mCount < 0) {
+                    throw new RuntimeException("WakeLock under-locked " + mTag);
+                }
+            }
+!!!7555589.java!!!	isHeld() : boolean
+            synchronized (mToken) {
+                return mHeld;
+            }
+!!!7555717.java!!!	setWorkSource(inout ws : WorkSource) : void
+            synchronized (mToken) {
+                if (ws != null && ws.size() == 0) {
+                    ws = null;
+                }
+
+                final boolean changed;
+                if (ws == null) {
+                    changed = mWorkSource != null;
+                    mWorkSource = null;
+                } else if (mWorkSource == null) {
+                    changed = true;
+                    mWorkSource = new WorkSource(ws);
+                } else {
+                    changed = mWorkSource.diff(ws);
+                    if (changed) {
+                        mWorkSource.set(ws);
+                    }
+                }
+
+                if (changed && mHeld) {
+                    try {
+                        mService.updateWakeLockWorkSource(mToken, mWorkSource, mHistoryTag);
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                }
+            }
+!!!7555845.java!!!	setTag(in tag : String) : void
+            mTag = tag;
+!!!7555973.java!!!	getTag() : String
+            return mTag;
+!!!7556101.java!!!	setHistoryTag(in tag : String) : void
+            mHistoryTag = tag;
+!!!7556229.java!!!	setUnimportantForLogging(inout state : boolean) : void
+            if (state) mFlags |= UNIMPORTANT_FOR_LOGGING;
+            else mFlags &= ~UNIMPORTANT_FOR_LOGGING;
+!!!7556357.java!!!	toString() : String
+            synchronized (mToken) {
+                return "WakeLock{"
+                    + Integer.toHexString(System.identityHashCode(this))
+                    + " held=" + mHeld + ", refCount=" + mCount + "}";
+            }
+!!!7556485.java!!!	wrap(inout r : Runnable) : Runnable
+            acquire();
+            return () -> {
+                try {
+                    r.run();
+                } finally {
+                    release();
+                }
+            };

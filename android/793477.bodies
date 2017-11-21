@@ -1,0 +1,238 @@
+class PowerNotificationWarnings
+!!!3315589.java!!!	PowerNotificationWarnings(inout context : Context, inout notificationManager : NotificationManager, inout statusBar : StatusBar)
+        mContext = context;
+        mNoMan = notificationManager;
+        mPowerMan = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        mReceiver.init();
+!!!3315717.java!!!	dump(inout pw : PrintWriter) : void
+        pw.print("mWarning="); pw.println(mWarning);
+        pw.print("mPlaySound="); pw.println(mPlaySound);
+        pw.print("mInvalidCharger="); pw.println(mInvalidCharger);
+        pw.print("mShowing="); pw.println(SHOWING_STRINGS[mShowing]);
+        pw.print("mSaverConfirmation="); pw.println(mSaverConfirmation != null ? "not null" : null);
+        pw.print("mHighTempWarning="); pw.println(mHighTempWarning);
+        pw.print("mHighTempDialog="); pw.println(mHighTempDialog != null ? "not null" : null);
+        pw.print("mThermalShutdownDialog=");
+        pw.println(mThermalShutdownDialog != null ? "not null" : null);
+!!!3315845.java!!!	update(in batteryLevel : int, in bucket : int, in screenOffTime : long) : void
+        mBatteryLevel = batteryLevel;
+        if (bucket >= 0) {
+            mBucketDroppedNegativeTimeMs = 0;
+        } else if (bucket < mBucket) {
+            mBucketDroppedNegativeTimeMs = System.currentTimeMillis();
+        }
+        mBucket = bucket;
+        mScreenOffTime = screenOffTime;
+!!!3315973.java!!!	updateNotification() : void
+        if (DEBUG) Slog.d(TAG, "updateNotification mWarning=" + mWarning + " mPlaySound="
+                + mPlaySound + " mInvalidCharger=" + mInvalidCharger);
+        if (mInvalidCharger) {
+            showInvalidChargerNotification();
+            mShowing = SHOWING_INVALID_CHARGER;
+        } else if (mWarning) {
+            showWarningNotification();
+            mShowing = SHOWING_WARNING;
+        } else {
+            mNoMan.cancelAsUser(TAG_BATTERY, SystemMessage.NOTE_BAD_CHARGER, UserHandle.ALL);
+            mNoMan.cancelAsUser(TAG_BATTERY, SystemMessage.NOTE_POWER_LOW, UserHandle.ALL);
+            mShowing = SHOWING_NOTHING;
+        }
+!!!3316101.java!!!	showInvalidChargerNotification() : void
+        final Notification.Builder nb =
+                new Notification.Builder(mContext, NotificationChannels.ALERTS)
+                        .setSmallIcon(R.drawable.ic_power_low)
+                        .setWhen(0)
+                        .setShowWhen(false)
+                        .setOngoing(true)
+                        .setContentTitle(mContext.getString(R.string.invalid_charger_title))
+                        .setContentText(mContext.getString(R.string.invalid_charger_text))
+                        .setColor(mContext.getColor(
+                                com.android.internal.R.color.system_notification_accent_color));
+        SystemUI.overrideNotificationAppName(mContext, nb);
+        final Notification n = nb.build();
+        mNoMan.cancelAsUser(TAG_BATTERY, SystemMessage.NOTE_POWER_LOW, UserHandle.ALL);
+        mNoMan.notifyAsUser(TAG_BATTERY, SystemMessage.NOTE_BAD_CHARGER, n, UserHandle.ALL);
+!!!3316229.java!!!	showWarningNotification() : void
+        final int textRes = R.string.battery_low_percent_format;
+        final String percentage = NumberFormat.getPercentInstance().format((double) mBatteryLevel / 100.0);
+        final Notification.Builder nb =
+                new Notification.Builder(mContext, NotificationChannels.ALERTS)
+                        .setSmallIcon(R.drawable.ic_power_low)
+                        // Bump the notification when the bucket dropped.
+                        .setWhen(mBucketDroppedNegativeTimeMs)
+                        .setShowWhen(false)
+                        .setContentTitle(mContext.getString(R.string.battery_low_title))
+                        .setContentText(mContext.getString(textRes, percentage))
+                        .setOnlyAlertOnce(true)
+                        .setDeleteIntent(pendingBroadcast(ACTION_DISMISSED_WARNING))
+                        .setVisibility(Notification.VISIBILITY_PUBLIC)
+                        .setColor(Utils.getColorAttr(mContext, android.R.attr.colorError));
+        if (hasBatterySettings()) {
+            nb.setContentIntent(pendingBroadcast(ACTION_SHOW_BATTERY_SETTINGS));
+        }
+        nb.addAction(0,
+                mContext.getString(R.string.battery_saver_start_action),
+                pendingBroadcast(ACTION_START_SAVER));
+        if (mPlaySound) {
+            attachLowBatterySound(nb);
+            mPlaySound = false;
+        }
+        SystemUI.overrideNotificationAppName(mContext, nb);
+        final Notification n = nb.build();
+        mNoMan.cancelAsUser(TAG_BATTERY, SystemMessage.NOTE_BAD_CHARGER, UserHandle.ALL);
+        mNoMan.notifyAsUser(TAG_BATTERY, SystemMessage.NOTE_POWER_LOW, n, UserHandle.ALL);
+!!!3316357.java!!!	pendingBroadcast(in action : String) : PendingIntent
+        return PendingIntent.getBroadcastAsUser(mContext,
+                0, new Intent(action), 0, UserHandle.CURRENT);
+!!!3316485.java!!!	settings(in action : String) : Intent
+        return new Intent(action).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                | Intent.FLAG_ACTIVITY_NO_HISTORY
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+!!!3316613.java!!!	isInvalidChargerWarningShowing() : boolean
+        return mInvalidCharger;
+!!!3316741.java!!!	dismissHighTemperatureWarning() : void
+        if (!mHighTempWarning) {
+            return;
+        }
+        mHighTempWarning = false;
+        dismissHighTemperatureWarningInternal();
+!!!3316869.java!!!	dismissHighTemperatureWarningInternal() : void
+        mNoMan.cancelAsUser(TAG_TEMPERATURE, SystemMessage.NOTE_HIGH_TEMP, UserHandle.ALL);
+!!!3316997.java!!!	showHighTemperatureWarning() : void
+        if (mHighTempWarning) {
+            return;
+        }
+        mHighTempWarning = true;
+        final Notification.Builder nb =
+                new Notification.Builder(mContext, NotificationChannels.ALERTS)
+                        .setSmallIcon(R.drawable.ic_device_thermostat_24)
+                        .setWhen(0)
+                        .setShowWhen(false)
+                        .setContentTitle(mContext.getString(R.string.high_temp_title))
+                        .setContentText(mContext.getString(R.string.high_temp_notif_message))
+                        .setVisibility(Notification.VISIBILITY_PUBLIC)
+                        .setContentIntent(pendingBroadcast(ACTION_CLICKED_TEMP_WARNING))
+                        .setDeleteIntent(pendingBroadcast(ACTION_DISMISSED_TEMP_WARNING))
+                        .setColor(Utils.getColorAttr(mContext, android.R.attr.colorError));
+        SystemUI.overrideNotificationAppName(mContext, nb);
+        final Notification n = nb.build();
+        mNoMan.notifyAsUser(TAG_TEMPERATURE, SystemMessage.NOTE_HIGH_TEMP, n, UserHandle.ALL);
+!!!3317125.java!!!	showHighTemperatureDialog() : void
+        if (mHighTempDialog != null) return;
+        final SystemUIDialog d = new SystemUIDialog(mContext);
+        d.setIconAttribute(android.R.attr.alertDialogIcon);
+        d.setTitle(R.string.high_temp_title);
+        d.setMessage(R.string.high_temp_dialog_message);
+        d.setPositiveButton(com.android.internal.R.string.ok, null);
+        d.setShowForAllUsers(true);
+        d.setOnDismissListener(dialog -> mHighTempDialog = null);
+        d.show();
+        mHighTempDialog = d;
+!!!3317253.java!!!	dismissThermalShutdownWarning() : void
+        mNoMan.cancelAsUser(TAG_TEMPERATURE, SystemMessage.NOTE_THERMAL_SHUTDOWN, UserHandle.ALL);
+!!!3317381.java!!!	showThermalShutdownDialog() : void
+        if (mThermalShutdownDialog != null) return;
+        final SystemUIDialog d = new SystemUIDialog(mContext);
+        d.setIconAttribute(android.R.attr.alertDialogIcon);
+        d.setTitle(R.string.thermal_shutdown_title);
+        d.setMessage(R.string.thermal_shutdown_dialog_message);
+        d.setPositiveButton(com.android.internal.R.string.ok, null);
+        d.setShowForAllUsers(true);
+        d.setOnDismissListener(dialog -> mThermalShutdownDialog = null);
+        d.show();
+        mThermalShutdownDialog = d;
+!!!3317509.java!!!	showThermalShutdownWarning() : void
+        final Notification.Builder nb =
+                new Notification.Builder(mContext, NotificationChannels.ALERTS)
+                        .setSmallIcon(R.drawable.ic_device_thermostat_24)
+                        .setWhen(0)
+                        .setShowWhen(false)
+                        .setContentTitle(mContext.getString(R.string.thermal_shutdown_title))
+                        .setContentText(mContext.getString(R.string.thermal_shutdown_message))
+                        .setVisibility(Notification.VISIBILITY_PUBLIC)
+                        .setContentIntent(pendingBroadcast(ACTION_CLICKED_THERMAL_SHUTDOWN_WARNING))
+                        .setDeleteIntent(
+                                pendingBroadcast(ACTION_DISMISSED_THERMAL_SHUTDOWN_WARNING))
+                        .setColor(Utils.getColorAttr(mContext, android.R.attr.colorError));
+        SystemUI.overrideNotificationAppName(mContext, nb);
+        final Notification n = nb.build();
+        mNoMan.notifyAsUser(
+                TAG_TEMPERATURE, SystemMessage.NOTE_THERMAL_SHUTDOWN, n, UserHandle.ALL);
+!!!3317637.java!!!	updateLowBatteryWarning() : void
+        updateNotification();
+!!!3317765.java!!!	dismissLowBatteryWarning() : void
+        if (DEBUG) Slog.d(TAG, "dismissing low battery warning: level=" + mBatteryLevel);
+        dismissLowBatteryNotification();
+!!!3317893.java!!!	dismissLowBatteryNotification() : void
+        if (mWarning) Slog.i(TAG, "dismissing low battery notification");
+        mWarning = false;
+        updateNotification();
+!!!3318021.java!!!	hasBatterySettings() : boolean
+        return mOpenBatterySettings.resolveActivity(mContext.getPackageManager()) != null;
+!!!3318149.java!!!	showLowBatteryWarning(inout playSound : boolean) : void
+        Slog.i(TAG,
+                "show low battery warning: level=" + mBatteryLevel
+                + " [" + mBucket + "] playSound=" + playSound);
+        mPlaySound = playSound;
+        mWarning = true;
+        updateNotification();
+!!!3318277.java!!!	attachLowBatterySound(inout b : Notification.Builder) : void
+        final ContentResolver cr = mContext.getContentResolver();
+
+        final int silenceAfter = Settings.Global.getInt(cr,
+                Settings.Global.LOW_BATTERY_SOUND_TIMEOUT, 0);
+        final long offTime = SystemClock.elapsedRealtime() - mScreenOffTime;
+        if (silenceAfter > 0
+                && mScreenOffTime > 0
+                && offTime > silenceAfter) {
+            Slog.i(TAG, "screen off too long (" + offTime + "ms, limit " + silenceAfter
+                    + "ms): not waking up the user with low battery sound");
+            return;
+        }
+
+        if (DEBUG) {
+            Slog.d(TAG, "playing low battery sound. pick-a-doop!"); // WOMP-WOMP is deprecated
+        }
+
+        if (Settings.Global.getInt(cr, Settings.Global.POWER_SOUNDS_ENABLED, 1) == 1) {
+            final String soundPath = Settings.Global.getString(cr,
+                    Settings.Global.LOW_BATTERY_SOUND);
+            if (soundPath != null) {
+                final Uri soundUri = Uri.parse("file://" + soundPath);
+                if (soundUri != null) {
+                    b.setSound(soundUri, AUDIO_ATTRIBUTES);
+                    if (DEBUG) Slog.d(TAG, "playing sound " + soundUri);
+                }
+            }
+        }
+!!!3318405.java!!!	dismissInvalidChargerWarning() : void
+        dismissInvalidChargerNotification();
+!!!3318533.java!!!	dismissInvalidChargerNotification() : void
+        if (mInvalidCharger) Slog.i(TAG, "dismissing invalid charger notification");
+        mInvalidCharger = false;
+        updateNotification();
+!!!3318661.java!!!	showInvalidChargerWarning() : void
+        mInvalidCharger = true;
+        updateNotification();
+!!!3318789.java!!!	userSwitched() : void
+        updateNotification();
+!!!3318917.java!!!	showStartSaverConfirmation() : void
+        if (mSaverConfirmation != null) return;
+        final SystemUIDialog d = new SystemUIDialog(mContext);
+        d.setTitle(R.string.battery_saver_confirmation_title);
+        d.setMessage(com.android.internal.R.string.battery_saver_description);
+        d.setNegativeButton(android.R.string.cancel, null);
+        d.setPositiveButton(R.string.battery_saver_confirmation_ok, mStartSaverMode);
+        d.setShowForAllUsers(true);
+        d.setOnDismissListener(new OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialog) {
+                mSaverConfirmation = null;
+            }
+        });
+        d.show();
+        mSaverConfirmation = d;
+!!!3319045.java!!!	setSaverMode(inout mode : boolean) : void
+        mPowerMan.setPowerSaveMode(mode);

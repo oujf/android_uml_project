@@ -1,0 +1,159 @@
+class ResolverListController
+!!!9782149.java!!!	ResolverListController(inout context : Context, inout pm : PackageManager, inout targetIntent : Intent, in referrerPackage : String, in launchedFromUid : int)
+        mContext = context;
+        mpm = pm;
+        mLaunchedFromUid = launchedFromUid;
+        mTargetIntent = targetIntent;
+        mReferrerPackage = referrerPackage;
+!!!9782277.java!!!	getLastChosen() : ResolveInfo
+        return AppGlobals.getPackageManager().getLastChosenActivity(
+                mTargetIntent, mTargetIntent.resolveTypeIfNeeded(mContext.getContentResolver()),
+                PackageManager.MATCH_DEFAULT_ONLY);
+!!!9782405.java!!!	setLastChosen(inout intent : Intent, inout filter : IntentFilter, in match : int) : void
+        AppGlobals.getPackageManager().setLastChosenActivity(intent,
+                intent.resolveType(mContext.getContentResolver()),
+                PackageManager.MATCH_DEFAULT_ONLY,
+                filter, match, intent.getComponent());
+!!!9782533.java!!!	getResolversForIntent(inout shouldGetResolvedFilter : boolean, inout shouldGetActivityMetadata : boolean, inout intents : List<Intent>) : ResolverActivity::ResolvedComponentInfo
+        List<ResolverActivity.ResolvedComponentInfo> resolvedComponents = null;
+        for (int i = 0, N = intents.size(); i < N; i++) {
+            final Intent intent = intents.get(i);
+            final List<ResolveInfo> infos = mpm.queryIntentActivities(intent,
+                    PackageManager.MATCH_DEFAULT_ONLY
+                            | (shouldGetResolvedFilter ? PackageManager.GET_RESOLVED_FILTER : 0)
+                            | (shouldGetActivityMetadata ? PackageManager.GET_META_DATA : 0)
+                            | PackageManager.MATCH_INSTANT);
+            // Remove any activities that are not exported.
+            int totalSize = infos.size();
+            for (int j = totalSize - 1; j >= 0 ; j--) {
+                ResolveInfo info = infos.get(j);
+                if (info.activityInfo != null && !info.activityInfo.exported) {
+                    infos.remove(j);
+                }
+            }
+            if (infos != null) {
+                if (resolvedComponents == null) {
+                    resolvedComponents = new ArrayList<>();
+                }
+                addResolveListDedupe(resolvedComponents, intent, infos);
+            }
+        }
+        return resolvedComponents;
+!!!9782661.java!!!	addResolveListDedupe(inout into : List<ResolverActivity.ResolvedComponentInfo>, inout intent : Intent, inout from : List<ResolveInfo>) : void
+        final int fromCount = from.size();
+        final int intoCount = into.size();
+        for (int i = 0; i < fromCount; i++) {
+            final ResolveInfo newInfo = from.get(i);
+            boolean found = false;
+            // Only loop to the end of into as it was before we started; no dupes in from.
+            for (int j = 0; j < intoCount; j++) {
+                final ResolverActivity.ResolvedComponentInfo rci = into.get(j);
+                if (isSameResolvedComponent(newInfo, rci)) {
+                    found = true;
+                    rci.add(intent, newInfo);
+                    break;
+                }
+            }
+            if (!found) {
+                final ComponentName name = new ComponentName(
+                        newInfo.activityInfo.packageName, newInfo.activityInfo.name);
+                final ResolverActivity.ResolvedComponentInfo rci =
+                        new ResolverActivity.ResolvedComponentInfo(name, intent, newInfo);
+                rci.setPinned(isComponentPinned(name));
+                into.add(rci);
+            }
+        }
+!!!9782789.java!!!	filterIneligibleActivities(inout inputList : List<ResolverActivity.ResolvedComponentInfo>, inout returnCopyOfOriginalListIfModified : boolean) : ResolverActivity::ResolvedComponentInfo
+        ArrayList<ResolverActivity.ResolvedComponentInfo> listToReturn = null;
+        for (int i = inputList.size()-1; i >= 0; i--) {
+            ActivityInfo ai = inputList.get(i)
+                    .getResolveInfoAt(0).activityInfo;
+            int granted = ActivityManager.checkComponentPermission(
+                    ai.permission, mLaunchedFromUid,
+                    ai.applicationInfo.uid, ai.exported);
+            boolean suspended = (ai.applicationInfo.flags
+                    & ApplicationInfo.FLAG_SUSPENDED) != 0;
+            if (granted != PackageManager.PERMISSION_GRANTED || suspended
+                    || isComponentFiltered(ai.getComponentName())) {
+                // Access not allowed! We're about to filter an item,
+                // so modify the unfiltered version if it hasn't already been modified.
+                if (returnCopyOfOriginalListIfModified && listToReturn == null) {
+                    listToReturn = new ArrayList<>(inputList);
+                }
+                inputList.remove(i);
+            }
+        }
+        return listToReturn;
+!!!9782917.java!!!	filterLowPriority(inout inputList : List<ResolverActivity.ResolvedComponentInfo>, inout returnCopyOfOriginalListIfModified : boolean) : ResolverActivity::ResolvedComponentInfo
+        ArrayList<ResolverActivity.ResolvedComponentInfo> listToReturn = null;
+        // Only display the first matches that are either of equal
+        // priority or have asked to be default options.
+        ResolverActivity.ResolvedComponentInfo rci0 = inputList.get(0);
+        ResolveInfo r0 = rci0.getResolveInfoAt(0);
+        int N = inputList.size();
+        for (int i = 1; i < N; i++) {
+            ResolveInfo ri = inputList.get(i).getResolveInfoAt(0);
+            if (DEBUG) Log.v(
+                    TAG,
+                    r0.activityInfo.name + "=" +
+                            r0.priority + "/" + r0.isDefault + " vs " +
+                            ri.activityInfo.name + "=" +
+                            ri.priority + "/" + ri.isDefault);
+            if (r0.priority != ri.priority ||
+                    r0.isDefault != ri.isDefault) {
+                while (i < N) {
+                    if (returnCopyOfOriginalListIfModified && listToReturn == null) {
+                        listToReturn = new ArrayList<>(inputList);
+                    }
+                    inputList.remove(i);
+                    N--;
+                }
+            }
+        }
+        return listToReturn;
+!!!9786117.java!!!	sort(inout inputList : List<ResolverActivity.ResolvedComponentInfo>) : void
+        final CountDownLatch finishComputeSignal = new CountDownLatch(1);
+        ComputeCallback callback = new ComputeCallback(finishComputeSignal);
+        if (mResolverComparator == null) {
+            mResolverComparator =
+                    new ResolverComparator(mContext, mTargetIntent, mReferrerPackage, callback);
+        } else {
+            mResolverComparator.setCallBack(callback);
+        }
+        try {
+            long beforeRank = System.currentTimeMillis();
+            mResolverComparator.compute(inputList);
+            finishComputeSignal.await();
+            Collections.sort(inputList, mResolverComparator);
+            long afterRank = System.currentTimeMillis();
+            if (DEBUG) {
+                Log.d(TAG, "Time Cost: " + Long.toString(afterRank - beforeRank));
+            }
+        } catch (InterruptedException e) {
+            Log.e(TAG, "Compute & Sort was interrupted: " + e);
+        }
+!!!9786245.java!!!	isSameResolvedComponent(inout a : ResolveInfo, inout b : ResolverActivity::ResolvedComponentInfo) : boolean
+        final ActivityInfo ai = a.activityInfo;
+        return ai.packageName.equals(b.name.getPackageName())
+                && ai.name.equals(b.name.getClassName());
+!!!9786373.java!!!	isComponentPinned(inout name : ComponentName) : boolean
+        return false;
+!!!9786501.java!!!	isComponentFiltered(inout componentName : ComponentName) : boolean
+        return false;
+!!!9786629.java!!!	getScore(inout target : ResolverActivity::DisplayResolveInfo) : float
+        if (mResolverComparator == null) {
+            return 0.0f;
+        }
+        return mResolverComparator.getScore(target.getResolvedComponentName());
+!!!9786757.java!!!	updateModel(inout componentName : ComponentName) : void
+        if (mResolverComparator != null) {
+            mResolverComparator.updateModel(componentName);
+        }
+!!!9786885.java!!!	updateChooserCounts(in packageName : String, in userId : int, in action : String) : void
+        if (mResolverComparator != null) {
+            mResolverComparator.updateChooserCounts(packageName, userId, action);
+        }
+!!!9787013.java!!!	destroy() : void
+        if (mResolverComparator != null) {
+            mResolverComparator.destroy();
+        }

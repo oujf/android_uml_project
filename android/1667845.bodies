@@ -1,0 +1,187 @@
+class TetherMasterUtilState
+!!!11398149.java!!!	processMessage(inout m : Message) : boolean
+                return false;
+!!!11398277.java!!!	requestUpstreamMobileConnection() : void
+                mUpstreamNetworkMonitor.updateMobileRequiresDun(mConfig.isDunRequired);
+                mUpstreamNetworkMonitor.registerMobileNetworkRequest();
+!!!11398405.java!!!	unrequestUpstreamMobileConnection() : void
+                mUpstreamNetworkMonitor.releaseMobileNetworkRequest();
+!!!11398533.java!!!	turnOnMasterTetherSettings() : boolean
+                final TetheringConfiguration cfg = mConfig;
+                try {
+                    mNMService.setIpForwardingEnabled(true);
+                } catch (Exception e) {
+                    mLog.e(e);
+                    transitionTo(mSetIpForwardingEnabledErrorState);
+                    return false;
+                }
+                // TODO: Randomize DHCPv4 ranges, especially in hotspot mode.
+                try {
+                    // TODO: Find a more accurate method name (startDHCPv4()?).
+                    mNMService.startTethering(cfg.dhcpRanges);
+                } catch (Exception e) {
+                    try {
+                        mNMService.stopTethering();
+                        mNMService.startTethering(cfg.dhcpRanges);
+                    } catch (Exception ee) {
+                        mLog.e(ee);
+                        transitionTo(mStartTetheringErrorState);
+                        return false;
+                    }
+                }
+                mLog.log("SET master tether settings: ON");
+                return true;
+!!!11398661.java!!!	turnOffMasterTetherSettings() : boolean
+                try {
+                    mNMService.stopTethering();
+                } catch (Exception e) {
+                    mLog.e(e);
+                    transitionTo(mStopTetheringErrorState);
+                    return false;
+                }
+                try {
+                    mNMService.setIpForwardingEnabled(false);
+                } catch (Exception e) {
+                    mLog.e(e);
+                    transitionTo(mSetIpForwardingDisabledErrorState);
+                    return false;
+                }
+                transitionTo(mInitialState);
+                mLog.log("SET master tether settings: OFF");
+                return true;
+!!!11398789.java!!!	chooseUpstreamType(inout tryCell : boolean) : void
+                final int upstreamType = findPreferredUpstreamType(tryCell);
+                setUpstreamByType(upstreamType);
+!!!11398917.java!!!	findPreferredUpstreamType(inout tryCell : boolean) : int
+                final ConnectivityManager cm = getConnectivityManager();
+                int upType = ConnectivityManager.TYPE_NONE;
+
+                updateConfiguration(); // TODO - remove?
+
+                final TetheringConfiguration cfg = mConfig;
+                if (VDBG) {
+                    Log.d(TAG, "chooseUpstreamType has upstream iface types:");
+                    for (Integer netType : cfg.preferredUpstreamIfaceTypes) {
+                        Log.d(TAG, " " + netType);
+                    }
+                }
+
+                for (Integer netType : cfg.preferredUpstreamIfaceTypes) {
+                    NetworkInfo info = cm.getNetworkInfo(netType.intValue());
+                    // TODO: if the network is suspended we should consider
+                    // that to be the same as connected here.
+                    if ((info != null) && info.isConnected()) {
+                        upType = netType.intValue();
+                        break;
+                    }
+                }
+
+                final int preferredUpstreamMobileApn = cfg.isDunRequired
+                        ? ConnectivityManager.TYPE_MOBILE_DUN
+                        : ConnectivityManager.TYPE_MOBILE_HIPRI;
+                if (DBG) {
+                    Log.d(TAG, "chooseUpstreamType(" + tryCell + "),"
+                            + " preferredApn="
+                            + ConnectivityManager.getNetworkTypeName(preferredUpstreamMobileApn)
+                            + ", got type="
+                            + ConnectivityManager.getNetworkTypeName(upType));
+                }
+
+                switch (upType) {
+                    case ConnectivityManager.TYPE_MOBILE_DUN:
+                    case ConnectivityManager.TYPE_MOBILE_HIPRI:
+                        // If we're on DUN, put our own grab on it.
+                        requestUpstreamMobileConnection();
+                        break;
+                    case ConnectivityManager.TYPE_NONE:
+                        if (tryCell) {
+                            requestUpstreamMobileConnection();
+                            // We think mobile should be coming up; don't set a retry.
+                        } else {
+                            sendMessageDelayed(CMD_RETRY_UPSTREAM, UPSTREAM_SETTLE_TIME_MS);
+                        }
+                        break;
+                    default:
+                        /* If we've found an active upstream connection that's not DUN/HIPRI
+                         * we should stop any outstanding DUN/HIPRI start requests.
+                         *
+                         * If we found NONE we don't want to do this as we want any previous
+                         * requests to keep trying to bring up something we can use.
+                         */
+                        unrequestUpstreamMobileConnection();
+                        break;
+                }
+
+                return upType;
+!!!11399045.java!!!	setUpstreamByType(in upType : int) : void
+                final ConnectivityManager cm = getConnectivityManager();
+                Network network = null;
+                String iface = null;
+                if (upType != ConnectivityManager.TYPE_NONE) {
+                    LinkProperties linkProperties = cm.getLinkProperties(upType);
+                    if (linkProperties != null) {
+                        // Find the interface with the default IPv4 route. It may be the
+                        // interface described by linkProperties, or one of the interfaces
+                        // stacked on top of it.
+                        Log.i(TAG, "Finding IPv4 upstream interface on: " + linkProperties);
+                        RouteInfo ipv4Default = RouteInfo.selectBestRoute(
+                            linkProperties.getAllRoutes(), Inet4Address.ANY);
+                        if (ipv4Default != null) {
+                            iface = ipv4Default.getInterface();
+                            Log.i(TAG, "Found interface " + ipv4Default.getInterface());
+                        } else {
+                            Log.i(TAG, "No IPv4 upstream interface, giving up.");
+                        }
+                    }
+
+                    if (iface != null) {
+                        network = cm.getNetworkForType(upType);
+                        if (network == null) {
+                            Log.e(TAG, "No Network for upstream type " + upType + "!");
+                        }
+                        setDnsForwarders(network, linkProperties);
+                    }
+                }
+                notifyTetheredOfNewUpstreamIface(iface);
+                NetworkState ns = mUpstreamNetworkMonitor.lookup(network);
+                if (ns != null && pertainsToCurrentUpstream(ns)) {
+                    // If we already have NetworkState for this network examine
+                    // it immediately, because there likely will be no second
+                    // EVENT_ON_AVAILABLE (it was already received).
+                    handleNewUpstreamNetworkState(ns);
+                } else if (mCurrentUpstreamIface == null) {
+                    // There are no available upstream networks, or none that
+                    // have an IPv4 default route (current metric for success).
+                    handleNewUpstreamNetworkState(null);
+                }
+!!!11399173.java!!!	setDnsForwarders(in network : Network, in lp : LinkProperties) : void
+                // TODO: Set v4 and/or v6 DNS per available connectivity.
+                String[] dnsServers = mConfig.defaultIPv4DNS;
+                final Collection<InetAddress> dnses = lp.getDnsServers();
+                // TODO: Properly support the absence of DNS servers.
+                if (dnses != null && !dnses.isEmpty()) {
+                    // TODO: remove this invocation of NetworkUtils.makeStrings().
+                    dnsServers = NetworkUtils.makeStrings(dnses);
+                }
+                try {
+                    mNMService.setDnsForwarders(network, dnsServers);
+                    mLog.log(String.format(
+                            "SET DNS forwarders: network=%s dnsServers=%s",
+                            network, Arrays.toString(dnsServers)));
+                } catch (Exception e) {
+                    // TODO: Investigate how this can fail and what exactly
+                    // happens if/when such failures occur.
+                    mLog.e("setting DNS forwarders failed, " + e);
+                    transitionTo(mSetDnsForwardersErrorState);
+                }
+!!!11399301.java!!!	notifyTetheredOfNewUpstreamIface(in ifaceName : String) : void
+                if (DBG) Log.d(TAG, "Notifying tethered with upstream=" + ifaceName);
+                mCurrentUpstreamIface = ifaceName;
+                for (TetherInterfaceStateMachine sm : mNotifyList) {
+                    sm.sendMessage(TetherInterfaceStateMachine.CMD_TETHER_CONNECTION_CHANGED,
+                            ifaceName);
+                }
+!!!11399429.java!!!	handleNewUpstreamNetworkState(inout ns : NetworkState) : void
+                mIPv6TetheringCoordinator.updateUpstreamNetworkState(ns);
+                mOffloadController.setUpstreamLinkProperties(
+                        (ns != null) ? ns.linkProperties : null);

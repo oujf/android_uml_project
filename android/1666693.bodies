@@ -1,0 +1,84 @@
+class TetherInterfaceStateMachine
+!!!11418373.java!!!	TetherInterfaceStateMachine(in ifaceName : String, inout looper : Looper, in interfaceType : int, inout log : SharedLog, inout nMService : INetworkManagementService, inout statsService : INetworkStatsService, inout tetherController : IControlsTethering, inout ipv6Svc : IPv6TetheringInterfaceServices)
+        super(ifaceName, looper);
+        mLog = log.forSubComponent(ifaceName);
+        mNMService = nMService;
+        mStatsService = statsService;
+        mTetherController = tetherController;
+        mIfaceName = ifaceName;
+        mInterfaceType = interfaceType;
+        mIPv6TetherSvc = ipv6Svc;
+        mLastError = ConnectivityManager.TETHER_ERROR_NO_ERROR;
+
+        mInitialState = new InitialState();
+        mLocalHotspotState = new LocalHotspotState();
+        mTetheredState = new TetheredState();
+        mUnavailableState = new UnavailableState();
+        addState(mInitialState);
+        addState(mLocalHotspotState);
+        addState(mTetheredState);
+        addState(mUnavailableState);
+
+        setInitialState(mInitialState);
+!!!11418501.java!!!	interfaceName() : String
+ return mIfaceName;
+!!!11418629.java!!!	interfaceType() : int
+ return mInterfaceType;
+!!!11418757.java!!!	lastError() : int
+ return mLastError;
+!!!11418885.java!!!	stop() : void
+ sendMessage(CMD_INTERFACE_DOWN);
+!!!11419013.java!!!	unwanted() : void
+ sendMessage(CMD_TETHER_UNREQUESTED);
+!!!11419141.java!!!	configureIfaceIp(inout enabled : boolean) : boolean
+        if (VDBG) Log.d(TAG, "configureIfaceIp(" + enabled + ")");
+
+        String ipAsString = null;
+        int prefixLen = 0;
+        if (mInterfaceType == ConnectivityManager.TETHERING_USB) {
+            ipAsString = USB_NEAR_IFACE_ADDR;
+            prefixLen = USB_PREFIX_LENGTH;
+        } else if (mInterfaceType == ConnectivityManager.TETHERING_WIFI) {
+            ipAsString = WIFI_HOST_IFACE_ADDR;
+            prefixLen = WIFI_HOST_IFACE_PREFIX_LENGTH;
+        } else {
+            // Nothing to do, BT does this elsewhere.
+            return true;
+        }
+
+        InterfaceConfiguration ifcg = null;
+        try {
+            ifcg = mNMService.getInterfaceConfig(mIfaceName);
+            if (ifcg != null) {
+                InetAddress addr = NetworkUtils.numericToInetAddress(ipAsString);
+                ifcg.setLinkAddress(new LinkAddress(addr, prefixLen));
+                if (mInterfaceType == ConnectivityManager.TETHERING_WIFI) {
+                    // The WiFi stack has ownership of the interface up/down state.
+                    // It is unclear whether the bluetooth or USB stacks will manage their own
+                    // state.
+                    ifcg.ignoreInterfaceUpDownStatus();
+                } else {
+                    if (enabled) {
+                        ifcg.setInterfaceUp();
+                    } else {
+                        ifcg.setInterfaceDown();
+                    }
+                }
+                ifcg.clearFlag("running");
+                mNMService.setInterfaceConfig(mIfaceName, ifcg);
+            }
+        } catch (Exception e) {
+            mLog.e("Error configuring interface " + e);
+            return false;
+        }
+
+        return true;
+!!!11419269.java!!!	maybeLogMessage(inout state : State, in what : int) : void
+        if (DBG) {
+            Log.d(TAG, state.getName() + " got " +
+                    sMagicDecoderRing.get(what, Integer.toString(what)) + ", Iface = " +
+                    mIfaceName);
+        }
+!!!11419397.java!!!	sendInterfaceState(in newInterfaceState : int) : void
+        mTetherController.notifyInterfaceStateChange(
+                mIfaceName, TetherInterfaceStateMachine.this, newInterfaceState, mLastError);

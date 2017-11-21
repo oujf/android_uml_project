@@ -1,0 +1,46 @@
+class TextClassificationManager
+!!!9078405.java!!!	TextClassificationManager(inout context : Context)
+        mContext = Preconditions.checkNotNull(context);
+!!!9078533.java!!!	getTextClassifier() : TextClassifier
+        synchronized (mTextClassifierLock) {
+            if (mTextClassifier == null) {
+                mTextClassifier = new TextClassifierImpl(mContext);
+            }
+            return mTextClassifier;
+        }
+!!!9078661.java!!!	setTextClassifier(inout textClassifier : TextClassifier) : void
+        synchronized (mTextClassifierLock) {
+            mTextClassifier = textClassifier;
+        }
+!!!9078789.java!!!	detectLanguages(inout text : CharSequence) : TextLanguage
+        Preconditions.checkArgument(text != null);
+        try {
+            if (text.length() > 0) {
+                final LangId.ClassificationResult[] results =
+                        getLanguageDetector().findLanguages(text.toString());
+                final TextLanguage.Builder tlBuilder = new TextLanguage.Builder(0, text.length());
+                final int size = results.length;
+                for (int i = 0; i < size; i++) {
+                    tlBuilder.setLanguage(
+                            new Locale.Builder().setLanguageTag(results[i].mLanguage).build(),
+                            results[i].mScore);
+                }
+
+                return Collections.unmodifiableList(Arrays.asList(tlBuilder.build()));
+            }
+        } catch (Throwable t) {
+            // Avoid throwing from this method. Log the error.
+            Log.e(LOG_TAG, "Error detecting languages for text. Returning empty result.", t);
+        }
+        // Getting here means something went wrong. Return an empty result.
+        return Collections.emptyList();
+!!!9078917.java!!!	getLanguageDetector() : LangId
+        synchronized (mLangIdLock) {
+            if (mLangId == null) {
+                mLangIdFd = ParcelFileDescriptor.open(
+                        new File("/etc/textclassifier/textclassifier.langid.model"),
+                        ParcelFileDescriptor.MODE_READ_ONLY);
+                mLangId = new LangId(mLangIdFd.getFd());
+            }
+            return mLangId;
+        }

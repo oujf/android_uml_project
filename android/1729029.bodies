@@ -1,0 +1,187 @@
+class OverlayManagerSettings
+!!!12019077.java!!!	init(in packageName : String, in userId : int, in targetPackageName : String, in baseCodePath : String, inout isStatic : boolean, in priority : int) : void
+        remove(packageName, userId);
+        final SettingsItem item =
+                new SettingsItem(packageName, userId, targetPackageName, baseCodePath,
+                        isStatic, priority);
+        if (isStatic) {
+            int i;
+            for (i = mItems.size() - 1; i >= 0; i--) {
+                SettingsItem parentItem = mItems.get(i);
+                if (parentItem.mIsStatic && parentItem.mPriority <= priority) {
+                    break;
+                }
+            }
+            int pos = i + 1;
+            if (pos == mItems.size()) {
+                mItems.add(item);
+            } else {
+                mItems.add(pos, item);
+            }
+        } else {
+            mItems.add(item);
+        }
+!!!12019205.java!!!	remove(in packageName : String, in userId : int) : boolean
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            return false;
+        }
+
+        mItems.remove(idx);
+        return true;
+!!!12019333.java!!!	getOverlayInfo(in packageName : String, in userId : int) : OverlayInfo
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).getOverlayInfo();
+!!!12019461.java!!!	setBaseCodePath(in packageName : String, in userId : int, in path : String) : boolean
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).setBaseCodePath(path);
+!!!12019589.java!!!	getEnabled(in packageName : String, in userId : int) : boolean
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).isEnabled();
+!!!12019717.java!!!	setEnabled(in packageName : String, in userId : int, in enable : boolean) : boolean
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).setEnabled(enable);
+!!!12019845.java!!!	getState(in packageName : String, in userId : int) : int
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).getState();
+!!!12019973.java!!!	setState(in packageName : String, in userId : int, in state : int) : boolean
+        final int idx = select(packageName, userId);
+        if (idx < 0) {
+            throw new BadKeyException(packageName, userId);
+        }
+        return mItems.get(idx).setState(state);
+!!!12020101.java!!!	getOverlaysForTarget(in targetPackageName : String, in userId : int) : OverlayInfo
+        return selectWhereTarget(targetPackageName, userId)
+                .map(SettingsItem::getOverlayInfo)
+                .collect(Collectors.toList());
+!!!12020229.java!!!	getOverlaysForUser(in userId : int) : ArrayMap
+        return selectWhereUser(userId)
+                .map(SettingsItem::getOverlayInfo)
+                .collect(Collectors.groupingBy(info -> info.targetPackageName, ArrayMap::new,
+                        Collectors.toList()));
+!!!12020357.java!!!	getUsers() : int
+        return mItems.stream().mapToInt(SettingsItem::getUserId).distinct().toArray();
+!!!12020485.java!!!	removeUser(in userId : int) : boolean
+        boolean removed = false;
+        for (int i = 0; i < mItems.size(); i++) {
+            final SettingsItem item = mItems.get(i);
+            if (item.getUserId() == userId) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Removing overlay " + item.mPackageName + " for user " + userId
+                            + " from settings because user was removed");
+                }
+                mItems.remove(i);
+                removed = true;
+                i--;
+            }
+        }
+        return removed;
+!!!12020613.java!!!	setPriority(in packageName : String, in newParentPackageName : String, in userId : int) : boolean
+        if (packageName.equals(newParentPackageName)) {
+            return false;
+        }
+        final int moveIdx = select(packageName, userId);
+        if (moveIdx < 0) {
+            return false;
+        }
+
+        final int parentIdx = select(newParentPackageName, userId);
+        if (parentIdx < 0) {
+            return false;
+        }
+
+        final SettingsItem itemToMove = mItems.get(moveIdx);
+
+        // Make sure both packages are targeting the same package.
+        if (!itemToMove.getTargetPackageName().equals(
+                mItems.get(parentIdx).getTargetPackageName())) {
+            return false;
+        }
+
+        mItems.remove(moveIdx);
+        final int newParentIdx = select(newParentPackageName, userId);
+        mItems.add(newParentIdx, itemToMove);
+        return moveIdx != newParentIdx;
+!!!12020741.java!!!	setLowestPriority(in packageName : String, in userId : int) : boolean
+        final int idx = select(packageName, userId);
+        if (idx <= 0) {
+            // If the item doesn't exist or is already the lowest, don't change anything.
+            return false;
+        }
+
+        final SettingsItem item = mItems.get(idx);
+        mItems.remove(item);
+        mItems.add(0, item);
+        return true;
+!!!12020869.java!!!	setHighestPriority(in packageName : String, in userId : int) : boolean
+        final int idx = select(packageName, userId);
+
+        // If the item doesn't exist or is already the highest, don't change anything.
+        if (idx < 0 || idx == mItems.size() - 1) {
+            return false;
+        }
+
+        final SettingsItem item = mItems.get(idx);
+        mItems.remove(idx);
+        mItems.add(item);
+        return true;
+!!!12020997.java!!!	dump(in p : PrintWriter) : void
+        final IndentingPrintWriter pw = new IndentingPrintWriter(p, "  ");
+        pw.println("Settings");
+        pw.increaseIndent();
+
+        if (mItems.isEmpty()) {
+            pw.println("<none>");
+            return;
+        }
+
+        final int N = mItems.size();
+        for (int i = 0; i < N; i++) {
+            final SettingsItem item = mItems.get(i);
+            pw.println(item.mPackageName + ":" + item.getUserId() + " {");
+            pw.increaseIndent();
+
+            pw.print("mPackageName.......: "); pw.println(item.mPackageName);
+            pw.print("mUserId............: "); pw.println(item.getUserId());
+            pw.print("mTargetPackageName.: "); pw.println(item.getTargetPackageName());
+            pw.print("mBaseCodePath......: "); pw.println(item.getBaseCodePath());
+            pw.print("mState.............: "); pw.println(OverlayInfo.stateToString(item.getState()));
+            pw.print("mIsEnabled.........: "); pw.println(item.isEnabled());
+            pw.print("mIsStatic..........: "); pw.println(item.isStatic());
+
+            pw.decreaseIndent();
+            pw.println("}");
+        }
+!!!12021125.java!!!	restore(in is : InputStream) : void
+        Serializer.restore(mItems, is);
+!!!12021253.java!!!	persist(in os : OutputStream) : void
+        Serializer.persist(mItems, os);
+!!!12023813.java!!!	select(in packageName : String, in userId : int) : int
+        final int N = mItems.size();
+        for (int i = 0; i < N; i++) {
+            final SettingsItem item = mItems.get(i);
+            if (item.mUserId == userId && item.mPackageName.equals(packageName)) {
+                return i;
+            }
+        }
+        return -1;
+!!!12023941.java!!!	selectWhereUser(in userId : int) : OverlayManagerSettings::SettingsItem
+        return mItems.stream().filter(item -> item.mUserId == userId);
+!!!12024069.java!!!	selectWhereTarget(in targetPackageName : String, in userId : int) : OverlayManagerSettings::SettingsItem
+        return selectWhereUser(userId)
+                .filter(item -> item.getTargetPackageName().equals(targetPackageName));

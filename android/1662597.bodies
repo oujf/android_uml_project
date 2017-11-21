@@ -1,0 +1,114 @@
+class ClipboardImpl
+!!!11352325.java!!!	onTransact(in code : int, inout data : Parcel, inout reply : Parcel, in flags : int) : boolean
+            try {
+                return super.onTransact(code, data, reply, flags);
+            } catch (RuntimeException e) {
+                if (!(e instanceof SecurityException)) {
+                    Slog.wtf("clipboard", "Exception: ", e);
+                }
+                throw e;
+            }
+
+!!!11352453.java!!!	setPrimaryClip(inout clip : ClipData, in callingPackage : String) : void
+            synchronized (this) {
+                if (clip != null && clip.getItemCount() <= 0) {
+                    throw new IllegalArgumentException("No items");
+                }
+                if (clip.getItemAt(0).getText() != null &&
+                    mHostClipboardMonitor != null) {
+                    mHostClipboardMonitor.setHostClipboard(
+                        clip.getItemAt(0).getText().toString());
+                }
+                final int callingUid = Binder.getCallingUid();
+                if (!clipboardAccessAllowed(AppOpsManager.OP_WRITE_CLIPBOARD, callingPackage,
+                            callingUid)) {
+                    return;
+                }
+                checkDataOwnerLocked(clip, callingUid);
+                final int userId = UserHandle.getUserId(callingUid);
+                PerUserClipboard clipboard = getClipboard(userId);
+                revokeUris(clipboard);
+                setPrimaryClipInternal(clipboard, clip);
+                List<UserInfo> related = getRelatedProfiles(userId);
+                if (related != null) {
+                    int size = related.size();
+                    if (size > 1) { // Related profiles list include the current profile.
+                        boolean canCopy = false;
+                        try {
+                            canCopy = !mUm.getUserRestrictions(userId).getBoolean(
+                                    UserManager.DISALLOW_CROSS_PROFILE_COPY_PASTE);
+                        } catch (RemoteException e) {
+                            Slog.e(TAG, "Remote Exception calling UserManager: " + e);
+                        }
+                        // Copy clip data to related users if allowed. If disallowed, then remove
+                        // primary clip in related users to prevent pasting stale content.
+                        if (!canCopy) {
+                            clip = null;
+                        } else {
+                            // We want to fix the uris of the related user's clip without changing the
+                            // uris of the current user's clip.
+                            // So, copy the ClipData, and then copy all the items, so that nothing
+                            // is shared in memmory.
+                            clip = new ClipData(clip);
+                            for (int i = clip.getItemCount() - 1; i >= 0; i--) {
+                                clip.setItemAt(i, new ClipData.Item(clip.getItemAt(i)));
+                            }
+                            clip.fixUrisLight(userId);
+                        }
+                        for (int i = 0; i < size; i++) {
+                            int id = related.get(i).id;
+                            if (id != userId) {
+                                setPrimaryClipInternal(getClipboard(id), clip);
+                            }
+                        }
+                    }
+                }
+            }
+!!!11352581.java!!!	getPrimaryClip(in pkg : String) : ClipData
+            synchronized (this) {
+                if (!clipboardAccessAllowed(AppOpsManager.OP_READ_CLIPBOARD, pkg,
+                            Binder.getCallingUid())) {
+                    return null;
+                }
+                addActiveOwnerLocked(Binder.getCallingUid(), pkg);
+                return getClipboard().primaryClip;
+            }
+!!!11352709.java!!!	getPrimaryClipDescription(in callingPackage : String) : ClipDescription
+            synchronized (this) {
+                if (!clipboardAccessAllowed(AppOpsManager.OP_READ_CLIPBOARD, callingPackage,
+                            Binder.getCallingUid())) {
+                    return null;
+                }
+                PerUserClipboard clipboard = getClipboard();
+                return clipboard.primaryClip != null ? clipboard.primaryClip.getDescription() : null;
+            }
+!!!11352837.java!!!	hasPrimaryClip(in callingPackage : String) : boolean
+            synchronized (this) {
+                if (!clipboardAccessAllowed(AppOpsManager.OP_READ_CLIPBOARD, callingPackage,
+                            Binder.getCallingUid())) {
+                    return false;
+                }
+                return getClipboard().primaryClip != null;
+            }
+!!!11352965.java!!!	addPrimaryClipChangedListener(inout listener : IOnPrimaryClipChangedListener, in callingPackage : String) : void
+            synchronized (this) {
+                getClipboard().primaryClipListeners.register(listener,
+                        new ListenerInfo(Binder.getCallingUid(), callingPackage));
+            }
+!!!11353093.java!!!	removePrimaryClipChangedListener(inout listener : IOnPrimaryClipChangedListener) : void
+            synchronized (this) {
+                getClipboard().primaryClipListeners.unregister(listener);
+            }
+!!!11353221.java!!!	hasClipboardText(in callingPackage : String) : boolean
+            synchronized (this) {
+                if (!clipboardAccessAllowed(AppOpsManager.OP_READ_CLIPBOARD, callingPackage,
+                            Binder.getCallingUid())) {
+                    return false;
+                }
+                PerUserClipboard clipboard = getClipboard();
+                if (clipboard.primaryClip != null) {
+                    CharSequence text = clipboard.primaryClip.getItemAt(0).getText();
+                    return text != null && text.length() > 0;
+                }
+                return false;
+            }

@@ -1,0 +1,183 @@
+class NetworkPolicyManager
+!!!7184389.java!!!	NetworkPolicyManager(inout context : Context, inout service : INetworkPolicyManager)
+        if (service == null) {
+            throw new IllegalArgumentException("missing INetworkPolicyManager");
+        }
+        mContext = context;
+        mService = service;
+!!!7184517.java!!!	from(inout context : Context) : NetworkPolicyManager
+        return (NetworkPolicyManager) context.getSystemService(Context.NETWORK_POLICY_SERVICE);
+!!!7184645.java!!!	setUidPolicy(in uid : int, in policy : int) : void
+        try {
+            mService.setUidPolicy(uid, policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7184773.java!!!	addUidPolicy(in uid : int, in policy : int) : void
+        try {
+            mService.addUidPolicy(uid, policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7184901.java!!!	removeUidPolicy(in uid : int, in policy : int) : void
+        try {
+            mService.removeUidPolicy(uid, policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185029.java!!!	getUidPolicy(in uid : int) : int
+        try {
+            return mService.getUidPolicy(uid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185157.java!!!	getUidsWithPolicy(in policy : int) : int
+        try {
+            return mService.getUidsWithPolicy(policy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185285.java!!!	registerListener(inout listener : INetworkPolicyListener) : void
+        try {
+            mService.registerListener(listener);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185413.java!!!	unregisterListener(inout listener : INetworkPolicyListener) : void
+        try {
+            mService.unregisterListener(listener);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185541.java!!!	setNetworkPolicies(inout policies : NetworkPolicy [[]]) : void
+        try {
+            mService.setNetworkPolicies(policies);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185669.java!!!	getNetworkPolicies() : NetworkPolicy
+        try {
+            return mService.getNetworkPolicies(mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185797.java!!!	setRestrictBackground(inout restrictBackground : boolean) : void
+        try {
+            mService.setRestrictBackground(restrictBackground);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7185925.java!!!	getRestrictBackground() : boolean
+        try {
+            return mService.getRestrictBackground();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7186053.java!!!	factoryReset(in subscriber : String) : void
+        try {
+            mService.factoryReset(subscriber);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!7186181.java!!!	computeLastCycleBoundary(in currentTime : long, inout policy : NetworkPolicy) : long
+        if (policy.cycleDay == CYCLE_NONE) {
+            throw new IllegalArgumentException("Unable to compute boundary without cycleDay");
+        }
+
+        final Calendar cal = Calendar.getInstance(TimeZone.getTimeZone(policy.cycleTimezone));
+        cal.setTimeInMillis(currentTime);
+        snapToCycleDay(cal, policy.cycleDay);
+
+        if (cal.getTimeInMillis() >= currentTime) {
+            // Cycle boundary is beyond now, use last cycle boundary
+            cal.set(Calendar.DAY_OF_MONTH, 1);
+            cal.add(Calendar.MONTH, -1);
+            snapToCycleDay(cal, policy.cycleDay);
+        }
+
+        return cal.getTimeInMillis();
+!!!7186309.java!!!	computeNextCycleBoundary(in currentTime : long, inout policy : NetworkPolicy) : long
+        if (policy.cycleDay == CYCLE_NONE) {
+            throw new IllegalArgumentException("Unable to compute boundary without cycleDay");
+        }
+
+        final Calendar cal = Calendar.getInstance(TimeZone.getTimeZone(policy.cycleTimezone));
+        cal.setTimeInMillis(currentTime);
+        snapToCycleDay(cal, policy.cycleDay);
+
+        if (cal.getTimeInMillis() <= currentTime) {
+            // Cycle boundary is before now, use next cycle boundary
+            cal.set(Calendar.DAY_OF_MONTH, 1);
+            cal.add(Calendar.MONTH, 1);
+            snapToCycleDay(cal, policy.cycleDay);
+        }
+
+        return cal.getTimeInMillis();
+!!!7186437.java!!!	snapToCycleDay(inout cal : Calendar, in cycleDay : int) : void
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        if (cycleDay > cal.getActualMaximum(Calendar.DAY_OF_MONTH)) {
+            cal.add(Calendar.MONTH, 1);
+            cal.set(Calendar.DAY_OF_MONTH, 1);
+            cal.set(Calendar.HOUR_OF_DAY, 0);
+            cal.set(Calendar.MINUTE, 0);
+            cal.set(Calendar.SECOND, 0);
+            cal.add(Calendar.SECOND, -1);
+        } else {
+            cal.set(Calendar.DAY_OF_MONTH, cycleDay);
+        }
+!!!7186565.java!!!	isUidValidForPolicy(inout context : Context, in uid : int) : boolean
+        // first, quick-reject non-applications
+        if (!UserHandle.isApp(uid)) {
+            return false;
+        }
+
+        if (!ALLOW_PLATFORM_APP_POLICY) {
+            final PackageManager pm = context.getPackageManager();
+            final HashSet<Signature> systemSignature;
+            try {
+                systemSignature = Sets.newHashSet(
+                        pm.getPackageInfo("android", GET_SIGNATURES).signatures);
+            } catch (NameNotFoundException e) {
+                throw new RuntimeException("problem finding system signature", e);
+            }
+
+            try {
+                // reject apps signed with platform cert
+                for (String packageName : pm.getPackagesForUid(uid)) {
+                    final HashSet<Signature> packageSignature = Sets.newHashSet(
+                            pm.getPackageInfo(packageName, GET_SIGNATURES).signatures);
+                    if (packageSignature.containsAll(systemSignature)) {
+                        return false;
+                    }
+                }
+            } catch (NameNotFoundException e) {
+            }
+        }
+
+        // nothing found above; we can apply policy to UID
+        return true;
+!!!7186693.java!!!	uidRulesToString(in uidRules : int) : String
+        final StringBuilder string = new StringBuilder().append(uidRules).append(" (");
+        if (uidRules == RULE_NONE) {
+            string.append("NONE");
+        } else {
+            string.append(DebugUtils.flagsToString(NetworkPolicyManager.class, "RULE_", uidRules));
+        }
+        string.append(")");
+        return string.toString();
+!!!7186821.java!!!	uidPoliciesToString(in uidPolicies : int) : String
+        final StringBuilder string = new StringBuilder().append(uidPolicies).append(" (");
+        if (uidPolicies == POLICY_NONE) {
+            string.append("NONE");
+        } else {
+            string.append(DebugUtils.flagsToString(NetworkPolicyManager.class,
+                    "POLICY_", uidPolicies));
+        }
+        string.append(")");
+        return string.toString();
+!!!7186949.java!!!	isProcStateAllowedWhileIdleOrPowerSaveMode(in procState : int) : boolean
+        return procState <= ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE;
+!!!7187077.java!!!	isProcStateAllowedWhileOnRestrictBackground(in procState : int) : boolean
+        return procState <= ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE;

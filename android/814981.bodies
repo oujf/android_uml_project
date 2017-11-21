@@ -1,0 +1,59 @@
+class LocationTile
+!!!3448837.java!!!	LocationTile(inout host : QSHost)
+        super(host);
+        mController = Dependency.get(LocationController.class);
+        mKeyguard = Dependency.get(KeyguardMonitor.class);
+!!!3448965.java!!!	newTileState() : BooleanState
+        return new BooleanState();
+!!!3449093.java!!!	setListening(inout listening : boolean) : void
+        if (listening) {
+            mController.addCallback(mCallback);
+            mKeyguard.addCallback(mCallback);
+        } else {
+            mController.removeCallback(mCallback);
+            mKeyguard.removeCallback(mCallback);
+        }
+!!!3449221.java!!!	getLongClickIntent() : Intent
+        return new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+!!!3449349.java!!!	handleClick() : void
+        if (mKeyguard.isSecure() && mKeyguard.isShowing()) {
+            Dependency.get(ActivityStarter.class).postQSRunnableDismissingKeyguard(() -> {
+                final boolean wasEnabled = mState.value;
+                mHost.openPanels();
+                mController.setLocationEnabled(!wasEnabled);
+            });
+            return;
+        }
+        final boolean wasEnabled = mState.value;
+        mController.setLocationEnabled(!wasEnabled);
+!!!3449477.java!!!	getTileLabel() : CharSequence
+        return mContext.getString(R.string.quick_settings_location_label);
+!!!3449605.java!!!	handleUpdateState(inout state : BooleanState, inout arg : Object) : void
+        final boolean locationEnabled =  mController.isLocationEnabled();
+
+        // Work around for bug 15916487: don't show location tile on top of lock screen. After the
+        // bug is fixed, this should be reverted to only hiding it on secure lock screens:
+        // state.visible = !(mKeyguard.isSecure() && mKeyguard.isShowing());
+        state.value = locationEnabled;
+        checkIfRestrictionEnforcedByAdminOnly(state, UserManager.DISALLOW_SHARE_LOCATION);
+        if (locationEnabled) {
+            state.icon = mEnable;
+            state.label = mContext.getString(R.string.quick_settings_location_label);
+            state.contentDescription = mContext.getString(
+                    R.string.accessibility_quick_settings_location_on);
+        } else {
+            state.icon = mDisable;
+            state.label = mContext.getString(R.string.quick_settings_location_label);
+            state.contentDescription = mContext.getString(
+                    R.string.accessibility_quick_settings_location_off);
+        }
+        state.state = state.value ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE;
+        state.expandedAccessibilityClassName = Switch.class.getName();
+!!!3449733.java!!!	getMetricsCategory() : int
+        return MetricsEvent.QS_LOCATION;
+!!!3449861.java!!!	composeChangeAnnouncement() : String
+        if (mState.value) {
+            return mContext.getString(R.string.accessibility_quick_settings_location_changed_on);
+        } else {
+            return mContext.getString(R.string.accessibility_quick_settings_location_changed_off);
+        }

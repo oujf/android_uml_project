@@ -1,0 +1,89 @@
+class MemoryIntArray
+!!!8481669.java!!!	MemoryIntArray(in size : int)
+        if (size > MAX_SIZE) {
+            throw new IllegalArgumentException("Max size is " + MAX_SIZE);
+        }
+        mIsOwner = true;
+        final String name = UUID.randomUUID().toString();
+        mFd = nativeCreate(name, size);
+        mMemoryAddr = nativeOpen(mFd, mIsOwner);
+        mCloseGuard.open("close");
+!!!8481797.java!!!	MemoryIntArray(inout parcel : Parcel)
+        mIsOwner = false;
+        ParcelFileDescriptor pfd = parcel.readParcelable(null);
+        if (pfd == null) {
+            throw new IOException("No backing file descriptor");
+        }
+        mFd = pfd.detachFd();
+        mMemoryAddr = nativeOpen(mFd, mIsOwner);
+        mCloseGuard.open("close");
+!!!8481925.java!!!	isWritable() : boolean
+        enforceNotClosed();
+        return mIsOwner;
+!!!8482053.java!!!	get(in index : int) : int
+        enforceNotClosed();
+        enforceValidIndex(index);
+        return nativeGet(mFd, mMemoryAddr, index);
+!!!8482181.java!!!	set(in index : int, in value : int) : void
+        enforceNotClosed();
+        enforceWritable();
+        enforceValidIndex(index);
+        nativeSet(mFd, mMemoryAddr, index, value);
+!!!8482309.java!!!	size() : int
+        enforceNotClosed();
+        return nativeSize(mFd);
+!!!8482437.java!!!	close() : void
+        if (!isClosed()) {
+            nativeClose(mFd, mMemoryAddr, mIsOwner);
+            mFd = -1;
+            mCloseGuard.close();
+        }
+!!!8482565.java!!!	isClosed() : boolean
+        return mFd == -1;
+!!!8482693.java!!!	finalize() : void
+        try {
+            mCloseGuard.warnIfOpen();
+            IoUtils.closeQuietly(this);
+        } finally {
+            super.finalize();
+        }
+!!!8482821.java!!!	describeContents() : int
+        return CONTENTS_FILE_DESCRIPTOR;
+!!!8482949.java!!!	writeToParcel(inout parcel : Parcel, in flags : int) : void
+        ParcelFileDescriptor pfd = ParcelFileDescriptor.adoptFd(mFd);
+        try {
+            // Don't let writing to a parcel to close our fd - plz
+            parcel.writeParcelable(pfd, flags & ~Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+        } finally {
+            pfd.detachFd();
+        }
+!!!8483077.java!!!	equals(inout obj : Object) : boolean
+        if (obj == null) {
+            return false;
+        }
+        if (this == obj) {
+            return true;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        MemoryIntArray other = (MemoryIntArray) obj;
+        return mFd == other.mFd;
+!!!8483205.java!!!	hashCode() : int
+        return mFd;
+!!!8483333.java!!!	enforceNotClosed() : void
+        if (isClosed()) {
+            throw new IllegalStateException("cannot interact with a closed instance");
+        }
+!!!8483461.java!!!	enforceValidIndex(in index : int) : void
+        final int size = size();
+        if (index < 0 || index > size - 1) {
+            throw new IndexOutOfBoundsException(
+                    index + " not between 0 and " + (size - 1));
+        }
+!!!8483589.java!!!	enforceWritable() : void
+        if (!isWritable()) {
+            throw new UnsupportedOperationException("array is not writable");
+        }
+!!!8484485.java!!!	getMaxSize() : int
+        return MAX_SIZE;

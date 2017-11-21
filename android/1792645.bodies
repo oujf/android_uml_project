@@ -1,0 +1,70 @@
+class TaskSnapshotPersister
+!!!12756613.java!!!	TaskSnapshotPersister(inout resolver : TaskSnapshotPersister::DirectoryResolver)
+        mDirectoryResolver = resolver;
+!!!12756741.java!!!	start() : void
+        if (!mStarted) {
+            mStarted = true;
+            mPersister.start();
+        }
+!!!12756869.java!!!	persistSnapshot(in taskId : int, in userId : int, inout snapshot : ActivityManager::TaskSnapshot) : void
+        synchronized (mLock) {
+            mPersistedTaskIdsSinceLastRemoveObsolete.add(taskId);
+            sendToQueueLocked(new StoreWriteQueueItem(taskId, userId, snapshot));
+        }
+!!!12756997.java!!!	onTaskRemovedFromRecents(in taskId : int, in userId : int) : void
+        synchronized (mLock) {
+            mPersistedTaskIdsSinceLastRemoveObsolete.remove(taskId);
+            sendToQueueLocked(new DeleteWriteQueueItem(taskId, userId));
+        }
+!!!12757125.java!!!	removeObsoleteFiles(inout persistentTaskIds : ArraySet, inout runningUserIds : int [[]]) : void
+        synchronized (mLock) {
+            mPersistedTaskIdsSinceLastRemoveObsolete.clear();
+            sendToQueueLocked(new RemoveObsoleteFilesQueueItem(persistentTaskIds, runningUserIds));
+        }
+!!!12757253.java!!!	setPaused(inout paused : boolean) : void
+        synchronized (mLock) {
+            mPaused = paused;
+            if (!paused) {
+                mLock.notifyAll();
+            }
+        }
+!!!12757381.java!!!	waitForQueueEmpty() : void
+        while (true) {
+            synchronized (mLock) {
+                if (mWriteQueue.isEmpty() && mQueueIdling) {
+                    return;
+                }
+            }
+            SystemClock.sleep(100);
+        }
+!!!12757509.java!!!	sendToQueueLocked(inout item : TaskSnapshotPersister::WriteQueueItem) : void
+        mWriteQueue.offer(item);
+        item.onQueuedLocked();
+        ensureStoreQueueDepthLocked();
+        if (!mPaused) {
+            mLock.notifyAll();
+        }
+!!!12757637.java!!!	ensureStoreQueueDepthLocked() : void
+        while (mStoreQueueItems.size() > MAX_STORE_QUEUE_DEPTH) {
+            final StoreWriteQueueItem item = mStoreQueueItems.poll();
+            mWriteQueue.remove(item);
+            Slog.i(TAG, "Queue is too deep! Purged item with taskid=" + item.mTaskId);
+        }
+!!!12757765.java!!!	getDirectory(in userId : int) : File
+        return new File(mDirectoryResolver.getSystemDirectoryForUser(userId), SNAPSHOTS_DIRNAME);
+!!!12757893.java!!!	getProtoFile(in taskId : int, in userId : int) : File
+        return new File(getDirectory(userId), taskId + PROTO_EXTENSION);
+!!!12758021.java!!!	getBitmapFile(in taskId : int, in userId : int) : File
+        return new File(getDirectory(userId), taskId + BITMAP_EXTENSION);
+!!!12758149.java!!!	getReducedResolutionBitmapFile(in taskId : int, in userId : int) : File
+        return new File(getDirectory(userId), taskId + REDUCED_POSTFIX + BITMAP_EXTENSION);
+!!!12758277.java!!!	createDirectory(in userId : int) : boolean
+        final File dir = getDirectory(userId);
+        return dir.exists() || dir.mkdirs();
+!!!12758405.java!!!	deleteSnapshot(in taskId : int, in userId : int) : void
+        final File protoFile = getProtoFile(taskId, userId);
+        final File bitmapFile = getBitmapFile(taskId, userId);
+        final File bitmapReducedFile = getReducedResolutionBitmapFile(taskId, userId);
+        protoFile.delete();
+        bitmapFile.delete();
+        bitmapReducedFile.delete();

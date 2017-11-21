@@ -1,0 +1,46 @@
+class ConversionHelperHidl
+!!!585733.cpp!!!	keysFromHal(in keys : String8, inout hidlKeys : hidl_vec<hidl_string>) : status_t
+    AudioParameter halKeys(keys);
+    if (halKeys.size() == 0) return BAD_VALUE;
+    hidlKeys->resize(halKeys.size());
+    //FIXME:  keyStreamSupportedChannels and keyStreamSupportedSamplingRates come with a
+    // "keyFormat=<value>" pair. We need to transform it into a single key string so that it is
+    // carried over to the legacy HAL via HIDL.
+    String8 value;
+    bool keepFormatValue = halKeys.size() == 2 &&
+         (halKeys.get(String8(AudioParameter::keyStreamSupportedChannels), value) == NO_ERROR ||
+         halKeys.get(String8(AudioParameter::keyStreamSupportedSamplingRates), value) == NO_ERROR);
+
+    for (size_t i = 0; i < halKeys.size(); ++i) {
+        String8 key;
+        status_t status = halKeys.getAt(i, key);
+        if (status != OK) return status;
+        if (keepFormatValue && key == AudioParameter::keyFormat) {
+            AudioParameter formatParam;
+            halKeys.getAt(i, key, value);
+            formatParam.add(key, value);
+            key = formatParam.toString();
+        }
+        (*hidlKeys)[i] = key.string();
+    }
+    return OK;
+!!!585861.cpp!!!	parametersFromHal(in kvPairs : String8, inout hidlParams : hidl_vec<ParameterValue>) : status_t
+    AudioParameter params(kvPairs);
+    if (params.size() == 0) return BAD_VALUE;
+    hidlParams->resize(params.size());
+    for (size_t i = 0; i < params.size(); ++i) {
+        String8 key, value;
+        status_t status = params.getAt(i, key, value);
+        if (status != OK) return status;
+        (*hidlParams)[i].key = key.string();
+        (*hidlParams)[i].value = value.string();
+    }
+    return OK;
+!!!585989.cpp!!!	parametersToHal(in parameters : hidl_vec<ParameterValue>, inout values : String8) : void
+    AudioParameter params;
+    for (size_t i = 0; i < parameters.size(); ++i) {
+        params.add(String8(parameters[i].key.c_str()), String8(parameters[i].value.c_str()));
+    }
+    values->setTo(params.toString());
+!!!586885.cpp!!!	emitError(in funcName : char, in description : char) : void
+    ALOGE("%s %p %s: %s (from rpc)", mClassName, this, funcName, description);

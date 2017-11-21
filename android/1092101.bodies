@@ -1,0 +1,89 @@
+class DisplayManager
+!!!6803461.java!!!	DisplayManager(inout context : Context)
+        mContext = context;
+        mGlobal = DisplayManagerGlobal.getInstance();
+!!!6803589.java!!!	getDisplay(in displayId : int) : Display
+        synchronized (mLock) {
+            return getOrCreateDisplayLocked(displayId, false /*assumeValid*/);
+        }
+!!!6803717.java!!!	getDisplays() : Display
+        return getDisplays(null);
+!!!6803845.java!!!	getDisplays(in category : String) : Display
+        final int[] displayIds = mGlobal.getDisplayIds();
+        synchronized (mLock) {
+            try {
+                if (category == null) {
+                    addAllDisplaysLocked(mTempDisplays, displayIds);
+                } else if (category.equals(DISPLAY_CATEGORY_PRESENTATION)) {
+                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_WIFI);
+                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_HDMI);
+                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_OVERLAY);
+                    addPresentationDisplaysLocked(mTempDisplays, displayIds, Display.TYPE_VIRTUAL);
+                }
+                return mTempDisplays.toArray(new Display[mTempDisplays.size()]);
+            } finally {
+                mTempDisplays.clear();
+            }
+        }
+!!!6803973.java!!!	addAllDisplaysLocked(inout displays : ArrayList<Display>, inout displayIds : int [[]]) : void
+        for (int i = 0; i < displayIds.length; i++) {
+            Display display = getOrCreateDisplayLocked(displayIds[i], true /*assumeValid*/);
+            if (display != null) {
+                displays.add(display);
+            }
+        }
+!!!6804101.java!!!	addPresentationDisplaysLocked(inout displays : ArrayList<Display>, inout displayIds : int [[]], in matchType : int) : void
+        for (int i = 0; i < displayIds.length; i++) {
+            Display display = getOrCreateDisplayLocked(displayIds[i], true /*assumeValid*/);
+            if (display != null
+                    && (display.getFlags() & Display.FLAG_PRESENTATION) != 0
+                    && display.getType() == matchType) {
+                displays.add(display);
+            }
+        }
+!!!6804229.java!!!	getOrCreateDisplayLocked(in displayId : int, inout assumeValid : boolean) : Display
+        Display display = mDisplays.get(displayId);
+        if (display == null) {
+            // TODO: We cannot currently provide any override configurations for metrics on displays
+            // other than the display the context is associated with.
+            final Context context = mContext.getDisplay().getDisplayId() == displayId
+                    ? mContext : mContext.getApplicationContext();
+
+            display = mGlobal.getCompatibleDisplay(displayId, context.getResources());
+            if (display != null) {
+                mDisplays.put(displayId, display);
+            }
+        } else if (!assumeValid && !display.isValid()) {
+            display = null;
+        }
+        return display;
+!!!6804357.java!!!	registerDisplayListener(inout listener : DisplayManager::DisplayListener, inout handler : Handler) : void
+        mGlobal.registerDisplayListener(listener, handler);
+!!!6804485.java!!!	unregisterDisplayListener(inout listener : DisplayManager::DisplayListener) : void
+        mGlobal.unregisterDisplayListener(listener);
+!!!6804613.java!!!	startWifiDisplayScan() : void
+        mGlobal.startWifiDisplayScan();
+!!!6804741.java!!!	stopWifiDisplayScan() : void
+        mGlobal.stopWifiDisplayScan();
+!!!6804869.java!!!	connectWifiDisplay(in deviceAddress : String) : void
+        mGlobal.connectWifiDisplay(deviceAddress);
+!!!6804997.java!!!	pauseWifiDisplay() : void
+        mGlobal.pauseWifiDisplay();
+!!!6805125.java!!!	resumeWifiDisplay() : void
+        mGlobal.resumeWifiDisplay();
+!!!6805253.java!!!	disconnectWifiDisplay() : void
+        mGlobal.disconnectWifiDisplay();
+!!!6805381.java!!!	renameWifiDisplay(in deviceAddress : String, in alias : String) : void
+        mGlobal.renameWifiDisplay(deviceAddress, alias);
+!!!6805509.java!!!	forgetWifiDisplay(in deviceAddress : String) : void
+        mGlobal.forgetWifiDisplay(deviceAddress);
+!!!6805637.java!!!	getWifiDisplayStatus() : WifiDisplayStatus
+        return mGlobal.getWifiDisplayStatus();
+!!!6805765.java!!!	createVirtualDisplay(in name : String, in width : int, in height : int, in densityDpi : int, inout surface : Surface, in flags : int) : VirtualDisplay
+        return createVirtualDisplay(name, width, height, densityDpi, surface, flags, null, null);
+!!!6805893.java!!!	createVirtualDisplay(in name : String, in width : int, in height : int, in densityDpi : int, inout surface : Surface, in flags : int, inout callback : VirtualDisplay::Callback, inout handler : Handler) : VirtualDisplay
+        return createVirtualDisplay(null /* projection */, name, width, height, densityDpi, surface,
+                flags, callback, handler, null /* uniqueId */);
+!!!6806021.java!!!	createVirtualDisplay(inout projection : MediaProjection, in name : String, in width : int, in height : int, in densityDpi : int, inout surface : Surface, in flags : int, inout callback : VirtualDisplay::Callback, inout handler : Handler, in uniqueId : String) : VirtualDisplay
+        return mGlobal.createVirtualDisplay(mContext, projection,
+                name, width, height, densityDpi, surface, flags, callback, handler, uniqueId);

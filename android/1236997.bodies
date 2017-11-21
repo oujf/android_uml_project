@@ -1,0 +1,469 @@
+class AccessibilityManager
+!!!8651525.java!!!	getInstance(inout context : Context) : AccessibilityManager
+        synchronized (sInstanceSync) {
+            if (sInstance == null) {
+                final int userId;
+                if (Binder.getCallingUid() == Process.SYSTEM_UID
+                        || context.checkCallingOrSelfPermission(
+                                Manifest.permission.INTERACT_ACROSS_USERS)
+                                        == PackageManager.PERMISSION_GRANTED
+                        || context.checkCallingOrSelfPermission(
+                                Manifest.permission.INTERACT_ACROSS_USERS_FULL)
+                                        == PackageManager.PERMISSION_GRANTED) {
+                    userId = UserHandle.USER_CURRENT;
+                } else {
+                    userId = UserHandle.myUserId();
+                }
+                sInstance = new AccessibilityManager(context, null, userId);
+            }
+        }
+        return sInstance;
+!!!8651653.java!!!	AccessibilityManager(inout context : Context, inout service : IAccessibilityManager, in userId : int)
+        // Constructor can't be chained because we can't create an instance of an inner class
+        // before calling another constructor.
+        mCallback = new MyCallback();
+        mHandler = new Handler(context.getMainLooper(), mCallback);
+        mUserId = userId;
+        synchronized (mLock) {
+            tryConnectToServiceLocked(service);
+        }
+!!!8651781.java!!!	AccessibilityManager(inout handler : Handler, inout service : IAccessibilityManager, in userId : int)
+        mCallback = new MyCallback();
+        mHandler = handler;
+        mUserId = userId;
+        synchronized (mLock) {
+            tryConnectToServiceLocked(service);
+        }
+!!!8651909.java!!!	getClient() : IAccessibilityManagerClient
+        return mClient;
+!!!8652037.java!!!	getCallback() : Handler::Callback
+        return mCallback;
+!!!8652165.java!!!	isEnabled() : boolean
+        synchronized (mLock) {
+            IAccessibilityManager service = getServiceLocked();
+            if (service == null) {
+                return false;
+            }
+            return mIsEnabled;
+        }
+!!!8652293.java!!!	isTouchExplorationEnabled() : boolean
+        synchronized (mLock) {
+            IAccessibilityManager service = getServiceLocked();
+            if (service == null) {
+                return false;
+            }
+            return mIsTouchExplorationEnabled;
+        }
+!!!8652421.java!!!	isHighTextContrastEnabled() : boolean
+        synchronized (mLock) {
+            IAccessibilityManager service = getServiceLocked();
+            if (service == null) {
+                return false;
+            }
+            return mIsHighTextContrastEnabled;
+        }
+!!!8652549.java!!!	sendAccessibilityEvent(inout event : AccessibilityEvent) : void
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+            if (!mIsEnabled) {
+                Looper myLooper = Looper.myLooper();
+                if (myLooper == Looper.getMainLooper()) {
+                    throw new IllegalStateException(
+                            "Accessibility off. Did you forget to check that?");
+                } else {
+                    // If we're not running on the thread with the main looper, it's possible for
+                    // the state of accessibility to change between checking isEnabled and
+                    // calling this method. So just log the error rather than throwing the
+                    // exception.
+                    Log.e(LOG_TAG, "AccessibilityEvent sent with accessibility disabled");
+                    return;
+                }
+            }
+            if ((event.getEventType() & mRelevantEventTypes) == 0) {
+                if (DEBUG) {
+                    Log.i(LOG_TAG, "Not dispatching irrelevant event: " + event
+                            + " that is not among "
+                            + AccessibilityEvent.eventTypeToString(mRelevantEventTypes));
+                }
+                return;
+            }
+            userId = mUserId;
+        }
+        try {
+            event.setEventTime(SystemClock.uptimeMillis());
+            // it is possible that this manager is in the same process as the service but
+            // client using it is called through Binder from another process. Example: MMS
+            // app adds a SMS notification and the NotificationManagerService calls this method
+            long identityToken = Binder.clearCallingIdentity();
+            service.sendAccessibilityEvent(event, userId);
+            Binder.restoreCallingIdentity(identityToken);
+            if (DEBUG) {
+                Log.i(LOG_TAG, event + " sent");
+            }
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error during sending " + event + " ", re);
+        } finally {
+            event.recycle();
+        }
+!!!8652677.java!!!	interrupt() : void
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+            if (!mIsEnabled) {
+                Looper myLooper = Looper.myLooper();
+                if (myLooper == Looper.getMainLooper()) {
+                    throw new IllegalStateException(
+                            "Accessibility off. Did you forget to check that?");
+                } else {
+                    // If we're not running on the thread with the main looper, it's possible for
+                    // the state of accessibility to change between checking isEnabled and
+                    // calling this method. So just log the error rather than throwing the
+                    // exception.
+                    Log.e(LOG_TAG, "Interrupt called with accessibility disabled");
+                    return;
+                }
+            }
+            userId = mUserId;
+        }
+        try {
+            service.interrupt(userId);
+            if (DEBUG) {
+                Log.i(LOG_TAG, "Requested interrupt from all services");
+            }
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while requesting interrupt from all services. ", re);
+        }
+!!!8652805.java!!!	getAccessibilityServiceList() : ServiceInfo
+        List<AccessibilityServiceInfo> infos = getInstalledAccessibilityServiceList();
+        List<ServiceInfo> services = new ArrayList<>();
+        final int infoCount = infos.size();
+        for (int i = 0; i < infoCount; i++) {
+            AccessibilityServiceInfo info = infos.get(i);
+            services.add(info.getResolveInfo().serviceInfo);
+        }
+        return Collections.unmodifiableList(services);
+!!!8652933.java!!!	getInstalledAccessibilityServiceList() : AccessibilityServiceInfo
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return Collections.emptyList();
+            }
+            userId = mUserId;
+        }
+
+        List<AccessibilityServiceInfo> services = null;
+        try {
+            services = service.getInstalledAccessibilityServiceList(userId);
+            if (DEBUG) {
+                Log.i(LOG_TAG, "Installed AccessibilityServices " + services);
+            }
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while obtaining the installed AccessibilityServices. ", re);
+        }
+        if (services != null) {
+            return Collections.unmodifiableList(services);
+        } else {
+            return Collections.emptyList();
+        }
+!!!8653061.java!!!	getEnabledAccessibilityServiceList(in feedbackTypeFlags : int) : AccessibilityServiceInfo
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return Collections.emptyList();
+            }
+            userId = mUserId;
+        }
+
+        List<AccessibilityServiceInfo> services = null;
+        try {
+            services = service.getEnabledAccessibilityServiceList(feedbackTypeFlags, userId);
+            if (DEBUG) {
+                Log.i(LOG_TAG, "Installed AccessibilityServices " + services);
+            }
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while obtaining the installed AccessibilityServices. ", re);
+        }
+        if (services != null) {
+            return Collections.unmodifiableList(services);
+        } else {
+            return Collections.emptyList();
+        }
+!!!8653189.java!!!	addAccessibilityStateChangeListener(inout listener : AccessibilityManager::AccessibilityStateChangeListener) : boolean
+        addAccessibilityStateChangeListener(listener, null);
+        return true;
+!!!8653317.java!!!	addAccessibilityStateChangeListener(inout listener : AccessibilityManager::AccessibilityStateChangeListener, inout handler : Handler) : void
+        synchronized (mLock) {
+            mAccessibilityStateChangeListeners
+                    .put(listener, (handler == null) ? mHandler : handler);
+        }
+!!!8653445.java!!!	removeAccessibilityStateChangeListener(inout listener : AccessibilityManager::AccessibilityStateChangeListener) : boolean
+        synchronized (mLock) {
+            int index = mAccessibilityStateChangeListeners.indexOfKey(listener);
+            mAccessibilityStateChangeListeners.remove(listener);
+            return (index >= 0);
+        }
+!!!8653573.java!!!	addTouchExplorationStateChangeListener(inout listener : AccessibilityManager::TouchExplorationStateChangeListener) : boolean
+        addTouchExplorationStateChangeListener(listener, null);
+        return true;
+!!!8653701.java!!!	addTouchExplorationStateChangeListener(inout listener : AccessibilityManager::TouchExplorationStateChangeListener, inout handler : Handler) : void
+        synchronized (mLock) {
+            mTouchExplorationStateChangeListeners
+                    .put(listener, (handler == null) ? mHandler : handler);
+        }
+!!!8653829.java!!!	removeTouchExplorationStateChangeListener(inout listener : AccessibilityManager::TouchExplorationStateChangeListener) : boolean
+        synchronized (mLock) {
+            int index = mTouchExplorationStateChangeListeners.indexOfKey(listener);
+            mTouchExplorationStateChangeListeners.remove(listener);
+            return (index >= 0);
+        }
+!!!8653957.java!!!	addAccessibilityServicesStateChangeListener(inout listener : AccessibilityManager::AccessibilityServicesStateChangeListener, inout handler : Handler) : void
+        synchronized (mLock) {
+            mServicesStateChangeListeners
+                    .put(listener, (handler == null) ? mHandler : handler);
+        }
+!!!8654085.java!!!	removeAccessibilityServicesStateChangeListener(inout listener : AccessibilityManager::AccessibilityServicesStateChangeListener) : void
+        // Final CopyOnWriteArrayList - no lock needed.
+        mServicesStateChangeListeners.remove(listener);
+!!!8654213.java!!!	addHighTextContrastStateChangeListener(inout listener : AccessibilityManager::HighTextContrastChangeListener, inout handler : Handler) : void
+        synchronized (mLock) {
+            mHighTextContrastStateChangeListeners
+                    .put(listener, (handler == null) ? mHandler : handler);
+        }
+!!!8654341.java!!!	removeHighTextContrastStateChangeListener(inout listener : AccessibilityManager::HighTextContrastChangeListener) : void
+        synchronized (mLock) {
+            mHighTextContrastStateChangeListeners.remove(listener);
+        }
+!!!8654469.java!!!	isAccessibilityVolumeStreamActive() : boolean
+        List<AccessibilityServiceInfo> serviceInfos =
+                getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+        for (int i = 0; i < serviceInfos.size(); i++) {
+            if ((serviceInfos.get(i).flags & FLAG_ENABLE_ACCESSIBILITY_VOLUME) != 0) {
+                return true;
+            }
+        }
+        return false;
+!!!8654597.java!!!	sendFingerprintGesture(in keyCode : int) : boolean
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return false;
+            }
+        }
+        try {
+            return service.sendFingerprintGesture(keyCode);
+        } catch (RemoteException e) {
+            return false;
+        }
+!!!8654725.java!!!	setStateLocked(in stateFlags : int) : void
+        final boolean enabled = (stateFlags & STATE_FLAG_ACCESSIBILITY_ENABLED) != 0;
+        final boolean touchExplorationEnabled =
+                (stateFlags & STATE_FLAG_TOUCH_EXPLORATION_ENABLED) != 0;
+        final boolean highTextContrastEnabled =
+                (stateFlags & STATE_FLAG_HIGH_TEXT_CONTRAST_ENABLED) != 0;
+
+        final boolean wasEnabled = mIsEnabled;
+        final boolean wasTouchExplorationEnabled = mIsTouchExplorationEnabled;
+        final boolean wasHighTextContrastEnabled = mIsHighTextContrastEnabled;
+
+        // Ensure listeners get current state from isZzzEnabled() calls.
+        mIsEnabled = enabled;
+        mIsTouchExplorationEnabled = touchExplorationEnabled;
+        mIsHighTextContrastEnabled = highTextContrastEnabled;
+
+        if (wasEnabled != enabled) {
+            notifyAccessibilityStateChanged();
+        }
+
+        if (wasTouchExplorationEnabled != touchExplorationEnabled) {
+            notifyTouchExplorationStateChanged();
+        }
+
+        if (wasHighTextContrastEnabled != highTextContrastEnabled) {
+            notifyHighTextContrastStateChanged();
+        }
+!!!8654853.java!!!	getInstalledServiceInfoWithComponentName(inout componentName : ComponentName) : AccessibilityServiceInfo
+        final List<AccessibilityServiceInfo> installedServiceInfos =
+                getInstalledAccessibilityServiceList();
+        if ((installedServiceInfos == null) || (componentName == null)) {
+            return null;
+        }
+        for (int i = 0; i < installedServiceInfos.size(); i++) {
+            if (componentName.equals(installedServiceInfos.get(i).getComponentName())) {
+                return installedServiceInfos.get(i);
+            }
+        }
+        return null;
+!!!8654981.java!!!	addAccessibilityInteractionConnection(inout windowToken : IWindow, inout connection : IAccessibilityInteractionConnection) : int
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return View.NO_ID;
+            }
+            userId = mUserId;
+        }
+        try {
+            return service.addAccessibilityInteractionConnection(windowToken, connection, userId);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while adding an accessibility interaction connection. ", re);
+        }
+        return View.NO_ID;
+!!!8655109.java!!!	removeAccessibilityInteractionConnection(inout windowToken : IWindow) : void
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.removeAccessibilityInteractionConnection(windowToken);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while removing an accessibility interaction connection. ", re);
+        }
+!!!8655237.java!!!	performAccessibilityShortcut() : void
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.performAccessibilityShortcut();
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error performing accessibility shortcut. ", re);
+        }
+!!!8655365.java!!!	notifyAccessibilityButtonClicked() : void
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.notifyAccessibilityButtonClicked();
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while dispatching accessibility button click", re);
+        }
+!!!8655493.java!!!	notifyAccessibilityButtonVisibilityChanged(inout shown : boolean) : void
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.notifyAccessibilityButtonVisibilityChanged(shown);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while dispatching accessibility button visibility change", re);
+        }
+!!!8655621.java!!!	setPictureInPictureActionReplacingConnection(inout connection : IAccessibilityInteractionConnection) : void
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.setPictureInPictureActionReplacingConnection(connection);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error setting picture in picture action replacement", re);
+        }
+!!!8655749.java!!!	getServiceLocked() : IAccessibilityManager
+        if (mService == null) {
+            tryConnectToServiceLocked(null);
+        }
+        return mService;
+!!!8655877.java!!!	tryConnectToServiceLocked(inout service : IAccessibilityManager) : void
+        if (service == null) {
+            IBinder iBinder = ServiceManager.getService(Context.ACCESSIBILITY_SERVICE);
+            if (iBinder == null) {
+                return;
+            }
+            service = IAccessibilityManager.Stub.asInterface(iBinder);
+        }
+
+        try {
+            final long userStateAndRelevantEvents = service.addClient(mClient, mUserId);
+            setStateLocked(IntPair.first(userStateAndRelevantEvents));
+            mRelevantEventTypes = IntPair.second(userStateAndRelevantEvents);
+            mService = service;
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "AccessibilityManagerService is dead", re);
+        }
+!!!8656005.java!!!	notifyAccessibilityStateChanged() : void
+        final boolean isEnabled;
+        final ArrayMap<AccessibilityStateChangeListener, Handler> listeners;
+        synchronized (mLock) {
+            if (mAccessibilityStateChangeListeners.isEmpty()) {
+                return;
+            }
+            isEnabled = mIsEnabled;
+            listeners = new ArrayMap<>(mAccessibilityStateChangeListeners);
+        }
+
+        int numListeners = listeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            final AccessibilityStateChangeListener listener =
+                    mAccessibilityStateChangeListeners.keyAt(i);
+            mAccessibilityStateChangeListeners.valueAt(i)
+                    .post(() -> listener.onAccessibilityStateChanged(isEnabled));
+        }
+!!!8656133.java!!!	notifyTouchExplorationStateChanged() : void
+        final boolean isTouchExplorationEnabled;
+        final ArrayMap<TouchExplorationStateChangeListener, Handler> listeners;
+        synchronized (mLock) {
+            if (mTouchExplorationStateChangeListeners.isEmpty()) {
+                return;
+            }
+            isTouchExplorationEnabled = mIsTouchExplorationEnabled;
+            listeners = new ArrayMap<>(mTouchExplorationStateChangeListeners);
+        }
+
+        int numListeners = listeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            final TouchExplorationStateChangeListener listener =
+                    mTouchExplorationStateChangeListeners.keyAt(i);
+            mTouchExplorationStateChangeListeners.valueAt(i)
+                    .post(() -> listener.onTouchExplorationStateChanged(isTouchExplorationEnabled));
+        }
+!!!8656261.java!!!	notifyHighTextContrastStateChanged() : void
+        final boolean isHighTextContrastEnabled;
+        final ArrayMap<HighTextContrastChangeListener, Handler> listeners;
+        synchronized (mLock) {
+            if (mHighTextContrastStateChangeListeners.isEmpty()) {
+                return;
+            }
+            isHighTextContrastEnabled = mIsHighTextContrastEnabled;
+            listeners = new ArrayMap<>(mHighTextContrastStateChangeListeners);
+        }
+
+        int numListeners = listeners.size();
+        for (int i = 0; i < numListeners; i++) {
+            final HighTextContrastChangeListener listener =
+                    mHighTextContrastStateChangeListeners.keyAt(i);
+            mHighTextContrastStateChangeListeners.valueAt(i)
+                    .post(() -> listener.onHighTextContrastStateChanged(isHighTextContrastEnabled));
+        }
+!!!8656389.java!!!	isAccessibilityButtonSupported() : boolean
+        final Resources res = Resources.getSystem();
+        return res.getBoolean(com.android.internal.R.bool.config_showNavigationBar);

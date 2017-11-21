@@ -1,0 +1,145 @@
+class TaskChangeNotificationController
+!!!11246085.java!!!	TaskChangeNotificationController(inout service : ActivityManagerService, inout stackSupervisor : ActivityStackSupervisor, inout handler : Handler)
+        mService = service;
+        mStackSupervisor = stackSupervisor;
+        mHandler = new MainHandler(handler.getLooper());
+!!!11246213.java!!!	registerTaskStackListener(inout listener : ITaskStackListener) : void
+        synchronized (mService) {
+            if (listener != null) {
+                if (Binder.getCallingPid() == android.os.Process.myPid()) {
+                    if (!mLocalTaskStackListeners.contains(listener)) {
+                        mLocalTaskStackListeners.add(listener);
+                    }
+                } else {
+                    mRemoteTaskStackListeners.register(listener);
+                }
+            }
+        }
+!!!11246341.java!!!	unregisterTaskStackListener(inout listener : ITaskStackListener) : void
+        synchronized (mService) {
+            if (listener != null) {
+                if (Binder.getCallingPid() == android.os.Process.myPid()) {
+                    mLocalTaskStackListeners.remove(listener);
+                } else {
+                    mRemoteTaskStackListeners.unregister(listener);
+                }
+            }
+        }
+!!!11246469.java!!!	forAllRemoteListeners(inout callback : TaskChangeNotificationController::TaskStackConsumer, inout message : Message) : void
+        synchronized (mService) {
+            for (int i = mRemoteTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+                try {
+                    // Make a one-way callback to the listener
+                    callback.accept(mRemoteTaskStackListeners.getBroadcastItem(i), message);
+                } catch (RemoteException e) {
+                    // Handled by the RemoteCallbackList.
+                }
+            }
+            mRemoteTaskStackListeners.finishBroadcast();
+        }
+!!!11246597.java!!!	forAllLocalListeners(inout callback : TaskChangeNotificationController::TaskStackConsumer, inout message : Message) : void
+        synchronized (mService) {
+            for (int i = mLocalTaskStackListeners.size() - 1; i >= 0; i--) {
+                try {
+                    callback.accept(mLocalTaskStackListeners.get(i), message);
+                } catch (RemoteException e) {
+                    // Never thrown since this is called locally.
+                }
+            }
+        }
+!!!11246725.java!!!	notifyTaskStackChanged() : void
+        mHandler.sendEmptyMessage(LOG_STACK_STATE_MSG);
+        mHandler.removeMessages(NOTIFY_TASK_STACK_CHANGE_LISTENERS_MSG);
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_STACK_CHANGE_LISTENERS_MSG);
+        forAllLocalListeners(mNotifyTaskStackChanged, msg);
+        // Only the main task stack change notification requires a delay.
+        mHandler.sendMessageDelayed(msg, NOTIFY_TASK_STACK_CHANGE_LISTENERS_DELAY);
+!!!11246853.java!!!	notifyActivityPinned(in packageName : String, in taskId : int) : void
+        mHandler.removeMessages(NOTIFY_ACTIVITY_PINNED_LISTENERS_MSG);
+        final Message msg = mHandler.obtainMessage(NOTIFY_ACTIVITY_PINNED_LISTENERS_MSG,
+                taskId, 0, packageName);
+        forAllLocalListeners(mNotifyActivityPinned, msg);
+        msg.sendToTarget();
+!!!11246981.java!!!	notifyActivityUnpinned() : void
+        mHandler.removeMessages(NOTIFY_ACTIVITY_UNPINNED_LISTENERS_MSG);
+        final Message msg = mHandler.obtainMessage(NOTIFY_ACTIVITY_UNPINNED_LISTENERS_MSG);
+        forAllLocalListeners(mNotifyActivityUnpinned, msg);
+        msg.sendToTarget();
+!!!11247109.java!!!	notifyPinnedActivityRestartAttempt(inout clearedTask : boolean) : void
+        mHandler.removeMessages(NOTIFY_PINNED_ACTIVITY_RESTART_ATTEMPT_LISTENERS_MSG);
+        final Message msg =
+                mHandler.obtainMessage(NOTIFY_PINNED_ACTIVITY_RESTART_ATTEMPT_LISTENERS_MSG,
+                        clearedTask ? 1 : 0, 0);
+        forAllLocalListeners(mNotifyPinnedActivityRestartAttempt, msg);
+        msg.sendToTarget();
+!!!11247237.java!!!	notifyPinnedStackAnimationStarted() : void
+        mHandler.removeMessages(NOTIFY_PINNED_STACK_ANIMATION_STARTED_LISTENERS_MSG);
+        final Message msg =
+                mHandler.obtainMessage(NOTIFY_PINNED_STACK_ANIMATION_STARTED_LISTENERS_MSG);
+        forAllLocalListeners(mNotifyPinnedStackAnimationStarted, msg);
+        msg.sendToTarget();
+!!!11247365.java!!!	notifyPinnedStackAnimationEnded() : void
+        mHandler.removeMessages(NOTIFY_PINNED_STACK_ANIMATION_ENDED_LISTENERS_MSG);
+        final Message msg =
+                mHandler.obtainMessage(NOTIFY_PINNED_STACK_ANIMATION_ENDED_LISTENERS_MSG);
+        forAllLocalListeners(mNotifyPinnedStackAnimationEnded, msg);
+        msg.sendToTarget();
+!!!11247493.java!!!	notifyActivityDismissingDockedStack() : void
+        mHandler.removeMessages(NOTIFY_ACTIVITY_DISMISSING_DOCKED_STACK_MSG);
+        final Message msg = mHandler.obtainMessage(NOTIFY_ACTIVITY_DISMISSING_DOCKED_STACK_MSG);
+        forAllLocalListeners(mNotifyActivityDismissingDockedStack, msg);
+        msg.sendToTarget();
+!!!11247621.java!!!	notifyActivityForcedResizable(in taskId : int, in reason : int, in packageName : String) : void
+        mHandler.removeMessages(NOTIFY_FORCED_RESIZABLE_MSG);
+        final Message msg = mHandler.obtainMessage(NOTIFY_FORCED_RESIZABLE_MSG, taskId, reason,
+                packageName);
+        forAllLocalListeners(mNotifyActivityForcedResizable, msg);
+        msg.sendToTarget();
+!!!11247749.java!!!	notifyActivityLaunchOnSecondaryDisplayFailed() : void
+        mHandler.removeMessages(NOTIFY_ACTIVITY_LAUNCH_ON_SECONDARY_DISPLAY_FAILED_MSG);
+        final Message msg = mHandler.obtainMessage(
+                NOTIFY_ACTIVITY_LAUNCH_ON_SECONDARY_DISPLAY_FAILED_MSG);
+        forAllLocalListeners(mNotifyActivityLaunchOnSecondaryDisplayFailed, msg);
+        msg.sendToTarget();
+!!!11247877.java!!!	notifyTaskCreated(in taskId : int, inout componentName : ComponentName) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_ADDED_LISTENERS_MSG,
+                taskId, 0 /* unused */, componentName);
+        forAllLocalListeners(mNotifyTaskCreated, msg);
+        msg.sendToTarget();
+!!!11248005.java!!!	notifyTaskRemoved(in taskId : int) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_REMOVED_LISTENERS_MSG,
+                taskId, 0 /* unused */);
+        forAllLocalListeners(mNotifyTaskRemoved, msg);
+        msg.sendToTarget();
+!!!11248133.java!!!	notifyTaskMovedToFront(in taskId : int) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_MOVED_TO_FRONT_LISTENERS_MSG,
+                taskId, 0 /* unused */);
+        forAllLocalListeners(mNotifyTaskMovedToFront, msg);
+        msg.sendToTarget();
+!!!11248261.java!!!	notifyTaskDescriptionChanged(in taskId : int, inout taskDescription : ActivityManager::TaskDescription) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_DESCRIPTION_CHANGED_LISTENERS_MSG,
+                taskId, 0 /* unused */, taskDescription);
+        forAllLocalListeners(mNotifyTaskDescriptionChanged, msg);
+        msg.sendToTarget();
+
+!!!11248389.java!!!	notifyActivityRequestedOrientationChanged(in taskId : int, in orientation : int) : void
+        final Message msg = mHandler.obtainMessage(
+                NOTIFY_ACTIVITY_REQUESTED_ORIENTATION_CHANGED_LISTENERS, taskId, orientation);
+        forAllLocalListeners(mNotifyActivityRequestedOrientationChanged, msg);
+        msg.sendToTarget();
+!!!11248517.java!!!	notifyTaskRemovalStarted(in taskId : int) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_REMOVAL_STARTED_LISTENERS, taskId,
+                0 /* unused */);
+        forAllLocalListeners(mNotifyTaskRemovalStarted, msg);
+        msg.sendToTarget();
+
+!!!11248645.java!!!	notifyTaskProfileLocked(in taskId : int, in userId : int) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_PROFILE_LOCKED_LISTENERS_MSG, taskId,
+                userId);
+        forAllLocalListeners(mNotifyTaskProfileLocked, msg);
+        msg.sendToTarget();
+!!!11248773.java!!!	notifyTaskSnapshotChanged(in taskId : int, inout snapshot : ActivityManager::TaskSnapshot) : void
+        final Message msg = mHandler.obtainMessage(NOTIFY_TASK_SNAPSHOT_CHANGED_LISTENERS_MSG,
+                taskId, 0, snapshot);
+        forAllLocalListeners(mNotifyTaskSnapshotChanged, msg);
+        msg.sendToTarget();

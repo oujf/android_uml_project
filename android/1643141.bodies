@@ -1,0 +1,221 @@
+class UriPermission
+!!!11266949.java!!!	UriPermission(in sourcePkg : String, in targetPkg : String, in targetUid : int, inout uri : ActivityManagerService::GrantUri)
+        this.targetUserId = UserHandle.getUserId(targetUid);
+        this.sourcePkg = sourcePkg;
+        this.targetPkg = targetPkg;
+        this.targetUid = targetUid;
+        this.uri = uri;
+!!!11267077.java!!!	updateModeFlags() : void
+        final int oldModeFlags = modeFlags;
+        modeFlags = ownedModeFlags | globalModeFlags | persistableModeFlags | persistedModeFlags;
+
+        if (Log.isLoggable(TAG, Log.VERBOSE) && (modeFlags != oldModeFlags)) {
+            Slog.d(TAG,
+                    "Permission for " + targetPkg + " to " + uri + " is changing from 0x"
+                            + Integer.toHexString(oldModeFlags) + " to 0x"
+                            + Integer.toHexString(modeFlags),
+                    new Throwable());
+        }
+!!!11267205.java!!!	initPersistedModes(in modeFlags : int, in createdTime : long) : void
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        persistableModeFlags = modeFlags;
+        persistedModeFlags = modeFlags;
+        persistedCreateTime = createdTime;
+
+        updateModeFlags();
+!!!11267333.java!!!	grantModes(in modeFlags : int, inout owner : UriPermissionOwner) : void
+        final boolean persistable = (modeFlags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0;
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        if (persistable) {
+            persistableModeFlags |= modeFlags;
+        }
+
+        if (owner == null) {
+            globalModeFlags |= modeFlags;
+        } else {
+            if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                addReadOwner(owner);
+            }
+            if ((modeFlags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                addWriteOwner(owner);
+            }
+        }
+
+        updateModeFlags();
+!!!11267461.java!!!	takePersistableModes(in modeFlags : int) : boolean
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        if ((modeFlags & persistableModeFlags) != modeFlags) {
+            Slog.w(TAG, "Requested flags 0x"
+                    + Integer.toHexString(modeFlags) + ", but only 0x"
+                    + Integer.toHexString(persistableModeFlags) + " are allowed");
+            return false;
+        }
+
+        final int before = persistedModeFlags;
+        persistedModeFlags |= (persistableModeFlags & modeFlags);
+
+        if (persistedModeFlags != 0) {
+            persistedCreateTime = System.currentTimeMillis();
+        }
+
+        updateModeFlags();
+        return persistedModeFlags != before;
+!!!11267589.java!!!	releasePersistableModes(in modeFlags : int) : boolean
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        final int before = persistedModeFlags;
+
+        persistableModeFlags &= ~modeFlags;
+        persistedModeFlags &= ~modeFlags;
+
+        if (persistedModeFlags == 0) {
+            persistedCreateTime = INVALID_TIME;
+        }
+
+        updateModeFlags();
+        return persistedModeFlags != before;
+!!!11267717.java!!!	revokeModes(in modeFlags : int, inout includingOwners : boolean) : boolean
+        final boolean persistable = (modeFlags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0;
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+        final int before = persistedModeFlags;
+
+        if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+            if (persistable) {
+                persistableModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                persistedModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            }
+            globalModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            if (mReadOwners != null && includingOwners) {
+                ownedModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                for (UriPermissionOwner r : mReadOwners) {
+                    r.removeReadPermission(this);
+                }
+                mReadOwners = null;
+            }
+        }
+        if ((modeFlags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+            if (persistable) {
+                persistableModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                persistedModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            }
+            globalModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            if (mWriteOwners != null && includingOwners) {
+                ownedModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                for (UriPermissionOwner r : mWriteOwners) {
+                    r.removeWritePermission(this);
+                }
+                mWriteOwners = null;
+            }
+        }
+
+        if (persistedModeFlags == 0) {
+            persistedCreateTime = INVALID_TIME;
+        }
+
+        updateModeFlags();
+        return persistedModeFlags != before;
+!!!11267845.java!!!	getStrength(in modeFlags : int) : int
+        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        if ((persistableModeFlags & modeFlags) == modeFlags) {
+            return STRENGTH_PERSISTABLE;
+        } else if ((globalModeFlags & modeFlags) == modeFlags) {
+            return STRENGTH_GLOBAL;
+        } else if ((ownedModeFlags & modeFlags) == modeFlags) {
+            return STRENGTH_OWNED;
+        } else {
+            return STRENGTH_NONE;
+        }
+!!!11267973.java!!!	addReadOwner(inout owner : UriPermissionOwner) : void
+        if (mReadOwners == null) {
+            mReadOwners = Sets.newArraySet();
+            ownedModeFlags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            updateModeFlags();
+        }
+        if (mReadOwners.add(owner)) {
+            owner.addReadPermission(this);
+        }
+!!!11268101.java!!!	removeReadOwner(inout owner : UriPermissionOwner) : void
+        if (!mReadOwners.remove(owner)) {
+            Slog.wtf(TAG, "Unknown read owner " + owner + " in " + this);
+        }
+        if (mReadOwners.size() == 0) {
+            mReadOwners = null;
+            ownedModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            updateModeFlags();
+        }
+!!!11268229.java!!!	addWriteOwner(inout owner : UriPermissionOwner) : void
+        if (mWriteOwners == null) {
+            mWriteOwners = Sets.newArraySet();
+            ownedModeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            updateModeFlags();
+        }
+        if (mWriteOwners.add(owner)) {
+            owner.addWritePermission(this);
+        }
+!!!11268357.java!!!	removeWriteOwner(inout owner : UriPermissionOwner) : void
+        if (!mWriteOwners.remove(owner)) {
+            Slog.wtf(TAG, "Unknown write owner " + owner + " in " + this);
+        }
+        if (mWriteOwners.size() == 0) {
+            mWriteOwners = null;
+            ownedModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            updateModeFlags();
+        }
+!!!11268485.java!!!	toString() : String
+        if (stringName != null) {
+            return stringName;
+        }
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("UriPermission{");
+        sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(' ');
+        sb.append(uri);
+        sb.append('}');
+        return stringName = sb.toString();
+!!!11268613.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.print(prefix);
+        pw.print("targetUserId=" + targetUserId);
+        pw.print(" sourcePkg=" + sourcePkg);
+        pw.println(" targetPkg=" + targetPkg);
+
+        pw.print(prefix);
+        pw.print("mode=0x" + Integer.toHexString(modeFlags));
+        pw.print(" owned=0x" + Integer.toHexString(ownedModeFlags));
+        pw.print(" global=0x" + Integer.toHexString(globalModeFlags));
+        pw.print(" persistable=0x" + Integer.toHexString(persistableModeFlags));
+        pw.print(" persisted=0x" + Integer.toHexString(persistedModeFlags));
+        if (persistedCreateTime != INVALID_TIME) {
+            pw.print(" persistedCreate=" + persistedCreateTime);
+        }
+        pw.println();
+
+        if (mReadOwners != null) {
+            pw.print(prefix);
+            pw.println("readOwners:");
+            for (UriPermissionOwner owner : mReadOwners) {
+                pw.print(prefix);
+                pw.println("  * " + owner);
+            }
+        }
+        if (mWriteOwners != null) {
+            pw.print(prefix);
+            pw.println("writeOwners:");
+            for (UriPermissionOwner owner : mReadOwners) {
+                pw.print(prefix);
+                pw.println("  * " + owner);
+            }
+        }
+!!!11268997.java!!!	snapshot() : UriPermission::Snapshot
+        return new Snapshot(this);
+!!!11269125.java!!!	buildPersistedPublicApiObject() : UriPermission
+        return new android.content.UriPermission(uri.uri, persistedModeFlags, persistedCreateTime);

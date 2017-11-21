@@ -1,0 +1,174 @@
+class MyPackageMonitor
+!!!10690309.java!!!	clearKnownImePackageNamesLocked() : void
+            mKnownImePackageNames.clear();
+!!!10690437.java!!!	addKnownImePackageNameLocked(in packageName : String) : void
+            mKnownImePackageNames.add(packageName);
+!!!10690565.java!!!	isChangingPackagesOfCurrentUserLocked() : boolean
+            final int userId = getChangingUserId();
+            final boolean retval = userId == mSettings.getCurrentUserId();
+            if (DEBUG) {
+                if (!retval) {
+                    Slog.d(TAG, "--- ignore this call back from a background user: " + userId);
+                }
+            }
+            return retval;
+!!!10690693.java!!!	onHandleForceStop(inout intent : Intent, inout packages : String [[]], in uid : int, inout doit : boolean) : boolean
+            synchronized (mMethodMap) {
+                if (!isChangingPackagesOfCurrentUserLocked()) {
+                    return false;
+                }
+                String curInputMethodId = mSettings.getSelectedInputMethod();
+                final int N = mMethodList.size();
+                if (curInputMethodId != null) {
+                    for (int i=0; i<N; i++) {
+                        InputMethodInfo imi = mMethodList.get(i);
+                        if (imi.getId().equals(curInputMethodId)) {
+                            for (String pkg : packages) {
+                                if (imi.getPackageName().equals(pkg)) {
+                                    if (!doit) {
+                                        return true;
+                                    }
+                                    resetSelectedInputMethodAndSubtypeLocked("");
+                                    chooseNewDefaultIMELocked();
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+!!!10690821.java!!!	onBeginPackageChanges() : void
+            clearPackageChangeState();
+!!!10690949.java!!!	onPackageAppeared(in packageName : String, in reason : int) : void
+            if (!mImePackageAppeared) {
+                final PackageManager pm = mContext.getPackageManager();
+                final List<ResolveInfo> services = pm.queryIntentServicesAsUser(
+                        new Intent(InputMethod.SERVICE_INTERFACE).setPackage(packageName),
+                        PackageManager.MATCH_DISABLED_COMPONENTS, getChangingUserId());
+                // No need to lock this because we access it only on getRegisteredHandler().
+                if (!services.isEmpty()) {
+                    mImePackageAppeared = true;
+                }
+            }
+            // No need to lock this because we access it only on getRegisteredHandler().
+            mChangedPackages.add(packageName);
+!!!10691077.java!!!	onPackageDisappeared(in packageName : String, in reason : int) : void
+            // No need to lock this because we access it only on getRegisteredHandler().
+            mChangedPackages.add(packageName);
+!!!10691205.java!!!	onPackageModified(in packageName : String) : void
+            // No need to lock this because we access it only on getRegisteredHandler().
+            mChangedPackages.add(packageName);
+!!!10691333.java!!!	onPackagesSuspended(inout packages : String [[]]) : void
+            // No need to lock this because we access it only on getRegisteredHandler().
+            for (String packageName : packages) {
+                mChangedPackages.add(packageName);
+            }
+!!!10691461.java!!!	onPackagesUnsuspended(inout packages : String [[]]) : void
+            // No need to lock this because we access it only on getRegisteredHandler().
+            for (String packageName : packages) {
+                mChangedPackages.add(packageName);
+            }
+!!!10691589.java!!!	onFinishPackageChanges() : void
+            onFinishPackageChangesInternal();
+            clearPackageChangeState();
+!!!10691717.java!!!	clearPackageChangeState() : void
+            // No need to lock them because we access these fields only on getRegisteredHandler().
+            mChangedPackages.clear();
+            mImePackageAppeared = false;
+!!!10691845.java!!!	shouldRebuildInputMethodListLocked() : boolean
+            // This method is guaranteed to be called only by getRegisteredHandler().
+
+            // If there is any new package that contains at least one IME, then rebuilt the list
+            // of IMEs.
+            if (mImePackageAppeared) {
+                return true;
+            }
+
+            // Otherwise, check if mKnownImePackageNames and mChangedPackages have any intersection.
+            // TODO: Consider to create a utility method to do the following test. List.retainAll()
+            // is an option, but it may still do some extra operations that we do not need here.
+            final int N = mChangedPackages.size();
+            for (int i = 0; i < N; ++i) {
+                final String packageName = mChangedPackages.get(i);
+                if (mKnownImePackageNames.contains(packageName)) {
+                    return true;
+                }
+            }
+            return false;
+!!!10691973.java!!!	onFinishPackageChangesInternal() : void
+            synchronized (mMethodMap) {
+                if (!isChangingPackagesOfCurrentUserLocked()) {
+                    return;
+                }
+                if (!shouldRebuildInputMethodListLocked()) {
+                    return;
+                }
+
+                InputMethodInfo curIm = null;
+                String curInputMethodId = mSettings.getSelectedInputMethod();
+                final int N = mMethodList.size();
+                if (curInputMethodId != null) {
+                    for (int i=0; i<N; i++) {
+                        InputMethodInfo imi = mMethodList.get(i);
+                        final String imiId = imi.getId();
+                        if (imiId.equals(curInputMethodId)) {
+                            curIm = imi;
+                        }
+
+                        int change = isPackageDisappearing(imi.getPackageName());
+                        if (isPackageModified(imi.getPackageName())) {
+                            mFileManager.deleteAllInputMethodSubtypes(imiId);
+                        }
+                        if (change == PACKAGE_TEMPORARY_CHANGE
+                                || change == PACKAGE_PERMANENT_CHANGE) {
+                            Slog.i(TAG, "Input method uninstalled, disabling: "
+                                    + imi.getComponent());
+                            setInputMethodEnabledLocked(imi.getId(), false);
+                        }
+                    }
+                }
+
+                buildInputMethodListLocked(false /* resetDefaultEnabledIme */);
+
+                boolean changed = false;
+
+                if (curIm != null) {
+                    int change = isPackageDisappearing(curIm.getPackageName());
+                    if (change == PACKAGE_TEMPORARY_CHANGE
+                            || change == PACKAGE_PERMANENT_CHANGE) {
+                        ServiceInfo si = null;
+                        try {
+                            si = mIPackageManager.getServiceInfo(
+                                    curIm.getComponent(), 0, mSettings.getCurrentUserId());
+                        } catch (RemoteException ex) {
+                        }
+                        if (si == null) {
+                            // Uh oh, current input method is no longer around!
+                            // Pick another one...
+                            Slog.i(TAG, "Current input method removed: " + curInputMethodId);
+                            updateSystemUiLocked(mCurToken, 0 /* vis */, mBackDisposition);
+                            if (!chooseNewDefaultIMELocked()) {
+                                changed = true;
+                                curIm = null;
+                                Slog.i(TAG, "Unsetting current input method");
+                                resetSelectedInputMethodAndSubtypeLocked("");
+                            }
+                        }
+                    }
+                }
+
+                if (curIm == null) {
+                    // We currently don't have a default input method... is
+                    // one now available?
+                    changed = chooseNewDefaultIMELocked();
+                } else if (!changed && isPackageModified(curIm.getPackageName())) {
+                    // Even if the current input method is still available, mCurrentSubtype could
+                    // be obsolete when the package is modified in practice.
+                    changed = true;
+                }
+
+                if (changed) {
+                    updateFromSettingsLocked(false);
+                }
+            }

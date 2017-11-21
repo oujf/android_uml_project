@@ -1,0 +1,84 @@
+class PackageManagerHelper
+!!!12017797.java!!!	PackageManagerHelper()
+            mPackageManager = getPackageManager();
+            mPackageManagerInternal = LocalServices.getService(PackageManagerInternal.class);
+!!!12017925.java!!!	getPackageInfo(in packageName : String, in userId : int, in useCache : boolean) : PackageInfo
+            if (useCache) {
+                final PackageInfo cachedPi = getCachedPackageInfo(packageName, userId);
+                if (cachedPi != null) {
+                    return cachedPi;
+                }
+            }
+            try {
+                final PackageInfo pi = mPackageManager.getPackageInfo(packageName, 0, userId);
+                if (useCache && pi != null) {
+                    cachePackageInfo(packageName, userId, pi);
+                }
+                return pi;
+            } catch (RemoteException e) {
+                // Intentionally left empty.
+            }
+            return null;
+!!!12018053.java!!!	getPackageInfo(in packageName : String, in userId : int) : PackageInfo
+            return getPackageInfo(packageName, userId, true);
+!!!12018181.java!!!	signaturesMatching(in packageName1 : String, in packageName2 : String, in userId : int) : boolean
+            // The package manager does not support different versions of packages
+            // to be installed for different users: ignore userId for now.
+            try {
+                return mPackageManager.checkSignatures(
+                        packageName1, packageName2) == SIGNATURE_MATCH;
+            } catch (RemoteException e) {
+                // Intentionally left blank
+            }
+            return false;
+!!!12018309.java!!!	getOverlayPackages(in userId : int) : PackageInfo
+            return mPackageManagerInternal.getOverlayPackages(userId);
+!!!12018437.java!!!	getCachedPackageInfo(in packageName : String, in userId : int) : PackageInfo
+            final HashMap<String, PackageInfo> map = mCache.get(userId);
+            return map == null ? null : map.get(packageName);
+!!!12018565.java!!!	cachePackageInfo(in packageName : String, in userId : int, in pi : PackageInfo) : void
+            HashMap<String, PackageInfo> map = mCache.get(userId);
+            if (map == null) {
+                map = new HashMap<>();
+                mCache.put(userId, map);
+            }
+            map.put(packageName, pi);
+!!!12018693.java!!!	forgetPackageInfo(in packageName : String, in userId : int) : void
+            final HashMap<String, PackageInfo> map = mCache.get(userId);
+            if (map == null) {
+                return;
+            }
+            map.remove(packageName);
+            if (map.isEmpty()) {
+                mCache.delete(userId);
+            }
+!!!12018821.java!!!	forgetAllPackageInfos(in userId : int) : void
+            mCache.delete(userId);
+!!!12018949.java!!!	dump(in pw : PrintWriter, in verbose : boolean) : void
+            pw.println("PackageInfo cache");
+
+            if (!verbose) {
+                int count = 0;
+                final int N = mCache.size();
+                for (int i = 0; i < N; i++) {
+                    final int userId = mCache.keyAt(i);
+                    count += mCache.get(userId).size();
+                }
+                pw.println(TAB1 + count + " package(s)");
+                return;
+            }
+
+            if (mCache.size() == 0) {
+                pw.println(TAB1 + "<empty>");
+                return;
+            }
+
+            final int N = mCache.size();
+            for (int i = 0; i < N; i++) {
+                final int userId = mCache.keyAt(i);
+                pw.println(TAB1 + "User " + userId);
+                final HashMap<String, PackageInfo> map = mCache.get(userId);
+                for (Map.Entry<String, PackageInfo> entry : map.entrySet()) {
+                    pw.println(TAB2 + entry.getKey() + ": " + entry.getValue());
+                }
+            }

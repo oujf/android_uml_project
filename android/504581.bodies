@@ -1,0 +1,845 @@
+class GraphicBufferSource
+!!!1457669.cpp!!!	GraphicBufferSource()
+    ALOGV("GraphicBufferSource");
+
+    String8 name("GraphicBufferSource");
+
+    BufferQueue::createBufferQueue(&mProducer, &mConsumer);
+    mConsumer->setConsumerName(name);
+
+    // Note that we can't create an sp<...>(this) in a ctor that will not keep a
+    // reference once the ctor ends, as that would cause the refcount of 'this'
+    // dropping to 0 at the end of the ctor.  Since all we need is a wp<...>
+    // that's what we create.
+    wp<BufferQueue::ConsumerListener> listener =
+            static_cast<BufferQueue::ConsumerListener*>(this);
+    sp<IConsumerListener> proxy =
+            new BufferQueue::ProxyConsumerListener(listener);
+
+    mInitCheck = mConsumer->consumerConnect(proxy, false);
+    if (mInitCheck != NO_ERROR) {
+        ALOGE("Error connecting to BufferQueue: %s (%d)",
+                strerror(-mInitCheck), mInitCheck);
+        return;
+    }
+
+    memset(&mDefaultColorAspectsPacked, 0, sizeof(mDefaultColorAspectsPacked));
+
+    CHECK(mInitCheck == NO_ERROR);
+!!!1457797.cpp!!!	~GraphicBufferSource()
+    ALOGV("~GraphicBufferSource");
+    {
+        // all acquired buffers must be freed with the mutex locked otherwise our debug assertion
+        // may trigger
+        Mutex::Autolock autoLock(mMutex);
+        mAvailableBuffers.clear();
+        mSubmittedCodecBuffers.clear();
+        mLatestBuffer.mBuffer.reset();
+    }
+
+    if (mNumOutstandingAcquires != 0) {
+        ALOGW("potential buffer leak: acquired=%d", mNumOutstandingAcquires);
+        TRESPASS_DBG();
+    }
+    if (mConsumer != NULL) {
+        status_t err = mConsumer->consumerDisconnect();
+        if (err != NO_ERROR) {
+            ALOGW("consumerDisconnect failed: %d", err);
+        }
+    }
+!!!1458181.cpp!!!	onOmxExecuting() : Status
+    Mutex::Autolock autoLock(mMutex);
+    ALOGV("--> executing; available=%zu, submittable=%zd",
+            mAvailableBuffers.size(), mFreeCodecBuffers.size());
+    CHECK(!mExecuting);
+    mExecuting = true;
+    mLastDataspace = HAL_DATASPACE_UNKNOWN;
+    ALOGV("clearing last dataSpace");
+
+    // Start by loading up as many buffers as possible.  We want to do this,
+    // rather than just submit the first buffer, to avoid a degenerate case:
+    // if all BQ buffers arrive before we start executing, and we only submit
+    // one here, the other BQ buffers will just sit until we get notified
+    // that the codec buffer has been released.  We'd then acquire and
+    // submit a single additional buffer, repeatedly, never using more than
+    // one codec buffer simultaneously.  (We could instead try to submit
+    // all BQ buffers whenever any codec buffer is freed, but if we get the
+    // initial conditions right that will never be useful.)
+    while (haveAvailableBuffers_l()) {
+        if (!fillCodecBuffer_l()) {
+            ALOGV("stop load with available=%zu+%d",
+                    mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers);
+            break;
+        }
+    }
+
+    ALOGV("done loading initial frames, available=%zu+%d",
+            mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers);
+
+    // If EOS has already been signaled, and there are no more frames to
+    // submit, try to send EOS now as well.
+    if (mStopTimeUs == -1 && mEndOfStream && !haveAvailableBuffers_l()) {
+        submitEndOfInputStream_l();
+    }
+
+    if (mFrameRepeatIntervalUs > 0ll && mLooper == NULL) {
+        mReflector = new AHandlerReflector<GraphicBufferSource>(this);
+
+        mLooper = new ALooper;
+        mLooper->registerHandler(mReflector);
+        mLooper->start();
+
+        if (mLatestBuffer.mBuffer != nullptr) {
+            queueFrameRepeat_l();
+        }
+    }
+
+    return Status::ok();
+!!!1458309.cpp!!!	onOmxIdle() : Status
+    ALOGV("omxIdle");
+
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mExecuting) {
+        // We are only interested in the transition from executing->idle,
+        // not loaded->idle.
+        mExecuting = false;
+    }
+    return Status::ok();
+!!!1458437.cpp!!!	onOmxLoaded() : Status
+    Mutex::Autolock autoLock(mMutex);
+    if (mLooper != NULL) {
+        mLooper->unregisterHandler(mReflector->id());
+        mReflector.clear();
+
+        mLooper->stop();
+        mLooper.clear();
+    }
+
+    ALOGV("--> loaded; available=%zu+%d eos=%d eosSent=%d acquired=%d",
+            mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers,
+            mEndOfStream, mEndOfStreamSent, mNumOutstandingAcquires);
+
+    // Codec is no longer executing.  Releasing all buffers to bq.
+    mFreeCodecBuffers.clear();
+    mSubmittedCodecBuffers.clear();
+    mLatestBuffer.mBuffer.reset();
+    mOMXNode.clear();
+    mExecuting = false;
+
+    return Status::ok();
+!!!1458821.cpp!!!	configure(in omxNode : sp<IOmxNodeWrapper>, in dataSpace : int32_t, in bufferCount : int32_t, in frameWidth : uint32_t, in frameHeight : uint32_t, in consumerUsage : uint32_t) : status_t
+    if (omxNode == NULL) {
+        return BAD_VALUE;
+    }
+
+
+    // Call setMaxAcquiredBufferCount without lock.
+    // setMaxAcquiredBufferCount could call back to onBuffersReleased
+    // if the buffer count change results in releasing of existing buffers,
+    // which would lead to deadlock.
+    status_t err = mConsumer->setMaxAcquiredBufferCount(bufferCount);
+    if (err != NO_ERROR) {
+        ALOGE("Unable to set BQ max acquired buffer count to %u: %d",
+                bufferCount, err);
+        return err;
+    }
+
+    {
+        Mutex::Autolock autoLock(mMutex);
+        mOMXNode = omxNode;
+
+        err = mConsumer->setDefaultBufferSize(frameWidth, frameHeight);
+        if (err != NO_ERROR) {
+            ALOGE("Unable to set BQ default buffer size to %ux%u: %d",
+                    frameWidth, frameHeight, err);
+            return err;
+        }
+
+        consumerUsage |= GRALLOC_USAGE_HW_VIDEO_ENCODER;
+        mConsumer->setConsumerUsageBits(consumerUsage);
+
+        // Sets the default buffer data space
+        ALOGD("setting dataspace: %#x, acquired=%d", dataSpace, mNumOutstandingAcquires);
+        mConsumer->setDefaultBufferDataSpace((android_dataspace)dataSpace);
+        mLastDataspace = (android_dataspace)dataSpace;
+
+        mExecuting = false;
+        mSuspended = false;
+        mEndOfStream = false;
+        mEndOfStreamSent = false;
+        mSkipFramesBeforeNs = -1ll;
+        mFrameRepeatIntervalUs = -1ll;
+        mRepeatLastFrameGeneration = 0;
+        mOutstandingFrameRepeatCount = 0;
+        mLatestBuffer.mBuffer.reset();
+        mFrameRepeatBlockedOnCodecBuffer = false;
+        mFps = -1.0;
+        mCaptureFps = -1.0;
+        mBaseCaptureUs = -1ll;
+        mBaseFrameUs = -1ll;
+        mPrevCaptureUs = -1ll;
+        mPrevFrameUs = -1ll;
+        mFrameCount = 0;
+        mInputBufferTimeOffsetUs = 0;
+        mStopTimeUs = -1;
+        mActionQueue.clear();
+    }
+
+    return OK;
+!!!1458949.cpp!!!	signalEndOfInputStream() : status_t
+    Mutex::Autolock autoLock(mMutex);
+    ALOGV("signalEndOfInputStream: executing=%d available=%zu+%d eos=%d",
+            mExecuting, mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers, mEndOfStream);
+
+    if (mEndOfStream) {
+        ALOGE("EOS was already signaled");
+        return INVALID_OPERATION;
+    }
+
+    // Set the end-of-stream flag.  If no frames are pending from the
+    // BufferQueue, and a codec buffer is available, and we're executing,
+    // and there is no stop timestamp, we initiate the EOS from here.
+    // Otherwise, we'll let codecBufferEmptied() (or omxExecuting) do it.
+    //
+    // Note: if there are no pending frames and all codec buffers are
+    // available, we *must* submit the EOS from here or we'll just
+    // stall since no future events are expected.
+    mEndOfStream = true;
+
+    if (mStopTimeUs == -1 && mExecuting && !haveAvailableBuffers_l()) {
+        submitEndOfInputStream_l();
+    }
+
+    return OK;
+!!!1459077.cpp!!!	setSuspend(in suspend : bool, in suspendStartTimeUs : int64_t) : status_t
+    ALOGV("setSuspend=%d at time %lld us", suspend, (long long)suspendStartTimeUs);
+
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mStopTimeUs != -1) {
+        ALOGE("setSuspend failed as STOP action is pending");
+        return INVALID_OPERATION;
+    }
+
+    // Push the action to the queue.
+    if (suspendStartTimeUs != -1) {
+        // suspendStartTimeUs must be smaller or equal to current systemTime.
+        int64_t currentSystemTimeUs = systemTime() / 1000;
+        if (suspendStartTimeUs > currentSystemTimeUs) {
+            ALOGE("setSuspend failed. %lld is larger than current system time %lld us",
+                    (long long)suspendStartTimeUs, (long long)currentSystemTimeUs);
+            return INVALID_OPERATION;
+        }
+        if (mLastActionTimeUs != -1 && suspendStartTimeUs < mLastActionTimeUs) {
+            ALOGE("setSuspend failed. %lld is smaller than last action time %lld us",
+                    (long long)suspendStartTimeUs, (long long)mLastActionTimeUs);
+            return INVALID_OPERATION;
+        }
+        mLastActionTimeUs = suspendStartTimeUs;
+        ActionItem action;
+        action.mAction = suspend ? ActionItem::PAUSE : ActionItem::RESUME;
+        action.mActionTimeUs = suspendStartTimeUs;
+        ALOGV("Push %s action into actionQueue", suspend ? "PAUSE" : "RESUME");
+        mActionQueue.push_back(action);
+    } else {
+        if (suspend) {
+            mSuspended = true;
+            releaseAllAvailableBuffers_l();
+            return OK;
+        } else {
+            mSuspended = false;
+            if (mExecuting && !haveAvailableBuffers_l()
+                    && mFrameRepeatBlockedOnCodecBuffer) {
+                if (repeatLatestBuffer_l()) {
+                    ALOGV("suspend/deferred repeatLatestBuffer_l SUCCESS");
+                    mFrameRepeatBlockedOnCodecBuffer = false;
+                } else {
+                    ALOGV("suspend/deferred repeatLatestBuffer_l FAILURE");
+                }
+            }
+        }
+    }
+    return OK;
+!!!1459205.cpp!!!	setRepeatPreviousFrameDelayUs(in repeatAfterUs : int64_t) : status_t
+    ALOGV("setRepeatPreviousFrameDelayUs: delayUs=%lld", (long long)repeatAfterUs);
+
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mExecuting || repeatAfterUs <= 0ll) {
+        return INVALID_OPERATION;
+    }
+
+    mFrameRepeatIntervalUs = repeatAfterUs;
+    return OK;
+!!!1459333.cpp!!!	setTimeOffsetUs(in timeOffsetUs : int64_t) : status_t
+    Mutex::Autolock autoLock(mMutex);
+
+    // timeOffsetUs must be negative for adjustment.
+    if (timeOffsetUs >= 0ll) {
+        return INVALID_OPERATION;
+    }
+
+    mInputBufferTimeOffsetUs = timeOffsetUs;
+    return OK;
+!!!1459461.cpp!!!	setMaxFps(in maxFps : float) : status_t
+    ALOGV("setMaxFps: maxFps=%lld", (long long)maxFps);
+
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mExecuting) {
+        return INVALID_OPERATION;
+    }
+
+    mFrameDropper = new FrameDropper();
+    status_t err = mFrameDropper->setMaxFrameRate(maxFps);
+    if (err != OK) {
+        mFrameDropper.clear();
+        return err;
+    }
+
+    return OK;
+!!!1459589.cpp!!!	setTimeLapseConfig(in fps : double, in captureFps : double) : status_t
+    ALOGV("setTimeLapseConfig: fps=%lg, captureFps=%lg",
+            fps, captureFps);
+
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mExecuting || !(fps > 0) || !(captureFps > 0)) {
+        return INVALID_OPERATION;
+    }
+
+    mFps = fps;
+    mCaptureFps = captureFps;
+
+    return OK;
+!!!1459717.cpp!!!	setStartTimeUs(in skipFramesBeforeUs : int64_t) : status_t
+    ALOGV("setStartTimeUs: skipFramesBeforeUs=%lld", (long long)skipFramesBeforeUs);
+
+    Mutex::Autolock autoLock(mMutex);
+
+    mSkipFramesBeforeNs =
+            (skipFramesBeforeUs > 0) ? (skipFramesBeforeUs * 1000) : -1ll;
+
+    return OK;
+!!!1459845.cpp!!!	setStopTimeUs(in stopTimeUs : int64_t) : status_t
+    ALOGV("setStopTimeUs: %lld us", (long long)stopTimeUs);
+    Mutex::Autolock autoLock(mMutex);
+
+    if (mStopTimeUs != -1) {
+        // Ignore if stop time has already been set
+        return OK;
+    }
+
+    // stopTimeUs must be smaller or equal to current systemTime.
+    int64_t currentSystemTimeUs = systemTime() / 1000;
+    if (stopTimeUs > currentSystemTimeUs) {
+        ALOGE("setStopTimeUs failed. %lld is larger than current system time %lld us",
+            (long long)stopTimeUs, (long long)currentSystemTimeUs);
+        return INVALID_OPERATION;
+    }
+    if (mLastActionTimeUs != -1 && stopTimeUs < mLastActionTimeUs) {
+        ALOGE("setSuspend failed. %lld is smaller than last action time %lld us",
+            (long long)stopTimeUs, (long long)mLastActionTimeUs);
+        return INVALID_OPERATION;
+    }
+    mLastActionTimeUs = stopTimeUs;
+    ActionItem action;
+    action.mAction = ActionItem::STOP;
+    action.mActionTimeUs = stopTimeUs;
+    mActionQueue.push_back(action);
+    mStopTimeUs = stopTimeUs;
+    return OK;
+!!!1459973.cpp!!!	setColorAspects(in aspectsPacked : int32_t) : status_t
+    Mutex::Autolock autoLock(mMutex);
+    mDefaultColorAspectsPacked = aspectsPacked;
+    ColorAspects colorAspects = ColorUtils::unpackToColorAspects(aspectsPacked);
+    ALOGD("requesting color aspects (R:%d(%s), P:%d(%s), M:%d(%s), T:%d(%s))",
+            colorAspects.mRange, asString(colorAspects.mRange),
+            colorAspects.mPrimaries, asString(colorAspects.mPrimaries),
+            colorAspects.mMatrixCoeffs, asString(colorAspects.mMatrixCoeffs),
+            colorAspects.mTransfer, asString(colorAspects.mTransfer));
+
+    return OK;
+!!!1460229.cpp!!!	onBuffersReleased() : void
+    Mutex::Autolock lock(mMutex);
+
+    uint64_t slotMask;
+    if (mConsumer->getReleasedBuffers(&slotMask) != NO_ERROR) {
+        ALOGW("onBuffersReleased: unable to get released buffer set");
+        slotMask = 0xffffffffffffffffULL;
+    }
+
+    ALOGV("onBuffersReleased: 0x%016" PRIx64, slotMask);
+
+    for (int i = 0; i < BufferQueue::NUM_BUFFER_SLOTS; i++) {
+        if ((slotMask & 0x01) != 0) {
+            discardBufferInSlot_l(i);
+        }
+        slotMask >>= 1;
+    }
+!!!1460357.cpp!!!	onSidebandStreamChanged() : void
+    ALOG_ASSERT(false, "GraphicBufferSource can't consume sideband streams");
+!!!1460485.cpp!!!	acquireBuffer_l(inout ab : GraphicBufferSource::VideoBuffer) : status_t
+    BufferItem bi;
+    status_t err = mConsumer->acquireBuffer(&bi, 0);
+    if (err == BufferQueue::NO_BUFFER_AVAILABLE) {
+        // shouldn't happen
+        ALOGW("acquireBuffer_l: frame was not available");
+        return err;
+    } else if (err != OK) {
+        ALOGW("acquireBuffer_l: failed with err=%d", err);
+        return err;
+    }
+    --mNumAvailableUnacquiredBuffers;
+
+    // Manage our buffer cache.
+    std::shared_ptr<CachedBuffer> buffer;
+    ssize_t bsi = mBufferSlots.indexOfKey(bi.mSlot);
+    if (bi.mGraphicBuffer != NULL) {
+        // replace/initialize slot with new buffer
+        ALOGV("acquireBuffer_l: %s buffer slot %d", bsi < 0 ? "setting" : "UPDATING", bi.mSlot);
+        if (bsi >= 0) {
+            discardBufferAtSlotIndex_l(bsi);
+        } else {
+            bsi = mBufferSlots.add(bi.mSlot, nullptr);
+        }
+        buffer = std::make_shared<CachedBuffer>(bi.mSlot, bi.mGraphicBuffer);
+        mBufferSlots.replaceValueAt(bsi, buffer);
+    } else {
+        buffer = mBufferSlots.valueAt(bsi);
+    }
+    int64_t frameNum = bi.mFrameNumber;
+
+    std::shared_ptr<AcquiredBuffer> acquiredBuffer =
+        std::make_shared<AcquiredBuffer>(
+                buffer,
+                [frameNum, this](AcquiredBuffer *buffer){
+                    // AcquiredBuffer's destructor should always be called when mMutex is locked.
+                    // If we had a reentrant mutex, we could just lock it again to ensure this.
+                    if (mMutex.tryLock() == 0) {
+                        TRESPASS_DBG();
+                        mMutex.unlock();
+                    }
+
+                    // we can release buffers immediately if not using adapters
+                    // alternately, we could add them to mSlotsToRelease, but we would
+                    // somehow need to propagate frame number to that queue
+                    if (buffer->isCached()) {
+                        --mNumOutstandingAcquires;
+                        mConsumer->releaseBuffer(
+                                buffer->getSlot(), frameNum, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR,
+                                buffer->getReleaseFence());
+                    }
+                },
+                bi.mFence);
+    VideoBuffer videoBuffer{acquiredBuffer, bi.mTimestamp, bi.mDataSpace};
+    *ab = videoBuffer;
+    ++mNumOutstandingAcquires;
+    return OK;
+!!!1460613.cpp!!!	onBufferAcquired_l(in buffer : GraphicBufferSource::VideoBuffer) : void
+    if (mEndOfStreamSent) {
+        // This should only be possible if a new buffer was queued after
+        // EOS was signaled, i.e. the app is misbehaving.
+        ALOGW("onFrameAvailable: EOS is sent, ignoring frame");
+    } else if (mOMXNode == NULL || (mSuspended && mActionQueue.empty())) {
+        // FIXME: if we are suspended but have a resume queued we will stop repeating the last
+        // frame. Is that the desired behavior?
+        ALOGV("onFrameAvailable: suspended, ignoring frame");
+    } else {
+        ++mRepeatLastFrameGeneration; // cancel any pending frame repeat
+        mAvailableBuffers.push_back(buffer);
+        if (mExecuting) {
+            fillCodecBuffer_l();
+        }
+    }
+!!!1460741.cpp!!!	discardBufferInSlot_l(in i : GraphicBufferSource::slot_id) : void
+    ssize_t bsi = mBufferSlots.indexOfKey(i);
+    if (bsi < 0) {
+        ALOGW("releasing an unpopulated slot: %d", i);
+    } else {
+        discardBufferAtSlotIndex_l(bsi);
+        mBufferSlots.removeItemsAt(bsi);
+    }
+!!!1460869.cpp!!!	discardBufferAtSlotIndex_l(in bsi : ssize_t) : void
+    const std::shared_ptr<CachedBuffer>& buffer = mBufferSlots.valueAt(bsi);
+    // use -2 if there is no latest buffer, and -1 if it is no longer cached
+    slot_id latestBufferSlot =
+        mLatestBuffer.mBuffer == nullptr ? -2 : mLatestBuffer.mBuffer->getSlot();
+    ALOGV("releasing acquired buffer: [slot=%d, useCount=%ld], latest: [slot=%d]",
+            mBufferSlots.keyAt(bsi), buffer.use_count(), latestBufferSlot);
+    mBufferSlots.valueAt(bsi)->onDroppedFromCache();
+
+    // If the slot of an acquired buffer is discarded, that buffer will not have to be
+    // released to the producer, so account it here. However, it is possible that the
+    // acquired buffer has already been discarded so check if it still is.
+    if (buffer->isAcquired()) {
+        --mNumOutstandingAcquires;
+    }
+
+    // clear the buffer reference (not technically needed as caller either replaces or deletes
+    // it; done here for safety).
+    mBufferSlots.editValueAt(bsi).reset();
+    CHECK_DBG(buffer == nullptr);
+!!!1460997.cpp!!!	releaseAllAvailableBuffers_l() : void
+    mAvailableBuffers.clear();
+    while (mNumAvailableUnacquiredBuffers > 0) {
+        VideoBuffer item;
+        if (acquireBuffer_l(&item) != OK) {
+            ALOGW("releaseAllAvailableBuffers: failed to acquire available unacquired buffer");
+            break;
+        }
+    }
+!!!1461253.cpp!!!	fillCodecBuffer_l() : bool
+    CHECK(mExecuting && haveAvailableBuffers_l());
+
+    if (mFreeCodecBuffers.empty()) {
+        // No buffers available, bail.
+        ALOGV("fillCodecBuffer_l: no codec buffers, available=%zu+%d",
+                mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers);
+        return false;
+    }
+
+    VideoBuffer item;
+    if (mAvailableBuffers.empty()) {
+        ALOGV("fillCodecBuffer_l: acquiring available buffer, available=%zu+%d",
+                mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers);
+        if (acquireBuffer_l(&item) != OK) {
+            ALOGE("fillCodecBuffer_l: failed to acquire available buffer");
+            return false;
+        }
+    } else {
+        ALOGV("fillCodecBuffer_l: getting available buffer, available=%zu+%d",
+                mAvailableBuffers.size(), mNumAvailableUnacquiredBuffers);
+        item = *mAvailableBuffers.begin();
+        mAvailableBuffers.erase(mAvailableBuffers.begin());
+    }
+
+    int64_t itemTimeUs = item.mTimestampNs / 1000;
+
+    // Process ActionItem in the Queue if there is any. If a buffer's timestamp
+    // is smaller than the first action's timestamp, no action need to be performed.
+    // If buffer's timestamp is larger or equal than the last action's timestamp,
+    // only the last action needs to be performed as all the acitions before the
+    // the action are overridden by the last action. For the other cases, traverse
+    // the Queue to find the newest action that with timestamp smaller or equal to
+    // the buffer's timestamp. For example, an action queue like
+    // [pause 1us], [resume 2us], [pause 3us], [resume 4us], [pause 5us].... Upon
+    // receiving a buffer with timestamp 3.5us, only the action [pause, 3us] needs
+    // to be handled and [pause, 1us], [resume 2us] will be discarded.
+    bool done = false;
+    bool seeStopAction = false;
+    if (!mActionQueue.empty()) {
+        // First scan to check if bufferTimestamp is smaller than first action's timestamp.
+        ActionItem nextAction = *(mActionQueue.begin());
+        if (itemTimeUs < nextAction.mActionTimeUs) {
+            ALOGV("No action. buffer timestamp %lld us < action timestamp: %lld us",
+                (long long)itemTimeUs, (long long)nextAction.mActionTimeUs);
+            // All the actions are ahead. No action need to perform now.
+            // Release the buffer if is in suspended state, or process the buffer
+            // if not in suspended state.
+            done = true;
+        }
+
+        if (!done) {
+            // Find the newest action that with timestamp smaller than itemTimeUs. Then
+            // remove all the actions before and include the newest action.
+            List<ActionItem>::iterator it = mActionQueue.begin();
+            while (it != mActionQueue.end() && it->mActionTimeUs <= itemTimeUs
+                    && nextAction.mAction != ActionItem::STOP) {
+                nextAction = *it;
+                ++it;
+            }
+            mActionQueue.erase(mActionQueue.begin(), it);
+
+            CHECK(itemTimeUs >= nextAction.mActionTimeUs);
+            switch (nextAction.mAction) {
+                case ActionItem::PAUSE:
+                {
+                    mSuspended = true;
+                    ALOGV("RUNNING/PAUSE -> PAUSE at buffer %lld us  PAUSE Time: %lld us",
+                            (long long)itemTimeUs, (long long)nextAction.mActionTimeUs);
+                    break;
+                }
+                case ActionItem::RESUME:
+                {
+                    mSuspended = false;
+                    ALOGV("PAUSE/RUNNING -> RUNNING at buffer %lld us  RESUME Time: %lld us",
+                            (long long)itemTimeUs, (long long)nextAction.mActionTimeUs);
+                    break;
+                }
+                case ActionItem::STOP:
+                {
+                    ALOGV("RUNNING/PAUSE -> STOP at buffer %lld us  STOP Time: %lld us",
+                            (long long)itemTimeUs, (long long)nextAction.mActionTimeUs);
+                    // Clear the whole ActionQueue as recording is done
+                    mActionQueue.clear();
+                    seeStopAction = true;
+                    break;
+                }
+                default:
+                    TRESPASS_DBG("Unknown action type");
+                    // return true here because we did consume an available buffer, so the
+                    // loop in onOmxExecuting will eventually terminate even if we hit this.
+                    return false;
+            }
+        }
+    }
+
+    if (seeStopAction) {
+        // Clear all the buffers before setting mEndOfStream and signal EndOfInputStream.
+        releaseAllAvailableBuffers_l();
+        mEndOfStream = true;
+        submitEndOfInputStream_l();
+        return true;
+    }
+
+    if (mSuspended) {
+        return true;
+    }
+
+    int err = UNKNOWN_ERROR;
+
+    // only submit sample if start time is unspecified, or sample
+    // is queued after the specified start time
+    if (mSkipFramesBeforeNs < 0ll || item.mTimestampNs >= mSkipFramesBeforeNs) {
+        // if start time is set, offset time stamp by start time
+        if (mSkipFramesBeforeNs > 0) {
+            item.mTimestampNs -= mSkipFramesBeforeNs;
+        }
+
+        int64_t timeUs = item.mTimestampNs / 1000;
+        if (mFrameDropper != NULL && mFrameDropper->shouldDrop(timeUs)) {
+            ALOGV("skipping frame (%lld) to meet max framerate", static_cast<long long>(timeUs));
+            // set err to OK so that the skipped frame can still be saved as the lastest frame
+            err = OK;
+        } else {
+            err = submitBuffer_l(item); // this takes shared ownership of the acquired buffer on succeess
+        }
+    }
+
+    if (err != OK) {
+        ALOGV("submitBuffer_l failed, will release bq slot %d", item.mBuffer->getSlot());
+        return true;
+    } else {
+        // Don't set the last buffer id if we're not repeating,
+        // we'll be holding on to the last buffer for nothing.
+        if (mFrameRepeatIntervalUs > 0ll) {
+            setLatestBuffer_l(item);
+        }
+        ALOGV("buffer submitted [slot=%d, useCount=%ld] acquired=%d",
+                item.mBuffer->getSlot(), item.mBuffer.use_count(), mNumOutstandingAcquires);
+    }
+
+    return true;
+!!!1461381.cpp!!!	submitBuffer_l(in item : GraphicBufferSource::VideoBuffer) : status_t
+    CHECK(!mFreeCodecBuffers.empty());
+    IOMX::buffer_id codecBufferId = *mFreeCodecBuffers.begin();
+
+    ALOGV("submitBuffer_l [slot=%d, bufferId=%d]", item.mBuffer->getSlot(), codecBufferId);
+
+    int64_t codecTimeUs;
+    if (!calculateCodecTimestamp_l(item.mTimestampNs, &codecTimeUs)) {
+        return UNKNOWN_ERROR;
+    }
+
+    if ((android_dataspace)item.mDataspace != mLastDataspace) {
+        onDataspaceChanged_l(
+                item.mDataspace,
+                (android_pixel_format)item.mBuffer->getGraphicBuffer()->format);
+    }
+
+    std::shared_ptr<AcquiredBuffer> buffer = item.mBuffer;
+    // use a GraphicBuffer for now as OMXNodeInstance is using GraphicBuffers to hold references
+    // and it requires this graphic buffer to be able to hold its reference
+    // and thus we would need to create a new GraphicBuffer from an ANWBuffer separate from the
+    // acquired GraphicBuffer.
+    // TODO: this can be reworked globally to use ANWBuffer references
+    sp<GraphicBuffer> graphicBuffer = buffer->getGraphicBuffer();
+    status_t err = mOMXNode->emptyBuffer(
+            codecBufferId, OMX_BUFFERFLAG_ENDOFFRAME, graphicBuffer, codecTimeUs,
+            buffer->getAcquireFenceFd());
+
+    if (err != OK) {
+        ALOGW("WARNING: emptyGraphicBuffer failed: 0x%x", err);
+        return err;
+    }
+
+    mFreeCodecBuffers.erase(mFreeCodecBuffers.begin());
+
+    ssize_t cbix = mSubmittedCodecBuffers.add(codecBufferId, buffer);
+    ALOGV("emptyGraphicBuffer succeeded, bufferId=%u@%zd bufhandle=%p",
+            codecBufferId, cbix, graphicBuffer->handle);
+    return OK;
+!!!1461509.cpp!!!	submitEndOfInputStream_l() : void
+    CHECK(mEndOfStream);
+    if (mEndOfStreamSent) {
+        ALOGV("EOS already sent");
+        return;
+    }
+
+    if (mFreeCodecBuffers.empty()) {
+        ALOGV("submitEndOfInputStream_l: no codec buffers available");
+        return;
+    }
+    IOMX::buffer_id codecBufferId = *mFreeCodecBuffers.begin();
+
+    // We reject any additional incoming graphic buffers. There is no acquired buffer used for EOS
+    status_t err = mOMXNode->emptyBuffer(
+            codecBufferId, OMX_BUFFERFLAG_ENDOFFRAME | OMX_BUFFERFLAG_EOS);
+    if (err != OK) {
+        ALOGW("emptyDirectBuffer EOS failed: 0x%x", err);
+    } else {
+        mFreeCodecBuffers.erase(mFreeCodecBuffers.begin());
+        ssize_t cbix = mSubmittedCodecBuffers.add(codecBufferId, nullptr);
+        ALOGV("submitEndOfInputStream_l: buffer submitted, bufferId=%u@%zd", codecBufferId, cbix);
+        mEndOfStreamSent = true;
+
+        // no need to hold onto any buffers for frame repeating
+        ++mRepeatLastFrameGeneration;
+        mLatestBuffer.mBuffer.reset();
+    }
+!!!1461637.cpp!!!	onDataspaceChanged_l(in dataspace : android_dataspace, in pixelFormat : android_pixel_format) : void
+    ALOGD("got buffer with new dataSpace #%x", dataspace);
+    mLastDataspace = dataspace;
+
+    if (ColorUtils::convertDataSpaceToV0(dataspace)) {
+        mOMXNode->dispatchDataSpaceChanged(mLastDataspace, mDefaultColorAspectsPacked, pixelFormat);
+    }
+!!!1461765.cpp!!!	areWeDiscardingAvailableBuffers_l() : bool
+    return mEndOfStreamSent // already sent EOS to codec
+            || mOMXNode == nullptr // there is no codec connected
+            || (mSuspended && mActionQueue.empty()) // we are suspended and not waiting for
+                                                    // any further action
+            || !mExecuting;
+!!!1461893.cpp!!!	queueFrameRepeat_l() : void
+    mFrameRepeatBlockedOnCodecBuffer = false;
+
+    if (mReflector != NULL) {
+        sp<AMessage> msg = new AMessage(kWhatRepeatLastFrame, mReflector);
+        msg->setInt32("generation", ++mRepeatLastFrameGeneration);
+        msg->post(mFrameRepeatIntervalUs);
+    }
+!!!1462021.cpp!!!	setLatestBuffer_l(in item : GraphicBufferSource::VideoBuffer) : void
+    mLatestBuffer = item;
+
+    ALOGV("setLatestBuffer_l: [slot=%d, useCount=%ld]",
+            mLatestBuffer.mBuffer->getSlot(), mLatestBuffer.mBuffer.use_count());
+
+    mOutstandingFrameRepeatCount = kRepeatLastFrameCount;
+    // set up timestamp for repeat frame
+    mLatestBuffer.mTimestampNs += mFrameRepeatIntervalUs * 1000;
+    queueFrameRepeat_l();
+!!!1462149.cpp!!!	repeatLatestBuffer_l() : bool
+    CHECK(mExecuting && !haveAvailableBuffers_l());
+
+    if (mLatestBuffer.mBuffer == nullptr || mSuspended) {
+        return false;
+    }
+
+    if (mFreeCodecBuffers.empty()) {
+        // No buffers available, bail.
+        ALOGV("repeatLatestBuffer_l: no codec buffers.");
+        return false;
+    }
+
+    if (!mLatestBuffer.mBuffer->isCached()) {
+        ALOGV("repeatLatestBuffer_l: slot was discarded, but repeating our own reference");
+    }
+
+    // it is ok to update the timestamp of latest buffer as it is only used for submission
+    status_t err = submitBuffer_l(mLatestBuffer);
+    if (err != OK) {
+        return false;
+    }
+
+    /* repeat last frame up to kRepeatLastFrameCount times.
+     * in case of static scene, a single repeat might not get rid of encoder
+     * ghosting completely, refresh a couple more times to get better quality
+     */
+    if (--mOutstandingFrameRepeatCount > 0) {
+        // set up timestamp for repeat frame
+        mLatestBuffer.mTimestampNs += mFrameRepeatIntervalUs * 1000;
+        queueFrameRepeat_l();
+    }
+
+    return true;
+!!!1462277.cpp!!!	calculateCodecTimestamp_l(in bufferTimeNs : nsecs_t, inout codecTimeUs : int64_t) : bool
+    int64_t timeUs = bufferTimeNs / 1000;
+    timeUs += mInputBufferTimeOffsetUs;
+
+    if (mCaptureFps > 0.
+            && (mFps > 2 * mCaptureFps
+            || mCaptureFps > 2 * mFps)) {
+        // Time lapse or slow motion mode
+        if (mPrevCaptureUs < 0ll) {
+            // first capture
+            mPrevCaptureUs = mBaseCaptureUs = timeUs;
+            // adjust the first sample timestamp.
+            mPrevFrameUs = mBaseFrameUs =
+                    std::llround((timeUs * mCaptureFps) / mFps);
+            mFrameCount = 0;
+        } else {
+            // snap to nearest capture point
+            int64_t nFrames = std::llround(
+                    (timeUs - mPrevCaptureUs) * mCaptureFps);
+            if (nFrames <= 0) {
+                // skip this frame as it's too close to previous capture
+                ALOGV("skipping frame, timeUs %lld", static_cast<long long>(timeUs));
+                return false;
+            }
+            mFrameCount += nFrames;
+            mPrevCaptureUs = mBaseCaptureUs + std::llround(
+                    mFrameCount / mCaptureFps);
+            mPrevFrameUs = mBaseFrameUs + std::llround(
+                    mFrameCount / mFps);
+        }
+
+        ALOGV("timeUs %lld, captureUs %lld, frameUs %lld",
+                static_cast<long long>(timeUs),
+                static_cast<long long>(mPrevCaptureUs),
+                static_cast<long long>(mPrevFrameUs));
+    } else {
+        if (timeUs <= mPrevFrameUs) {
+            // Drop the frame if it's going backward in time. Bad timestamp
+            // could disrupt encoder's rate control completely.
+            ALOGW("Dropping frame that's going backward in time");
+            return false;
+        }
+
+        mPrevFrameUs = timeUs;
+    }
+
+    *codecTimeUs = mPrevFrameUs;
+    return true;
+!!!1462405.cpp!!!	onMessageReceived(in msg : sp<AMessage>) : void
+    switch (msg->what()) {
+        case kWhatRepeatLastFrame:
+        {
+            Mutex::Autolock autoLock(mMutex);
+
+            int32_t generation;
+            CHECK(msg->findInt32("generation", &generation));
+
+            if (generation != mRepeatLastFrameGeneration) {
+                // stale
+                break;
+            }
+
+            if (!mExecuting || haveAvailableBuffers_l()) {
+                break;
+            }
+
+            bool success = repeatLatestBuffer_l();
+            if (success) {
+                ALOGV("repeatLatestBuffer_l SUCCESS");
+            } else {
+                ALOGV("repeatLatestBuffer_l FAILURE");
+                mFrameRepeatBlockedOnCodecBuffer = true;
+            }
+            break;
+        }
+
+        default:
+            TRESPASS();
+    }

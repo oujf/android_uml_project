@@ -1,0 +1,476 @@
+class DocumentsProvider
+!!!7889797.java!!!	attachInfo(inout context : Context, inout info : ProviderInfo) : void
+        registerAuthority(info.authority);
+
+        // Sanity check our setup
+        if (!info.exported) {
+            throw new SecurityException("Provider must be exported");
+        }
+        if (!info.grantUriPermissions) {
+            throw new SecurityException("Provider must grantUriPermissions");
+        }
+        if (!android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.readPermission)
+                || !android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.writePermission)) {
+            throw new SecurityException("Provider must be protected by MANAGE_DOCUMENTS");
+        }
+
+        super.attachInfo(context, info);
+!!!7889925.java!!!	attachInfoForTesting(inout context : Context, inout info : ProviderInfo) : void
+        registerAuthority(info.authority);
+
+        super.attachInfoForTesting(context, info);
+!!!7890053.java!!!	registerAuthority(in authority : String) : void
+        mAuthority = authority;
+
+        mMatcher = new UriMatcher(UriMatcher.NO_MATCH);
+        mMatcher.addURI(mAuthority, "root", MATCH_ROOTS);
+        mMatcher.addURI(mAuthority, "root/*", MATCH_ROOT);
+        mMatcher.addURI(mAuthority, "root/*/recent", MATCH_RECENT);
+        mMatcher.addURI(mAuthority, "root/*/search", MATCH_SEARCH);
+        mMatcher.addURI(mAuthority, "document/*", MATCH_DOCUMENT);
+        mMatcher.addURI(mAuthority, "document/*/children", MATCH_CHILDREN);
+        mMatcher.addURI(mAuthority, "tree/*/document/*", MATCH_DOCUMENT_TREE);
+        mMatcher.addURI(mAuthority, "tree/*/document/*/children", MATCH_CHILDREN_TREE);
+!!!7890181.java!!!	isChildDocument(in parentDocumentId : String, in documentId : String) : boolean
+        return false;
+!!!7890309.java!!!	enforceTree(inout documentUri : Uri) : void
+        if (isTreeUri(documentUri)) {
+            final String parent = getTreeDocumentId(documentUri);
+            final String child = getDocumentId(documentUri);
+            if (Objects.equals(parent, child)) {
+                return;
+            }
+            if (!isChildDocument(parent, child)) {
+                throw new SecurityException(
+                        "Document " + child + " is not a descendant of " + parent);
+            }
+        }
+!!!7890437.java!!!	createDocument(in parentDocumentId : String, in mimeType : String, in displayName : String) : String
+        throw new UnsupportedOperationException("Create not supported");
+!!!7890565.java!!!	renameDocument(in documentId : String, in displayName : String) : String
+        throw new UnsupportedOperationException("Rename not supported");
+!!!7890693.java!!!	deleteDocument(in documentId : String) : void
+        throw new UnsupportedOperationException("Delete not supported");
+!!!7890821.java!!!	copyDocument(in sourceDocumentId : String, in targetParentDocumentId : String) : String
+        throw new UnsupportedOperationException("Copy not supported");
+!!!7890949.java!!!	moveDocument(in sourceDocumentId : String, in sourceParentDocumentId : String, in targetParentDocumentId : String) : String
+        throw new UnsupportedOperationException("Move not supported");
+!!!7891077.java!!!	removeDocument(in documentId : String, in parentDocumentId : String) : void
+        throw new UnsupportedOperationException("Remove not supported");
+!!!7891205.java!!!	findDocumentPath(in parentDocumentId : String, in childDocumentId : String) : DocumentsContract::Path
+        throw new UnsupportedOperationException("findDocumentPath not supported.");
+!!!7891333.java!!!	createWebLinkIntent(in documentId : String, inout options : Bundle) : IntentSender
+        throw new UnsupportedOperationException("createWebLink is not supported.");
+!!!7891589.java!!!	queryRecentDocuments(in rootId : String, inout projection : String [[]]) : Cursor
+        throw new UnsupportedOperationException("Recent not supported");
+!!!7891973.java!!!	queryChildDocuments(in parentDocumentId : String, inout projection : String [[]], inout queryArgs : Bundle) : Cursor
+
+        return queryChildDocuments(
+                parentDocumentId, projection, getSortClause(queryArgs));
+!!!7892101.java!!!	queryChildDocumentsForManage(in parentDocumentId : String, inout projection : String [[]], in sortOrder : String) : Cursor
+        throw new UnsupportedOperationException("Manage not supported");
+!!!7892229.java!!!	querySearchDocuments(in rootId : String, in query : String, inout projection : String [[]]) : Cursor
+        throw new UnsupportedOperationException("Search not supported");
+!!!7892357.java!!!	ejectRoot(in rootId : String) : void
+        throw new UnsupportedOperationException("Eject not supported");
+!!!7892485.java!!!	getDocumentType(in documentId : String) : String
+        final Cursor cursor = queryDocument(documentId, null);
+        try {
+            if (cursor.moveToFirst()) {
+                return cursor.getString(cursor.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE));
+            } else {
+                return null;
+            }
+        } finally {
+            IoUtils.closeQuietly(cursor);
+        }
+!!!7892741.java!!!	openDocumentThumbnail(in documentId : String, inout sizeHint : Point, inout signal : CancellationSignal) : AssetFileDescriptor
+        throw new UnsupportedOperationException("Thumbnails not supported");
+!!!7892869.java!!!	openTypedDocument(in documentId : String, in mimeTypeFilter : String, inout opts : Bundle, inout signal : CancellationSignal) : AssetFileDescriptor
+        throw new FileNotFoundException("The requested MIME type is not supported.");
+!!!7892997.java!!!	query(inout uri : Uri, inout projection : String [[]], in selection : String, inout selectionArgs : String [[]], in sortOrder : String) : Cursor
+        // As of Android-O, ContentProvider#query (w/ bundle arg) is the primary
+        // transport method. We override that, and don't ever delegate to this method.
+        throw new UnsupportedOperationException("Pre-Android-O query format not supported.");
+!!!7893125.java!!!	query(inout uri : Uri, inout projection : String [[]], in selection : String, inout selectionArgs : String [[]], in sortOrder : String, inout cancellationSignal : CancellationSignal) : Cursor
+        // As of Android-O, ContentProvider#query (w/ bundle arg) is the primary
+        // transport method. We override that, and don't ever delegate to this metohd.
+        throw new UnsupportedOperationException("Pre-Android-O query format not supported.");
+!!!7893253.java!!!	query(inout uri : Uri, inout projection : String [[]], inout queryArgs : Bundle, inout cancellationSignal : CancellationSignal) : Cursor
+        try {
+            switch (mMatcher.match(uri)) {
+                case MATCH_ROOTS:
+                    return queryRoots(projection);
+                case MATCH_RECENT:
+                    return queryRecentDocuments(getRootId(uri), projection);
+                case MATCH_SEARCH:
+                    return querySearchDocuments(
+                            getRootId(uri), getSearchDocumentsQuery(uri), projection);
+                case MATCH_DOCUMENT:
+                case MATCH_DOCUMENT_TREE:
+                    enforceTree(uri);
+                    return queryDocument(getDocumentId(uri), projection);
+                case MATCH_CHILDREN:
+                case MATCH_CHILDREN_TREE:
+                    enforceTree(uri);
+                    if (DocumentsContract.isManageMode(uri)) {
+                        // TODO: Update "ForManage" variant to support query args.
+                        return queryChildDocumentsForManage(
+                                getDocumentId(uri),
+                                projection,
+                                getSortClause(queryArgs));
+                    } else {
+                        return queryChildDocuments(getDocumentId(uri), projection, queryArgs);
+                    }
+                default:
+                    throw new UnsupportedOperationException("Unsupported Uri " + uri);
+            }
+        } catch (FileNotFoundException e) {
+            Log.w(TAG, "Failed during query", e);
+            return null;
+        }
+!!!7893381.java!!!	getSortClause(inout queryArgs : Bundle) : String
+        queryArgs = queryArgs != null ? queryArgs : Bundle.EMPTY;
+        String sortClause = queryArgs.getString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER);
+
+        if (sortClause == null && queryArgs.containsKey(ContentResolver.QUERY_ARG_SORT_COLUMNS)) {
+            sortClause = ContentResolver.createSqlSortClause(queryArgs);
+        }
+
+        return sortClause;
+!!!7893509.java!!!	getType(inout uri : Uri) : String
+        try {
+            switch (mMatcher.match(uri)) {
+                case MATCH_ROOT:
+                    return DocumentsContract.Root.MIME_TYPE_ITEM;
+                case MATCH_DOCUMENT:
+                case MATCH_DOCUMENT_TREE:
+                    enforceTree(uri);
+                    return getDocumentType(getDocumentId(uri));
+                default:
+                    return null;
+            }
+        } catch (FileNotFoundException e) {
+            Log.w(TAG, "Failed during getType", e);
+            return null;
+        }
+!!!7893637.java!!!	canonicalize(inout uri : Uri) : Uri
+        final Context context = getContext();
+        switch (mMatcher.match(uri)) {
+            case MATCH_DOCUMENT_TREE:
+                enforceTree(uri);
+
+                final Uri narrowUri = buildDocumentUri(uri.getAuthority(), getDocumentId(uri));
+
+                // Caller may only have prefix grant, so extend them a grant to
+                // the narrow URI.
+                final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context, uri);
+                context.grantUriPermission(getCallingPackage(), narrowUri, modeFlags);
+                return narrowUri;
+        }
+        return null;
+!!!7893765.java!!!	getCallingOrSelfUriPermissionModeFlags(inout context : Context, inout uri : Uri) : int
+        // TODO: move this to a direct AMS call
+        int modeFlags = 0;
+        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                == PackageManager.PERMISSION_GRANTED) {
+            modeFlags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
+        }
+        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                == PackageManager.PERMISSION_GRANTED) {
+            modeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+        }
+        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                == PackageManager.PERMISSION_GRANTED) {
+            modeFlags |= Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
+        }
+        return modeFlags;
+!!!7893893.java!!!	insert(inout uri : Uri, inout values : ContentValues) : Uri
+        throw new UnsupportedOperationException("Insert not supported");
+!!!7894021.java!!!	delete(inout uri : Uri, in selection : String, inout selectionArgs : String [[]]) : int
+        throw new UnsupportedOperationException("Delete not supported");
+!!!7894149.java!!!	update(inout uri : Uri, inout values : ContentValues, in selection : String, inout selectionArgs : String [[]]) : int
+        throw new UnsupportedOperationException("Update not supported");
+!!!7894277.java!!!	call(in method : String, in arg : String, inout extras : Bundle) : Bundle
+        if (!method.startsWith("android:")) {
+            // Ignore non-platform methods
+            return super.call(method, arg, extras);
+        }
+
+        try {
+            return callUnchecked(method, arg, extras);
+        } catch (FileNotFoundException e) {
+            throw new ParcelableException(e);
+        }
+!!!7894405.java!!!	callUnchecked(in method : String, in arg : String, inout extras : Bundle) : Bundle
+
+        final Context context = getContext();
+        final Bundle out = new Bundle();
+
+        if (METHOD_EJECT_ROOT.equals(method)) {
+            // Given that certain system apps can hold MOUNT_UNMOUNT permission, but only apps
+            // signed with platform signature can hold MANAGE_DOCUMENTS, we are going to check for
+            // MANAGE_DOCUMENTS or associated URI permission here instead
+            final Uri rootUri = extras.getParcelable(DocumentsContract.EXTRA_URI);
+            enforceWritePermissionInner(rootUri, getCallingPackage(), null);
+
+            final String rootId = DocumentsContract.getRootId(rootUri);
+            ejectRoot(rootId);
+
+            return out;
+        }
+
+        final Uri documentUri = extras.getParcelable(DocumentsContract.EXTRA_URI);
+        final String authority = documentUri.getAuthority();
+        final String documentId = DocumentsContract.getDocumentId(documentUri);
+
+        if (!mAuthority.equals(authority)) {
+            throw new SecurityException(
+                    "Requested authority " + authority + " doesn't match provider " + mAuthority);
+        }
+
+        // If the URI is a tree URI performs some validation.
+        enforceTree(documentUri);
+
+        if (METHOD_IS_CHILD_DOCUMENT.equals(method)) {
+            enforceReadPermissionInner(documentUri, getCallingPackage(), null);
+
+            final Uri childUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+            final String childAuthority = childUri.getAuthority();
+            final String childId = DocumentsContract.getDocumentId(childUri);
+
+            out.putBoolean(
+                    DocumentsContract.EXTRA_RESULT,
+                    mAuthority.equals(childAuthority)
+                            && isChildDocument(documentId, childId));
+
+        } else if (METHOD_CREATE_DOCUMENT.equals(method)) {
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+
+            final String mimeType = extras.getString(Document.COLUMN_MIME_TYPE);
+            final String displayName = extras.getString(Document.COLUMN_DISPLAY_NAME);
+            final String newDocumentId = createDocument(documentId, mimeType, displayName);
+
+            // No need to issue new grants here, since caller either has
+            // manage permission or a prefix grant. We might generate a
+            // tree style URI if that's how they called us.
+            final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
+                    newDocumentId);
+            out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
+
+        } else if (METHOD_CREATE_WEB_LINK_INTENT.equals(method)) {
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+
+            final Bundle options = extras.getBundle(DocumentsContract.EXTRA_OPTIONS);
+            final IntentSender intentSender = createWebLinkIntent(documentId, options);
+
+            out.putParcelable(DocumentsContract.EXTRA_RESULT, intentSender);
+
+        } else if (METHOD_RENAME_DOCUMENT.equals(method)) {
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+
+            final String displayName = extras.getString(Document.COLUMN_DISPLAY_NAME);
+            final String newDocumentId = renameDocument(documentId, displayName);
+
+            if (newDocumentId != null) {
+                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
+                        newDocumentId);
+
+                // If caller came in with a narrow grant, issue them a
+                // narrow grant for the newly renamed document.
+                if (!isTreeUri(newDocumentUri)) {
+                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
+                            documentUri);
+                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
+                }
+
+                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
+
+                // Original document no longer exists, clean up any grants.
+                revokeDocumentPermission(documentId);
+            }
+
+        } else if (METHOD_DELETE_DOCUMENT.equals(method)) {
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+            deleteDocument(documentId);
+
+            // Document no longer exists, clean up any grants.
+            revokeDocumentPermission(documentId);
+
+        } else if (METHOD_COPY_DOCUMENT.equals(method)) {
+            final Uri targetUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+            final String targetId = DocumentsContract.getDocumentId(targetUri);
+
+            enforceReadPermissionInner(documentUri, getCallingPackage(), null);
+            enforceWritePermissionInner(targetUri, getCallingPackage(), null);
+
+            final String newDocumentId = copyDocument(documentId, targetId);
+
+            if (newDocumentId != null) {
+                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
+                        newDocumentId);
+
+                if (!isTreeUri(newDocumentUri)) {
+                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
+                            documentUri);
+                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
+                }
+
+                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
+            }
+
+        } else if (METHOD_MOVE_DOCUMENT.equals(method)) {
+            final Uri parentSourceUri = extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
+            final String parentSourceId = DocumentsContract.getDocumentId(parentSourceUri);
+            final Uri targetUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+            final String targetId = DocumentsContract.getDocumentId(targetUri);
+
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+            enforceReadPermissionInner(parentSourceUri, getCallingPackage(), null);
+            enforceWritePermissionInner(targetUri, getCallingPackage(), null);
+
+            final String newDocumentId = moveDocument(documentId, parentSourceId, targetId);
+
+            if (newDocumentId != null) {
+                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
+                        newDocumentId);
+
+                if (!isTreeUri(newDocumentUri)) {
+                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
+                            documentUri);
+                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
+                }
+
+                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
+            }
+
+        } else if (METHOD_REMOVE_DOCUMENT.equals(method)) {
+            final Uri parentSourceUri = extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
+            final String parentSourceId = DocumentsContract.getDocumentId(parentSourceUri);
+
+            enforceReadPermissionInner(parentSourceUri, getCallingPackage(), null);
+            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
+            removeDocument(documentId, parentSourceId);
+
+            // It's responsibility of the provider to revoke any grants, as the document may be
+            // still attached to another parents.
+        } else if (METHOD_FIND_DOCUMENT_PATH.equals(method)) {
+            final boolean isTreeUri = isTreeUri(documentUri);
+
+            if (isTreeUri) {
+                enforceReadPermissionInner(documentUri, getCallingPackage(), null);
+            } else {
+                getContext().enforceCallingPermission(Manifest.permission.MANAGE_DOCUMENTS, null);
+            }
+
+            final String parentDocumentId = isTreeUri
+                    ? DocumentsContract.getTreeDocumentId(documentUri)
+                    : null;
+
+            Path path = findDocumentPath(parentDocumentId, documentId);
+
+            // Ensure provider doesn't leak information to unprivileged callers.
+            if (isTreeUri) {
+                if (!Objects.equals(path.getPath().get(0), parentDocumentId)) {
+                    Log.wtf(TAG, "Provider doesn't return path from the tree root. Expected: "
+                            + parentDocumentId + " found: " + path.getPath().get(0));
+
+                    LinkedList<String> docs = new LinkedList<>(path.getPath());
+                    while (docs.size() > 1 && !Objects.equals(docs.getFirst(), parentDocumentId)) {
+                        docs.removeFirst();
+                    }
+                    path = new Path(null, docs);
+                }
+
+                if (path.getRootId() != null) {
+                    Log.wtf(TAG, "Provider returns root id :"
+                            + path.getRootId() + " unexpectedly. Erase root id.");
+                    path = new Path(null, path.getPath());
+                }
+            }
+
+            out.putParcelable(DocumentsContract.EXTRA_RESULT, path);
+        } else {
+            throw new UnsupportedOperationException("Method not supported " + method);
+        }
+
+        return out;
+!!!7894533.java!!!	revokeDocumentPermission(in documentId : String) : void
+        final Context context = getContext();
+        context.revokeUriPermission(buildDocumentUri(mAuthority, documentId), ~0);
+        context.revokeUriPermission(buildTreeDocumentUri(mAuthority, documentId), ~0);
+!!!7894661.java!!!	openFile(inout uri : Uri, in mode : String) : ParcelFileDescriptor
+        enforceTree(uri);
+        return openDocument(getDocumentId(uri), mode, null);
+!!!7894789.java!!!	openFile(inout uri : Uri, in mode : String, inout signal : CancellationSignal) : ParcelFileDescriptor
+        enforceTree(uri);
+        return openDocument(getDocumentId(uri), mode, signal);
+!!!7894917.java!!!	openAssetFile(inout uri : Uri, in mode : String) : AssetFileDescriptor
+        enforceTree(uri);
+        final ParcelFileDescriptor fd = openDocument(getDocumentId(uri), mode, null);
+        return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
+!!!7895045.java!!!	openAssetFile(inout uri : Uri, in mode : String, inout signal : CancellationSignal) : AssetFileDescriptor
+        enforceTree(uri);
+        final ParcelFileDescriptor fd = openDocument(getDocumentId(uri), mode, signal);
+        return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
+!!!7895173.java!!!	openTypedAssetFile(inout uri : Uri, in mimeTypeFilter : String, inout opts : Bundle) : AssetFileDescriptor
+        return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, null);
+!!!7895301.java!!!	openTypedAssetFile(inout uri : Uri, in mimeTypeFilter : String, inout opts : Bundle, inout signal : CancellationSignal) : AssetFileDescriptor
+        return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, signal);
+!!!7895429.java!!!	getDocumentStreamTypes(in documentId : String, in mimeTypeFilter : String) : String
+        Cursor cursor = null;
+        try {
+            cursor = queryDocument(documentId, null);
+            if (cursor.moveToFirst()) {
+                final String mimeType =
+                    cursor.getString(cursor.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE));
+                final long flags =
+                    cursor.getLong(cursor.getColumnIndexOrThrow(Document.COLUMN_FLAGS));
+                if ((flags & Document.FLAG_VIRTUAL_DOCUMENT) == 0 && mimeType != null &&
+                        mimeTypeMatches(mimeTypeFilter, mimeType)) {
+                    return new String[] { mimeType };
+                }
+            }
+        } catch (FileNotFoundException e) {
+            return null;
+        } finally {
+            IoUtils.closeQuietly(cursor);
+        }
+
+        // No streamable MIME types.
+        return null;
+!!!7895557.java!!!	getStreamTypes(inout uri : Uri, in mimeTypeFilter : String) : String
+        enforceTree(uri);
+        return getDocumentStreamTypes(getDocumentId(uri), mimeTypeFilter);
+!!!7895685.java!!!	openTypedAssetFileImpl(inout uri : Uri, in mimeTypeFilter : String, inout opts : Bundle, inout signal : CancellationSignal) : AssetFileDescriptor
+        enforceTree(uri);
+        final String documentId = getDocumentId(uri);
+        if (opts != null && opts.containsKey(ContentResolver.EXTRA_SIZE)) {
+            final Point sizeHint = opts.getParcelable(ContentResolver.EXTRA_SIZE);
+            return openDocumentThumbnail(documentId, sizeHint, signal);
+        }
+        if ("*/*".equals(mimeTypeFilter)) {
+             // If they can take anything, the untyped open call is good enough.
+             return openAssetFile(uri, "r");
+        }
+        final String baseType = getType(uri);
+        if (baseType != null && ClipDescription.compareMimeTypes(baseType, mimeTypeFilter)) {
+            // Use old untyped open call if this provider has a type for this
+            // URI and it matches the request.
+            return openAssetFile(uri, "r");
+        }
+        // For any other yet unhandled case, let the provider subclass handle it.
+        return openTypedDocument(documentId, mimeTypeFilter, opts, signal);
+!!!7895813.java!!!	mimeTypeMatches(in filter : String, in test : String) : boolean
+        if (test == null) {
+            return false;
+        } else if (filter == null || "*/*".equals(filter)) {
+            return true;
+        } else if (filter.equals(test)) {
+            return true;
+        } else if (filter.endsWith("/*")) {
+            return filter.regionMatches(0, test, 0, filter.indexOf('/'));
+        } else {
+            return false;
+        }

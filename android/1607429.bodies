@@ -1,0 +1,97 @@
+class LockSettingsShellCommand
+!!!10745989.java!!!	LockSettingsShellCommand(inout context : Context, inout lockPatternUtils : LockPatternUtils)
+        mContext = context;
+        mLockPatternUtils = lockPatternUtils;
+!!!10746117.java!!!	onCommand(in cmd : String) : int
+        try {
+            mCurrentUserId = ActivityManager.getService().getCurrentUser().id;
+
+            parseArgs();
+            if (!checkCredential()) {
+                return -1;
+            }
+            switch (cmd) {
+                case COMMAND_SET_PATTERN:
+                    runSetPattern();
+                    break;
+                case COMMAND_SET_PASSWORD:
+                    runSetPassword();
+                    break;
+                case COMMAND_SET_PIN:
+                    runSetPin();
+                    break;
+                case COMMAND_CLEAR:
+                    runClear();
+                    break;
+                case COMMAND_SP:
+                    runEnableSp();
+                    break;
+                case COMMAND_SET_DISABLED:
+                    runSetDisabled();
+                    break;
+                default:
+                    getErrPrintWriter().println("Unknown command: " + cmd);
+                    break;
+            }
+            return 0;
+        } catch (Exception e) {
+            getErrPrintWriter().println("Error while executing command: " + cmd);
+            e.printStackTrace(getErrPrintWriter());
+            return -1;
+        }
+!!!10746373.java!!!	parseArgs() : void
+        String opt;
+        while ((opt = getNextOption()) != null) {
+            if ("--old".equals(opt)) {
+                mOld = getNextArgRequired();
+            } else if ("--user".equals(opt)) {
+                mCurrentUserId = Integer.parseInt(getNextArgRequired());
+            } else {
+                getErrPrintWriter().println("Unknown option: " + opt);
+                throw new IllegalArgumentException();
+            }
+        }
+        mNew = getNextArg();
+!!!10746501.java!!!	runEnableSp() : void
+        if (mNew != null) {
+            mLockPatternUtils.enableSyntheticPassword();
+            getOutPrintWriter().println("Synthetic password enabled");
+        }
+        getOutPrintWriter().println(String.format("SP Enabled = %b",
+                mLockPatternUtils.isSyntheticPasswordEnabled()));
+!!!10746629.java!!!	runSetPattern() : void
+        mLockPatternUtils.saveLockPattern(stringToPattern(mNew), mOld, mCurrentUserId);
+        getOutPrintWriter().println("Pattern set to '" + mNew + "'");
+!!!10746757.java!!!	runSetPassword() : void
+        mLockPatternUtils.saveLockPassword(mNew, mOld, PASSWORD_QUALITY_ALPHABETIC, mCurrentUserId);
+        getOutPrintWriter().println("Password set to '" + mNew + "'");
+!!!10746885.java!!!	runSetPin() : void
+        mLockPatternUtils.saveLockPassword(mNew, mOld, PASSWORD_QUALITY_NUMERIC, mCurrentUserId);
+        getOutPrintWriter().println("Pin set to '" + mNew + "'");
+!!!10747013.java!!!	runClear() : void
+        mLockPatternUtils.clearLock(mOld, mCurrentUserId);
+        getOutPrintWriter().println("Lock credential cleared");
+!!!10747141.java!!!	runSetDisabled() : void
+        final boolean disabled = Boolean.parseBoolean(mNew);
+        mLockPatternUtils.setLockScreenDisabled(disabled, mCurrentUserId);
+        getOutPrintWriter().println("Lock screen disabled set to " + disabled);
+!!!10747269.java!!!	checkCredential() : boolean
+        final boolean havePassword = mLockPatternUtils.isLockPasswordEnabled(mCurrentUserId);
+        final boolean havePattern = mLockPatternUtils.isLockPatternEnabled(mCurrentUserId);
+        if (havePassword || havePattern) {
+            boolean result;
+            if (havePassword) {
+                result = mLockPatternUtils.checkPassword(mOld, mCurrentUserId);
+            } else {
+                result = mLockPatternUtils.checkPattern(stringToPattern(mOld),
+                        mCurrentUserId);
+            }
+            if (result) {
+                return true;
+            } else {
+                getOutPrintWriter().println("Old password '" + mOld + "' didn't match");
+                return false;
+            }
+        } else {
+            return true;
+        }

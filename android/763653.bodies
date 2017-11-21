@@ -1,0 +1,195 @@
+class QSTileHost
+!!!3374213.java!!!	QSTileHost(inout context : Context, inout statusBar : StatusBar, inout iconController : StatusBarIconController)
+        mIconController = iconController;
+        mContext = context;
+        mStatusBar = statusBar;
+
+        mServices = new TileServices(this, Dependency.get(Dependency.BG_LOOPER));
+
+        mQsFactories.add(new QSFactoryImpl(this));
+        Dependency.get(PluginManager.class).addPluginListener(this, QSFactory.class, true);
+
+        Dependency.get(TunerService.class).addTunable(this, TILES_SETTING);
+        // AutoTileManager can modify mTiles so make sure mTiles has already been initialized.
+        mAutoTiles = new AutoTileManager(context, this);
+!!!3374341.java!!!	getIconController() : StatusBarIconController
+        return mIconController;
+!!!3374469.java!!!	destroy() : void
+        mTiles.values().forEach(tile -> tile.destroy());
+        mAutoTiles.destroy();
+        Dependency.get(TunerService.class).removeTunable(this);
+        mServices.destroy();
+        Dependency.get(PluginManager.class).removePluginListener(this);
+!!!3374597.java!!!	onPluginConnected(inout plugin : QSFactory, inout pluginContext : Context) : void
+        // Give plugins priority over creation so they can override if they wish.
+        mQsFactories.add(0, plugin);
+        String value = Dependency.get(TunerService.class).getValue(TILES_SETTING);
+        // Force remove and recreate of all tiles.
+        onTuningChanged(TILES_SETTING, "");
+        onTuningChanged(TILES_SETTING, value);
+!!!3374725.java!!!	onPluginDisconnected(inout plugin : QSFactory) : void
+        mQsFactories.remove(plugin);
+        // Force remove and recreate of all tiles.
+        String value = Dependency.get(TunerService.class).getValue(TILES_SETTING);
+        onTuningChanged(TILES_SETTING, "");
+        onTuningChanged(TILES_SETTING, value);
+!!!3374853.java!!!	addCallback(inout callback : QSHost::Callback) : void
+        mCallbacks.add(callback);
+!!!3374981.java!!!	removeCallback(inout callback : QSHost::Callback) : void
+        mCallbacks.remove(callback);
+!!!3375109.java!!!	getTiles() : Collection<QSTile>
+        return mTiles.values();
+!!!3375237.java!!!	warn(in message : String, inout t : Throwable) : void
+        // already logged
+!!!3375365.java!!!	collapsePanels() : void
+        mStatusBar.postAnimateCollapsePanels();
+!!!3375493.java!!!	forceCollapsePanels() : void
+        mStatusBar.postAnimateForceCollapsePanels();
+!!!3375621.java!!!	openPanels() : void
+        mStatusBar.postAnimateOpenPanels();
+!!!3375749.java!!!	getContext() : Context
+        return mContext;
+!!!3375877.java!!!	getTileServices() : TileServices
+        return mServices;
+!!!3376005.java!!!	indexOf(in spec : String) : int
+        return mTileSpecs.indexOf(spec);
+!!!3376133.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        if (!TILES_SETTING.equals(key)) {
+            return;
+        }
+        if (DEBUG) Log.d(TAG, "Recreating tiles");
+        if (newValue == null && UserManager.isDeviceInDemoMode(mContext)) {
+            newValue = mContext.getResources().getString(R.string.quick_settings_tiles_retail_mode);
+        }
+        final List<String> tileSpecs = loadTileSpecs(mContext, newValue);
+        int currentUser = ActivityManager.getCurrentUser();
+        if (tileSpecs.equals(mTileSpecs) && currentUser == mCurrentUser) return;
+        mTiles.entrySet().stream().filter(tile -> !tileSpecs.contains(tile.getKey())).forEach(
+                tile -> {
+                    if (DEBUG) Log.d(TAG, "Destroying tile: " + tile.getKey());
+                    tile.getValue().destroy();
+                });
+        final LinkedHashMap<String, QSTile> newTiles = new LinkedHashMap<>();
+        for (String tileSpec : tileSpecs) {
+            QSTile tile = mTiles.get(tileSpec);
+            if (tile != null && (!(tile instanceof CustomTile)
+                    || ((CustomTile) tile).getUser() == currentUser)) {
+                if (tile.isAvailable()) {
+                    if (DEBUG) Log.d(TAG, "Adding " + tile);
+                    tile.removeCallbacks();
+                    if (!(tile instanceof CustomTile) && mCurrentUser != currentUser) {
+                        tile.userSwitch(currentUser);
+                    }
+                    newTiles.put(tileSpec, tile);
+                } else {
+                    tile.destroy();
+                }
+            } else {
+                if (DEBUG) Log.d(TAG, "Creating tile: " + tileSpec);
+                try {
+                    tile = createTile(tileSpec);
+                    if (tile != null) {
+                        if (tile.isAvailable()) {
+                            tile.setTileSpec(tileSpec);
+                            newTiles.put(tileSpec, tile);
+                        } else {
+                            tile.destroy();
+                        }
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "Error creating tile for spec: " + tileSpec, t);
+                }
+            }
+        }
+        mCurrentUser = currentUser;
+        mTileSpecs.clear();
+        mTileSpecs.addAll(tileSpecs);
+        mTiles.clear();
+        mTiles.putAll(newTiles);
+        for (int i = 0; i < mCallbacks.size(); i++) {
+            mCallbacks.get(i).onTilesChanged();
+        }
+!!!3376261.java!!!	removeTile(in tileSpec : String) : void
+        ArrayList<String> specs = new ArrayList<>(mTileSpecs);
+        specs.remove(tileSpec);
+        Settings.Secure.putStringForUser(mContext.getContentResolver(), TILES_SETTING,
+                TextUtils.join(",", specs), ActivityManager.getCurrentUser());
+!!!3376389.java!!!	addTile(in spec : String) : void
+        final String setting = Settings.Secure.getStringForUser(mContext.getContentResolver(),
+                TILES_SETTING, ActivityManager.getCurrentUser());
+        final List<String> tileSpecs = loadTileSpecs(mContext, setting);
+        if (tileSpecs.contains(spec)) {
+            return;
+        }
+        tileSpecs.add(spec);
+        Settings.Secure.putStringForUser(mContext.getContentResolver(), TILES_SETTING,
+                TextUtils.join(",", tileSpecs), ActivityManager.getCurrentUser());
+!!!3376517.java!!!	addTile(inout tile : ComponentName) : void
+        List<String> newSpecs = new ArrayList<>(mTileSpecs);
+        newSpecs.add(0, CustomTile.toSpec(tile));
+        changeTiles(mTileSpecs, newSpecs);
+!!!3376645.java!!!	removeTile(inout tile : ComponentName) : void
+        List<String> newSpecs = new ArrayList<>(mTileSpecs);
+        newSpecs.remove(CustomTile.toSpec(tile));
+        changeTiles(mTileSpecs, newSpecs);
+!!!3376773.java!!!	changeTiles(inout previousTiles : List<String>, inout newTiles : List<String>) : void
+        final int NP = previousTiles.size();
+        final int NA = newTiles.size();
+        for (int i = 0; i < NP; i++) {
+            String tileSpec = previousTiles.get(i);
+            if (!tileSpec.startsWith(CustomTile.PREFIX)) continue;
+            if (!newTiles.contains(tileSpec)) {
+                ComponentName component = CustomTile.getComponentFromSpec(tileSpec);
+                Intent intent = new Intent().setComponent(component);
+                TileLifecycleManager lifecycleManager = new TileLifecycleManager(new Handler(),
+                        mContext, mServices, new Tile(), intent,
+                        new UserHandle(ActivityManager.getCurrentUser()));
+                lifecycleManager.onStopListening();
+                lifecycleManager.onTileRemoved();
+                TileLifecycleManager.setTileAdded(mContext, component, false);
+                lifecycleManager.flushMessagesAndUnbind();
+            }
+        }
+        if (DEBUG) Log.d(TAG, "saveCurrentTiles " + newTiles);
+        Secure.putStringForUser(getContext().getContentResolver(), QSTileHost.TILES_SETTING,
+                TextUtils.join(",", newTiles), ActivityManager.getCurrentUser());
+!!!3376901.java!!!	createTile(in tileSpec : String) : QSTile
+        for (int i = 0; i < mQsFactories.size(); i++) {
+            QSTile t = mQsFactories.get(i).createTile(tileSpec);
+            if (t != null) {
+                return t;
+            }
+        }
+        return null;
+!!!3377029.java!!!	createTileView(inout tile : QSTile, inout collapsedView : boolean) : QSTileView
+        for (int i = 0; i < mQsFactories.size(); i++) {
+            QSTileView view = mQsFactories.get(i).createTileView(tile, collapsedView);
+            if (view != null) {
+                return view;
+            }
+        }
+        throw new RuntimeException("Default factory didn't create view for " + tile.getTileSpec());
+!!!3377157.java!!!	loadTileSpecs(inout context : Context, in tileList : String) : List<String>
+        final Resources res = context.getResources();
+        final String defaultTileList = res.getString(R.string.quick_settings_tiles_default);
+        if (tileList == null) {
+            tileList = res.getString(R.string.quick_settings_tiles);
+            if (DEBUG) Log.d(TAG, "Loaded tile specs from config: " + tileList);
+        } else {
+            if (DEBUG) Log.d(TAG, "Loaded tile specs from setting: " + tileList);
+        }
+        final ArrayList<String> tiles = new ArrayList<String>();
+        boolean addedDefault = false;
+        for (String tile : tileList.split(",")) {
+            tile = tile.trim();
+            if (tile.isEmpty()) continue;
+            if (tile.equals("default")) {
+                if (!addedDefault) {
+                    tiles.addAll(Arrays.asList(defaultTileList.split(",")));
+                    addedDefault = true;
+                }
+            } else {
+                tiles.add(tile);
+            }
+        }
+        return tiles;

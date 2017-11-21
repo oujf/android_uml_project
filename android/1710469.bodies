@@ -1,0 +1,390 @@
+class MediaSessionRecord
+!!!11816325.java!!!	MediaSessionRecord(in ownerPid : int, in ownerUid : int, in userId : int, in ownerPackageName : String, inout cb : ISessionCallback, in tag : String, inout service : MediaSessionService, inout handlerLooper : Looper)
+        mOwnerPid = ownerPid;
+        mOwnerUid = ownerUid;
+        mUserId = userId;
+        mPackageName = ownerPackageName;
+        mTag = tag;
+        mController = new ControllerStub();
+        mSession = new SessionStub();
+        mSessionCb = new SessionCb(cb);
+        mService = service;
+        mHandler = new MessageHandler(handlerLooper);
+        mAudioManager = (AudioManager) service.getContext().getSystemService(Context.AUDIO_SERVICE);
+        mAudioManagerInternal = LocalServices.getService(AudioManagerInternal.class);
+        mAudioAttrs = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build();
+!!!11816453.java!!!	getSessionBinder() : ISession
+        return mSession;
+!!!11816581.java!!!	getControllerBinder() : ISessionController
+        return mController;
+!!!11816709.java!!!	getPackageName() : String
+        return mPackageName;
+!!!11816837.java!!!	getTag() : String
+        return mTag;
+!!!11816965.java!!!	getMediaButtonReceiver() : PendingIntent
+        return mMediaButtonReceiver;
+!!!11817093.java!!!	getFlags() : long
+        return mFlags;
+!!!11817221.java!!!	hasFlag(in flag : int) : boolean
+        return (mFlags & flag) != 0;
+!!!11817349.java!!!	getUid() : int
+        return mOwnerUid;
+!!!11817477.java!!!	getUserId() : int
+        return mUserId;
+!!!11817605.java!!!	isSystemPriority() : boolean
+        return (mFlags & MediaSession.FLAG_EXCLUSIVE_GLOBAL_PRIORITY) != 0;
+!!!11817733.java!!!	adjustVolume(in direction : int, in flags : int, in packageName : String, in uid : int, inout useSuggested : boolean) : void
+        int previousFlagPlaySound = flags & AudioManager.FLAG_PLAY_SOUND;
+        if (isPlaybackActive() || hasFlag(MediaSession.FLAG_EXCLUSIVE_GLOBAL_PRIORITY)) {
+            flags &= ~AudioManager.FLAG_PLAY_SOUND;
+        }
+        if (mVolumeType == PlaybackInfo.PLAYBACK_TYPE_LOCAL) {
+            // Adjust the volume with a handler not to be blocked by other system service.
+            int stream = AudioAttributes.toLegacyStreamType(mAudioAttrs);
+            postAdjustLocalVolume(stream, direction, flags, packageName, uid, useSuggested,
+                    previousFlagPlaySound);
+        } else {
+            if (mVolumeControlType == VolumeProvider.VOLUME_CONTROL_FIXED) {
+                // Nothing to do, the volume cannot be changed
+                return;
+            }
+            if (direction == AudioManager.ADJUST_TOGGLE_MUTE
+                    || direction == AudioManager.ADJUST_MUTE
+                    || direction == AudioManager.ADJUST_UNMUTE) {
+                Log.w(TAG, "Muting remote playback is not supported");
+                return;
+            }
+            mSessionCb.adjustVolume(direction);
+
+            int volumeBefore = (mOptimisticVolume < 0 ? mCurrentVolume : mOptimisticVolume);
+            mOptimisticVolume = volumeBefore + direction;
+            mOptimisticVolume = Math.max(0, Math.min(mOptimisticVolume, mMaxVolume));
+            mHandler.removeCallbacks(mClearOptimisticVolumeRunnable);
+            mHandler.postDelayed(mClearOptimisticVolumeRunnable, OPTIMISTIC_VOLUME_TIMEOUT);
+            if (volumeBefore != mOptimisticVolume) {
+                pushVolumeUpdate();
+            }
+            mService.notifyRemoteVolumeChanged(flags, this);
+
+            if (DEBUG) {
+                Log.d(TAG, "Adjusted optimistic volume to " + mOptimisticVolume + " max is "
+                        + mMaxVolume);
+            }
+        }
+!!!11817861.java!!!	setVolumeTo(in value : int, in flags : int, in packageName : String, in uid : int) : void
+        if (mVolumeType == PlaybackInfo.PLAYBACK_TYPE_LOCAL) {
+            int stream = AudioAttributes.toLegacyStreamType(mAudioAttrs);
+            mAudioManagerInternal.setStreamVolumeForUid(stream, value, flags, packageName, uid);
+        } else {
+            if (mVolumeControlType != VolumeProvider.VOLUME_CONTROL_ABSOLUTE) {
+                // Nothing to do. The volume can't be set directly.
+                return;
+            }
+            value = Math.max(0, Math.min(value, mMaxVolume));
+            mSessionCb.setVolumeTo(value);
+
+            int volumeBefore = (mOptimisticVolume < 0 ? mCurrentVolume : mOptimisticVolume);
+            mOptimisticVolume = Math.max(0, Math.min(value, mMaxVolume));
+            mHandler.removeCallbacks(mClearOptimisticVolumeRunnable);
+            mHandler.postDelayed(mClearOptimisticVolumeRunnable, OPTIMISTIC_VOLUME_TIMEOUT);
+            if (volumeBefore != mOptimisticVolume) {
+                pushVolumeUpdate();
+            }
+            mService.notifyRemoteVolumeChanged(flags, this);
+
+            if (DEBUG) {
+                Log.d(TAG, "Set optimistic volume to " + mOptimisticVolume + " max is "
+                        + mMaxVolume);
+            }
+        }
+!!!11817989.java!!!	isActive() : boolean
+        return mIsActive && !mDestroyed;
+!!!11818117.java!!!	getPlaybackState() : PlaybackState
+        return mPlaybackState;
+!!!11818245.java!!!	isPlaybackActive() : boolean
+        int state = mPlaybackState == null ? PlaybackState.STATE_NONE : mPlaybackState.getState();
+        return MediaSession.isActiveState(state);
+!!!11818373.java!!!	getPlaybackType() : int
+        return mVolumeType;
+!!!11818501.java!!!	getAudioAttributes() : AudioAttributes
+        return mAudioAttrs;
+!!!11818629.java!!!	getVolumeControl() : int
+        return mVolumeControlType;
+!!!11818757.java!!!	getMaxVolume() : int
+        return mMaxVolume;
+!!!11818885.java!!!	getCurrentVolume() : int
+        return mCurrentVolume;
+!!!11819013.java!!!	getOptimisticVolume() : int
+        return mOptimisticVolume;
+!!!11819141.java!!!	isTransportControlEnabled() : boolean
+        return hasFlag(MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+!!!11819269.java!!!	binderDied() : void
+        mService.sessionDied(this);
+!!!11819397.java!!!	onDestroy() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            mDestroyed = true;
+            mHandler.post(MessageHandler.MSG_DESTROYED);
+        }
+!!!11819525.java!!!	getCallback() : ISessionCallback
+        return mSessionCb.mCb;
+!!!11819653.java!!!	sendMediaButton(inout ke : KeyEvent, in sequenceId : int, inout cb : ResultReceiver, in uid : int, in packageName : String) : void
+        updateCallingPackage(uid, packageName);
+        mSessionCb.sendMediaButton(ke, sequenceId, cb);
+!!!11819781.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.println(prefix + mTag + " " + this);
+
+        final String indent = prefix + "  ";
+        pw.println(indent + "ownerPid=" + mOwnerPid + ", ownerUid=" + mOwnerUid
+                + ", userId=" + mUserId);
+        pw.println(indent + "package=" + mPackageName);
+        pw.println(indent + "launchIntent=" + mLaunchIntent);
+        pw.println(indent + "mediaButtonReceiver=" + mMediaButtonReceiver);
+        pw.println(indent + "active=" + mIsActive);
+        pw.println(indent + "flags=" + mFlags);
+        pw.println(indent + "rating type=" + mRatingType);
+        pw.println(indent + "controllers: " + mControllerCallbackHolders.size());
+        pw.println(indent + "state=" + (mPlaybackState == null ? null : mPlaybackState.toString()));
+        pw.println(indent + "audioAttrs=" + mAudioAttrs);
+        pw.println(indent + "volumeType=" + mVolumeType + ", controlType=" + mVolumeControlType
+                + ", max=" + mMaxVolume + ", current=" + mCurrentVolume);
+        pw.println(indent + "metadata:" + getShortMetadataString());
+        pw.println(indent + "queueTitle=" + mQueueTitle + ", size="
+                + (mQueue == null ? 0 : mQueue.getList().size()));
+!!!11819909.java!!!	toString() : String
+        return mPackageName + "/" + mTag + " (userId=" + mUserId + ")";
+!!!11820037.java!!!	postAdjustLocalVolume(in stream : int, in direction : int, in flags : int, in packageName : String, in uid : int, in useSuggested : boolean, in previousFlagPlaySound : int) : void
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (useSuggested) {
+                    if (AudioSystem.isStreamActive(stream, 0)) {
+                        mAudioManagerInternal.adjustSuggestedStreamVolumeForUid(stream, direction,
+                                flags, packageName, uid);
+                    } else {
+                        mAudioManagerInternal.adjustSuggestedStreamVolumeForUid(
+                                AudioManager.USE_DEFAULT_STREAM_TYPE, direction,
+                                flags | previousFlagPlaySound, packageName, uid);
+                    }
+                } else {
+                    mAudioManagerInternal.adjustStreamVolumeForUid(stream, direction, flags,
+                            packageName, uid);
+                }
+            }
+        });
+!!!11820165.java!!!	getShortMetadataString() : String
+        int fields = mMetadata == null ? 0 : mMetadata.size();
+        MediaDescription description = mMetadata == null ? null : mMetadata
+                .getDescription();
+        return "size=" + fields + ", description=" + description;
+!!!11820293.java!!!	logCallbackException(in msg : String, inout holder : MediaSessionRecord::ISessionControllerCallbackHolder, inout e : Exception) : void
+        Log.v(TAG, msg + ", this=" + this + ", callback package=" + holder.mPackageName
+                + ", exception=" + e);
+!!!11820421.java!!!	pushPlaybackStateUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onPlaybackStateChanged(mPlaybackState);
+                } catch (DeadObjectException e) {
+                    mControllerCallbackHolders.remove(i);
+                    logCallbackException("Removed dead callback in pushPlaybackStateUpdate",
+                            holder, e);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushPlaybackStateUpdate",
+                            holder, e);
+                }
+            }
+        }
+!!!11820549.java!!!	pushMetadataUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onMetadataChanged(mMetadata);
+                } catch (DeadObjectException e) {
+                    logCallbackException("Removing dead callback in pushMetadataUpdate", holder, e);
+                    mControllerCallbackHolders.remove(i);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushMetadataUpdate", holder, e);
+                }
+            }
+        }
+!!!11820677.java!!!	pushQueueUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onQueueChanged(mQueue);
+                } catch (DeadObjectException e) {
+                    mControllerCallbackHolders.remove(i);
+                    logCallbackException("Removed dead callback in pushQueueUpdate", holder, e);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushQueueUpdate", holder, e);
+                }
+            }
+        }
+!!!11820805.java!!!	pushQueueTitleUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onQueueTitleChanged(mQueueTitle);
+                } catch (DeadObjectException e) {
+                    mControllerCallbackHolders.remove(i);
+                    logCallbackException("Removed dead callback in pushQueueTitleUpdate",
+                            holder, e);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushQueueTitleUpdate",
+                            holder, e);
+                }
+            }
+        }
+!!!11820933.java!!!	pushExtrasUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onExtrasChanged(mExtras);
+                } catch (DeadObjectException e) {
+                    mControllerCallbackHolders.remove(i);
+                    logCallbackException("Removed dead callback in pushExtrasUpdate", holder, e);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushExtrasUpdate", holder, e);
+                }
+            }
+        }
+!!!11821061.java!!!	pushVolumeUpdate() : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            ParcelableVolumeInfo info = mController.getVolumeAttributes();
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onVolumeInfoChanged(info);
+                } catch (DeadObjectException e) {
+                    logCallbackException("Removing dead callback in pushVolumeUpdate", holder, e);
+                } catch (RemoteException e) {
+                    logCallbackException("Unexpected exception in pushVolumeUpdate", holder, e);
+                }
+            }
+        }
+!!!11821189.java!!!	pushEvent(in event : String, inout data : Bundle) : void
+        synchronized (mLock) {
+            if (mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onEvent(event, data);
+                } catch (DeadObjectException e) {
+                    logCallbackException("Removing dead callback in pushEvent", holder, e);
+                    mControllerCallbackHolders.remove(i);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushEvent", holder, e);
+                }
+            }
+        }
+!!!11821317.java!!!	pushSessionDestroyed() : void
+        synchronized (mLock) {
+            // This is the only method that may be (and can only be) called
+            // after the session is destroyed.
+            if (!mDestroyed) {
+                return;
+            }
+            for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+                ISessionControllerCallbackHolder holder = mControllerCallbackHolders.get(i);
+                try {
+                    holder.mCallback.onSessionDestroyed();
+                } catch (DeadObjectException e) {
+                    logCallbackException("Removing dead callback in pushEvent", holder, e);
+                    mControllerCallbackHolders.remove(i);
+                } catch (RemoteException e) {
+                    logCallbackException("unexpected exception in pushEvent", holder, e);
+                }
+            }
+            // After notifying clear all listeners
+            mControllerCallbackHolders.clear();
+        }
+!!!11821445.java!!!	getStateWithUpdatedPosition() : PlaybackState
+        PlaybackState state;
+        long duration = -1;
+        synchronized (mLock) {
+            state = mPlaybackState;
+            if (mMetadata != null && mMetadata.containsKey(MediaMetadata.METADATA_KEY_DURATION)) {
+                duration = mMetadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+            }
+        }
+        PlaybackState result = null;
+        if (state != null) {
+            if (state.getState() == PlaybackState.STATE_PLAYING
+                    || state.getState() == PlaybackState.STATE_FAST_FORWARDING
+                    || state.getState() == PlaybackState.STATE_REWINDING) {
+                long updateTime = state.getLastPositionUpdateTime();
+                long currentTime = SystemClock.elapsedRealtime();
+                if (updateTime > 0) {
+                    long position = (long) (state.getPlaybackSpeed()
+                            * (currentTime - updateTime)) + state.getPosition();
+                    if (duration >= 0 && position > duration) {
+                        position = duration;
+                    } else if (position < 0) {
+                        position = 0;
+                    }
+                    PlaybackState.Builder builder = new PlaybackState.Builder(state);
+                    builder.setState(state.getState(), position, state.getPlaybackSpeed(),
+                            currentTime);
+                    result = builder.build();
+                }
+            }
+        }
+        return result == null ? state : result;
+!!!11821573.java!!!	getControllerHolderIndexForCb(inout cb : ISessionControllerCallback) : int
+        IBinder binder = cb.asBinder();
+        for (int i = mControllerCallbackHolders.size() - 1; i >= 0; i--) {
+            if (binder.equals(mControllerCallbackHolders.get(i).mCallback.asBinder())) {
+                return i;
+            }
+        }
+        return -1;
+!!!11821701.java!!!	updateCallingPackage() : void
+        updateCallingPackage(UID_NOT_SET, null);
+!!!11821829.java!!!	updateCallingPackage(in uid : int, in packageName : String) : void
+        if (uid == UID_NOT_SET) {
+            uid = Binder.getCallingUid();
+        }
+        synchronized (mLock) {
+            if (mCallingUid == UID_NOT_SET || mCallingUid != uid) {
+                mCallingUid = uid;
+                mCallingPackage = packageName != null ? packageName : getPackageName(uid);
+            }
+        }
+!!!11821957.java!!!	getPackageName(in uid : int) : String
+        Context context = mService.getContext();
+        if (context == null) {
+            return null;
+        }
+        String[] packages = context.getPackageManager().getPackagesForUid(uid);
+        if (packages != null && packages.length > 0) {
+            return packages[0];
+        }
+        return null;

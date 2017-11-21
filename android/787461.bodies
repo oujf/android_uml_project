@@ -1,0 +1,52 @@
+class PipManager
+!!!3272581.java!!!	initialize(inout context : Context) : void
+        mContext = context;
+        mActivityManager = ActivityManager.getService();
+        mWindowManager = WindowManagerGlobal.getWindowManagerService();
+
+        try {
+            mWindowManager.registerPinnedStackListener(DEFAULT_DISPLAY, mPinnedStackListener);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to register pinned stack listener", e);
+        }
+        SystemServicesProxy.getInstance(mContext).registerTaskStackListener(mTaskStackListener);
+
+        mInputConsumerController = new InputConsumerController(mWindowManager);
+        mMediaController = new PipMediaController(context, mActivityManager);
+        mMenuController = new PipMenuActivityController(context, mActivityManager, mMediaController,
+                mInputConsumerController);
+        mTouchHandler = new PipTouchHandler(context, mActivityManager, mMenuController,
+                mInputConsumerController);
+        mNotificationController = new PipNotificationController(context, mActivityManager,
+                mTouchHandler.getMotionHelper());
+        EventBus.getDefault().register(this);
+!!!3272709.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        mTouchHandler.onConfigurationChanged();
+!!!3272837.java!!!	onBusEvent(inout event : ExpandPipEvent) : void
+        if (event.clearThumbnailWindows) {
+            try {
+                StackInfo stackInfo = mActivityManager.getStackInfo(PINNED_STACK_ID);
+                if (stackInfo != null && stackInfo.taskIds != null) {
+                    SystemServicesProxy ssp = SystemServicesProxy.getInstance(mContext);
+                    for (int taskId : stackInfo.taskIds) {
+                        ssp.cancelThumbnailTransition(taskId);
+                    }
+                }
+            } catch (RemoteException e) {
+                // Do nothing
+            }
+        }
+        mTouchHandler.getMotionHelper().expandPip(false /* skipAnimation */);
+!!!3272965.java!!!	showPictureInPictureMenu() : void
+        mTouchHandler.showPictureInPictureMenu();
+!!!3273093.java!!!	getInstance() : PipManager
+        if (sPipController == null) {
+            sPipController = new PipManager();
+        }
+        return sPipController;
+!!!3273221.java!!!	dump(inout pw : PrintWriter) : void
+        final String innerPrefix = "  ";
+        pw.println(TAG);
+        mInputConsumerController.dump(pw, innerPrefix);
+        mMenuController.dump(pw, innerPrefix);
+        mTouchHandler.dump(pw, innerPrefix);

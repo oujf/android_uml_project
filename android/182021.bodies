@@ -1,0 +1,306 @@
+class CameraProviderManager
+!!!456197.cpp!!!	getCameraCount() : int
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    int count = 0;
+    for (auto& provider : mProviders) {
+        count += provider->mUniqueDeviceCount;
+    }
+    return count;
+!!!456325.cpp!!!	getAPI1CompatibleCameraCount() : int
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    int count = 0;
+    for (auto& provider : mProviders) {
+        if (kStandardProviderTypes.find(provider->getType()) != std::string::npos) {
+            count += provider->mUniqueAPI1CompatibleCameraIds.size();
+        }
+    }
+    return count;
+!!!456453.cpp!!!	getCameraDeviceIds() : std::vector<std::string>
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    std::vector<std::string> deviceIds;
+    for (auto& provider : mProviders) {
+        for (auto& id : provider->mUniqueCameraIds) {
+            deviceIds.push_back(id);
+        }
+    }
+    return deviceIds;
+!!!456581.cpp!!!	getAPI1CompatibleCameraDeviceIds() : std::vector<std::string>
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    std::vector<std::string> deviceIds;
+    for (auto& provider : mProviders) {
+        if (kStandardProviderTypes.find(provider->getType()) != std::string::npos) {
+            for (auto& id : provider->mUniqueAPI1CompatibleCameraIds) {
+                deviceIds.push_back(id);
+            }
+        }
+    }
+    return deviceIds;
+!!!456709.cpp!!!	isValidDevice(in id : std::string, in majorVersion : uint16_t) : bool
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    return isValidDeviceLocked(id, majorVersion);
+!!!456837.cpp!!!	hasFlashUnit(in id : std::string) : bool
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id);
+    if (deviceInfo == nullptr) return false;
+
+    return deviceInfo->hasFlashUnit();
+!!!457093.cpp!!!	getCameraInfo(in id : std::string, inout info : hardware::CameraInfo) : status_t
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id);
+    if (deviceInfo == nullptr) return NAME_NOT_FOUND;
+
+    return deviceInfo->getCameraInfo(info);
+!!!457221.cpp!!!	getCameraCharacteristics(in id : std::string, inout characteristics : CameraMetadata) : status_t
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id, /*minVersion*/ {3,0}, /*maxVersion*/ {4,0});
+    if (deviceInfo == nullptr) return NAME_NOT_FOUND;
+
+    return deviceInfo->getCameraCharacteristics(characteristics);
+!!!457349.cpp!!!	getHighestSupportedVersion(in id : std::string, inout v : hardware::hidl_version) : status_t
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    hardware::hidl_version maxVersion{0,0};
+    bool found = false;
+    for (auto& provider : mProviders) {
+        for (auto& deviceInfo : provider->mDevices) {
+            if (deviceInfo->mId == id) {
+                if (deviceInfo->mVersion > maxVersion) {
+                    maxVersion = deviceInfo->mVersion;
+                    found = true;
+                }
+            }
+        }
+    }
+    if (!found) {
+        return NAME_NOT_FOUND;
+    }
+    *v = maxVersion;
+    return OK;
+!!!457477.cpp!!!	supportSetTorchMode(in id : std::string) : bool
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    bool support = false;
+    for (auto& provider : mProviders) {
+        auto deviceInfo = findDeviceInfoLocked(id);
+        if (deviceInfo != nullptr) {
+            provider->mInterface->isSetTorchModeSupported(
+                [&support](auto status, bool supported) {
+                    if (status == Status::OK) {
+                        support = supported;
+                    }
+                });
+        }
+    }
+    return support;
+!!!457605.cpp!!!	setTorchMode(in id : std::string, in enabled : bool) : status_t
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id);
+    if (deviceInfo == nullptr) return NAME_NOT_FOUND;
+
+    return deviceInfo->setTorchMode(enabled);
+!!!457733.cpp!!!	setUpVendorTags() : status_t
+    sp<VendorTagDescriptorCache> tagCache = new VendorTagDescriptorCache();
+
+    for (auto& provider : mProviders) {
+        hardware::hidl_vec<VendorTagSection> vts;
+        Status status;
+        hardware::Return<void> ret;
+        ret = provider->mInterface->getVendorTags(
+            [&](auto s, const auto& vendorTagSecs) {
+                status = s;
+                if (s == Status::OK) {
+                    vts = vendorTagSecs;
+                }
+        });
+        if (!ret.isOk()) {
+            ALOGE("%s: Transaction error getting vendor tags from provider '%s': %s",
+                    __FUNCTION__, provider->mProviderName.c_str(), ret.description().c_str());
+            return DEAD_OBJECT;
+        }
+        if (status != Status::OK) {
+            return mapToStatusT(status);
+        }
+
+        // Read all vendor tag definitions into a descriptor
+        sp<VendorTagDescriptor> desc;
+        status_t res;
+        if ((res = HidlVendorTagDescriptor::createDescriptorFromHidl(vts, /*out*/desc))
+                != OK) {
+            ALOGE("%s: Could not generate descriptor from vendor tag operations,"
+                  "received error %s (%d). Camera clients will not be able to use"
+                  "vendor tags", __FUNCTION__, strerror(res), res);
+            return res;
+        }
+
+        tagCache->addVendorDescriptor(provider->mProviderTagid, desc);
+    }
+
+    VendorTagDescriptorCache::setAsGlobalVendorTagCache(tagCache);
+
+    return OK;
+!!!457861.cpp!!!	openSession(in id : std::string, in callback : sp<hardware::camera::device::V3_2::ICameraDeviceCallback>, inout session : sp<hardware::camera::device::V3_2::ICameraDeviceSession>) : status_t
+
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id,
+            /*minVersion*/ {3,0}, /*maxVersion*/ {4,0});
+    if (deviceInfo == nullptr) return NAME_NOT_FOUND;
+
+    auto *deviceInfo3 = static_cast<ProviderInfo::DeviceInfo3*>(deviceInfo);
+
+    Status status;
+    hardware::Return<void> ret;
+    ret = deviceInfo3->mInterface->open(callback, [&status, &session]
+            (Status s, const sp<device::V3_2::ICameraDeviceSession>& cameraSession) {
+                status = s;
+                if (status == Status::OK) {
+                    *session = cameraSession;
+                }
+            });
+    if (!ret.isOk()) {
+        ALOGE("%s: Transaction error opening a session for camera device %s: %s",
+                __FUNCTION__, id.c_str(), ret.description().c_str());
+        return DEAD_OBJECT;
+    }
+    return mapToStatusT(status);
+!!!457989.cpp!!!	openSession(in id : std::string, in callback : sp<hardware::camera::device::V1_0::ICameraDeviceCallback>, inout session : sp<hardware::camera::device::V1_0::ICameraDevice>) : status_t
+
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    auto deviceInfo = findDeviceInfoLocked(id,
+            /*minVersion*/ {1,0}, /*maxVersion*/ {2,0});
+    if (deviceInfo == nullptr) return NAME_NOT_FOUND;
+
+    auto *deviceInfo1 = static_cast<ProviderInfo::DeviceInfo1*>(deviceInfo);
+
+    hardware::Return<Status> status = deviceInfo1->mInterface->open(callback);
+    if (!status.isOk()) {
+        ALOGE("%s: Transaction error opening a session for camera device %s: %s",
+                __FUNCTION__, id.c_str(), status.description().c_str());
+        return DEAD_OBJECT;
+    }
+    if (status == Status::OK) {
+        *session = deviceInfo1->mInterface;
+    }
+    return mapToStatusT(status);
+!!!458117.cpp!!!	onRegistration(in fqName : hardware::hidl_string, in name : hardware::hidl_string, in preexisting : bool) : hardware::Return<void>
+    {
+        std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+        addProviderLocked(name);
+    }
+
+    sp<StatusListener> listener = getStatusListener();
+    if (nullptr != listener.get()) {
+        listener->onNewProviderRegistered();
+    }
+
+    return hardware::Return<void>();
+!!!458245.cpp!!!	dump(in fd : int, in args : Vector<String16>) : status_t
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+
+    for (auto& provider : mProviders) {
+        provider->dump(fd, args);
+    }
+    return OK;
+!!!458629.cpp!!!	getProviderTagIdLocked(in id : std::string, in minVersion : hardware::hidl_version = hardware::hidl_version{0,0}, in maxVersion : hardware::hidl_version = hardware::hidl_version{1000,0}) : metadata_vendor_id_t
+    metadata_vendor_id_t ret = CAMERA_METADATA_INVALID_VENDOR_ID;
+
+    std::lock_guard<std::mutex> lock(mInterfaceMutex);
+    for (auto& provider : mProviders) {
+        for (auto& deviceInfo : provider->mDevices) {
+            if (deviceInfo->mId == id &&
+                    minVersion <= deviceInfo->mVersion &&
+                    maxVersion >= deviceInfo->mVersion) {
+                return provider->mProviderTagid;
+            }
+        }
+    }
+
+    return ret;
+!!!462981.cpp!!!	findDeviceInfoLocked(in id : std::string, in minVersion : hardware::hidl_version = hardware::hidl_version{0,0}, in maxVersion : hardware::hidl_version = hardware::hidl_version{1000,0}) : ProviderInfo::DeviceInfo
+    for (auto& provider : mProviders) {
+        for (auto& deviceInfo : provider->mDevices) {
+            if (deviceInfo->mId == id &&
+                    minVersion <= deviceInfo->mVersion && maxVersion >= deviceInfo->mVersion) {
+                return deviceInfo.get();
+            }
+        }
+    }
+    return nullptr;
+!!!463109.cpp!!!	addProviderLocked(in newProvider : std::string, in expected : bool = true) : status_t
+    for (const auto& providerInfo : mProviders) {
+        if (providerInfo->mProviderName == newProvider) {
+            ALOGW("%s: Camera provider HAL with name '%s' already registered", __FUNCTION__,
+                    newProvider.c_str());
+            return ALREADY_EXISTS;
+        }
+    }
+
+    sp<provider::V2_4::ICameraProvider> interface;
+    interface = mServiceProxy->getService(newProvider);
+
+    if (interface == nullptr) {
+        if (expected) {
+            ALOGE("%s: Camera provider HAL '%s' is not actually available", __FUNCTION__,
+                    newProvider.c_str());
+            return BAD_VALUE;
+        } else {
+            return OK;
+        }
+    }
+
+    sp<ProviderInfo> providerInfo =
+            new ProviderInfo(newProvider, interface, this);
+    status_t res = providerInfo->initialize();
+    if (res != OK) {
+        return res;
+    }
+
+    mProviders.push_back(providerInfo);
+
+    return OK;
+!!!463237.cpp!!!	removeProvider(in provider : std::string) : status_t
+    std::unique_lock<std::mutex> lock(mInterfaceMutex);
+    std::vector<String8> removedDeviceIds;
+    status_t res = NAME_NOT_FOUND;
+    for (auto it = mProviders.begin(); it != mProviders.end(); it++) {
+        if ((*it)->mProviderName == provider) {
+            removedDeviceIds.reserve((*it)->mDevices.size());
+            for (auto& deviceInfo : (*it)->mDevices) {
+                removedDeviceIds.push_back(String8(deviceInfo->mId.c_str()));
+            }
+            mProviders.erase(it);
+            res = OK;
+            break;
+        }
+    }
+    if (res != OK) {
+        ALOGW("%s: Camera provider HAL with name '%s' is not registered", __FUNCTION__,
+                provider.c_str());
+    } else {
+        // Inform camera service of loss of presence for all the devices from this provider,
+        // without lock held for reentrancy
+        sp<StatusListener> listener = getStatusListener();
+        if (listener != nullptr) {
+            lock.unlock();
+            for (auto& id : removedDeviceIds) {
+                listener->onDeviceStatusChanged(id, CameraDeviceStatus::NOT_PRESENT);
+            }
+        }
+    }
+    return res;
+!!!463365.cpp!!!	getStatusListener() : sp<StatusListener>
+    return mListener.promote();
+!!!463493.cpp!!!	isValidDeviceLocked(in id : std::string, in majorVersion : uint16_t) : bool
+    for (auto& provider : mProviders) {
+        for (auto& deviceInfo : provider->mDevices) {
+            if (deviceInfo->mId == id && deviceInfo->mVersion.get_major() == majorVersion) {
+                return true;
+            }
+        }
+    }
+    return false;

@@ -1,0 +1,70 @@
+class TriggerSensor
+!!!3198853.java!!!	TriggerSensor(inout sensor : Sensor, in setting : String, inout configured : boolean, in pulseReason : int)
+            mSensor = sensor;
+            mSetting = setting;
+            mConfigured = configured;
+            mPulseReason = pulseReason;
+!!!3198981.java!!!	setListening(inout listen : boolean) : void
+            if (mRequested == listen) return;
+            mRequested = listen;
+            updateListener();
+!!!3199109.java!!!	setDisabled(inout disabled : boolean) : void
+            if (mDisabled == disabled) return;
+            mDisabled = disabled;
+            updateListener();
+!!!3199237.java!!!	updateListener() : void
+            if (!mConfigured || mSensor == null) return;
+            if (mRequested && !mDisabled && enabledBySetting() && !mRegistered) {
+                mRegistered = mSensorManager.requestTriggerSensor(this, mSensor);
+                if (DEBUG) Log.d(TAG, "requestTriggerSensor " + mRegistered);
+            } else if (mRegistered) {
+                final boolean rt = mSensorManager.cancelTriggerSensor(this, mSensor);
+                if (DEBUG) Log.d(TAG, "cancelTriggerSensor " + rt);
+                mRegistered = false;
+            }
+!!!3199365.java!!!	enabledBySetting() : boolean
+            if (TextUtils.isEmpty(mSetting)) {
+                return true;
+            }
+            return Settings.Secure.getIntForUser(mResolver, mSetting, 1,
+                    UserHandle.USER_CURRENT) != 0;
+!!!3199493.java!!!	toString() : String
+            return new StringBuilder("{mRegistered=").append(mRegistered)
+                    .append(", mRequested=").append(mRequested)
+                    .append(", mDisabled=").append(mDisabled)
+                    .append(", mConfigured=").append(mConfigured)
+                    .append(", mSensor=").append(mSensor).append("}").toString();
+!!!3199621.java!!!	onTrigger(inout event : TriggerEvent) : void
+            mHandler.post(mWakeLock.wrap(() -> {
+                if (DEBUG) Log.d(TAG, "onTrigger: " + triggerEventToString(event));
+                boolean sensorPerformsProxCheck = false;
+                if (mSensor.getType() == Sensor.TYPE_PICK_UP_GESTURE) {
+                    int subType = (int) event.values[0];
+                    MetricsLogger.action(
+                            mContext, MetricsProto.MetricsEvent.ACTION_AMBIENT_GESTURE,
+                            subType);
+                    sensorPerformsProxCheck =
+                            mDozeParameters.getPickupSubtypePerformsProxCheck(subType);
+                }
+
+                mRegistered = false;
+                mCallback.onSensorPulse(mPulseReason, sensorPerformsProxCheck);
+                updateListener();  // reregister, this sensor only fires once
+            }));
+!!!3199749.java!!!	registerSettingsObserver(inout settingsObserver : ContentObserver) : void
+            if (mConfigured && !TextUtils.isEmpty(mSetting)) {
+                mResolver.registerContentObserver(
+                        Settings.Secure.getUriFor(mSetting), false /* descendants */,
+                        mSettingsObserver, UserHandle.USER_ALL);
+            }
+!!!3199877.java!!!	triggerEventToString(inout event : TriggerEvent) : String
+            if (event == null) return null;
+            final StringBuilder sb = new StringBuilder("TriggerEvent[")
+                    .append(event.timestamp).append(',')
+                    .append(event.sensor.getName());
+            if (event.values != null) {
+                for (int i = 0; i < event.values.length; i++) {
+                    sb.append(',').append(event.values[i]);
+                }
+            }
+            return sb.append(']').toString();

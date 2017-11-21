@@ -1,0 +1,63 @@
+class FileDescriptorWhitelist
+!!!14158213.cpp!!!	Get() : FileDescriptorWhitelist
+  if (instance_ == nullptr) {
+    instance_ = new FileDescriptorWhitelist();
+  }
+  return instance_;
+!!!14158469.cpp!!!	IsAllowed(in path : std::string) : bool
+  // Check the static whitelist path.
+  for (const auto& whitelist_path : kPathWhitelist) {
+    if (path == whitelist_path)
+      return true;
+  }
+
+  // Check any paths added to the dynamic whitelist.
+  for (const auto& whitelist_path : whitelist_) {
+    if (path == whitelist_path)
+      return true;
+  }
+
+  static const char* kFrameworksPrefix = "/system/framework/";
+  static const char* kJarSuffix = ".jar";
+  if (android::base::StartsWith(path, kFrameworksPrefix)
+      && android::base::EndsWith(path, kJarSuffix)) {
+    return true;
+  }
+
+  // Whitelist files needed for Runtime Resource Overlay, like these:
+  // /system/vendor/overlay/framework-res.apk
+  // /system/vendor/overlay-subdir/pg/framework-res.apk
+  // /vendor/overlay/framework-res.apk
+  // /vendor/overlay/PG/android-framework-runtime-resource-overlay.apk
+  // /data/resource-cache/system@vendor@overlay@framework-res.apk@idmap
+  // /data/resource-cache/system@vendor@overlay-subdir@pg@framework-res.apk@idmap
+  // See AssetManager.cpp for more details on overlay-subdir.
+  static const char* kOverlayDir = "/system/vendor/overlay/";
+  static const char* kVendorOverlayDir = "/vendor/overlay";
+  static const char* kOverlaySubdir = "/system/vendor/overlay-subdir/";
+  static const char* kApkSuffix = ".apk";
+
+  if ((android::base::StartsWith(path, kOverlayDir)
+       || android::base::StartsWith(path, kOverlaySubdir)
+       || android::base::StartsWith(path, kVendorOverlayDir))
+      && android::base::EndsWith(path, kApkSuffix)
+      && path.find("/../") == std::string::npos) {
+    return true;
+  }
+
+  static const char* kOverlayIdmapPrefix = "/data/resource-cache/";
+  static const char* kOverlayIdmapSuffix = ".apk@idmap";
+  if (android::base::StartsWith(path, kOverlayIdmapPrefix)
+      && android::base::EndsWith(path, kOverlayIdmapSuffix)
+      && path.find("/../") == std::string::npos) {
+    return true;
+  }
+
+  // All regular files that are placed under this path are whitelisted automatically.
+  static const char* kZygoteWhitelistPath = "/vendor/zygote_whitelist/";
+  if (android::base::StartsWith(path, kZygoteWhitelistPath)
+      && path.find("/../") == std::string::npos) {
+    return true;
+  }
+
+  return false;

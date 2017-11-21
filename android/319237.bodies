@@ -1,0 +1,41 @@
+class BnMediaExtractorService
+!!!835717.cpp!!!	onTransact(in code : uint32_t, in data : Parcel, inout reply : Parcel, in flags : uint32_t = 0) : status_t
+    switch (code) {
+
+        case MAKE_EXTRACTOR: {
+            CHECK_INTERFACE(IMediaExtractorService, data, reply);
+            sp<IBinder> b;
+            status_t ret = data.readStrongBinder(&b);
+            if (ret != NO_ERROR || b == NULL) {
+                ALOGE("Error reading source from parcel");
+                return ret;
+            }
+            // If we make an extractor through Binder, enabled shared memory
+            // for MediaBuffers for this process.
+            MediaBuffer::useSharedMemory();
+            sp<IDataSource> source = interface_cast<IDataSource>(b);
+            const char *mime = data.readCString();
+            sp<IMediaExtractor> ex = makeExtractor(source, mime);
+            reply->writeStrongBinder(IInterface::asBinder(ex));
+            return NO_ERROR;
+        }
+
+        case MAKE_IDATA_SOURCE_FD: {
+            CHECK_INTERFACE(IMediaExtractorService, data, reply);
+            const int fd = dup(data.readFileDescriptor()); // -1 fd checked in makeIDataSource
+            const int64_t offset = data.readInt64();
+            const int64_t length = data.readInt64();
+            ALOGV("fd %d  offset%lld  length:%lld", fd, (long long)offset, (long long)length);
+            sp<IDataSource> source = makeIDataSource(fd, offset, length);
+            reply->writeStrongBinder(IInterface::asBinder(source));
+            // The FileSource closes the descriptor, so if it is not created
+            // we need to close the descriptor explicitly.
+            if (source.get() == nullptr && fd != -1) {
+                close(fd);
+            }
+            return NO_ERROR;
+        }
+
+        default:
+            return BBinder::onTransact(code, data, reply, flags);
+    }

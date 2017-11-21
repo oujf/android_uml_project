@@ -1,0 +1,63 @@
+class SplitAssetDependencyLoader
+!!!6359301.java!!!	SplitAssetDependencyLoader(inout pkg : PackageParser::PackageLite, inout dependencies : SparseArray, in flags : int)
+        super(dependencies);
+
+        // The base is inserted into index 0, so we need to shift all the splits by 1.
+        mSplitPaths = new String[pkg.splitCodePaths.length + 1];
+        mSplitPaths[0] = pkg.baseCodePath;
+        System.arraycopy(pkg.splitCodePaths, 0, mSplitPaths, 1, pkg.splitCodePaths.length);
+
+        mFlags = flags;
+        mCachedPaths = new String[mSplitPaths.length][];
+        mCachedAssetManagers = new AssetManager[mSplitPaths.length];
+!!!6359429.java!!!	isSplitCached(in splitIdx : int) : boolean
+        return mCachedAssetManagers[splitIdx] != null;
+!!!6359557.java!!!	createAssetManagerWithPaths(inout assetPaths : String [[]], in flags : int) : AssetManager
+        final AssetManager assets = new AssetManager();
+        try {
+            assets.setConfiguration(0, 0, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    Build.VERSION.RESOURCES_SDK_INT);
+
+            for (String assetPath : assetPaths) {
+                if ((flags & PackageParser.PARSE_MUST_BE_APK) != 0 &&
+                        !PackageParser.isApkPath(assetPath)) {
+                    throw new PackageParser.PackageParserException(INSTALL_PARSE_FAILED_NOT_APK,
+                            "Invalid package file: " + assetPath);
+                }
+
+                if (assets.addAssetPath(assetPath) == 0) {
+                    throw new PackageParser.PackageParserException(
+                            INSTALL_PARSE_FAILED_BAD_MANIFEST,
+                            "Failed adding asset path: " + assetPath);
+                }
+            }
+            return assets;
+        } catch (Throwable e) {
+            IoUtils.closeQuietly(assets);
+            throw e;
+        }
+!!!6359685.java!!!	constructSplit(in splitIdx : int, inout configSplitIndices : int [[]], in parentSplitIdx : int) : void
+        final ArrayList<String> assetPaths = new ArrayList<>();
+        if (parentSplitIdx >= 0) {
+            Collections.addAll(assetPaths, mCachedPaths[parentSplitIdx]);
+        }
+
+        assetPaths.add(mSplitPaths[splitIdx]);
+        for (int configSplitIdx : configSplitIndices) {
+            assetPaths.add(mSplitPaths[configSplitIdx]);
+        }
+        mCachedPaths[splitIdx] = assetPaths.toArray(new String[assetPaths.size()]);
+        mCachedAssetManagers[splitIdx] = createAssetManagerWithPaths(mCachedPaths[splitIdx],
+                mFlags);
+!!!6359813.java!!!	getBaseAssetManager() : AssetManager
+        loadDependenciesForSplit(0);
+        return mCachedAssetManagers[0];
+!!!6359941.java!!!	getSplitAssetManager(in idx : int) : AssetManager
+        // Since we insert the base at position 0, and PackageParser keeps splits separate from
+        // the base, we need to adjust the index.
+        loadDependenciesForSplit(idx + 1);
+        return mCachedAssetManagers[idx + 1];
+!!!6360069.java!!!	close() : void
+        for (AssetManager assets : mCachedAssetManagers) {
+            IoUtils.closeQuietly(assets);
+        }

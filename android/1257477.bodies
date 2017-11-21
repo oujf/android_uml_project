@@ -1,0 +1,52 @@
+class IpConnectivityLog
+!!!7294597.java!!!	IpConnectivityLog(inout service : IIpConnectivityMetrics)
+        mService = service;
+!!!7294725.java!!!	checkLoggerService() : boolean
+        if (mService != null) {
+            return true;
+        }
+        final IIpConnectivityMetrics service =
+                IIpConnectivityMetrics.Stub.asInterface(ServiceManager.getService(SERVICE_NAME));
+        if (service == null) {
+            return false;
+        }
+        // Two threads racing here will write the same pointer because getService
+        // is idempotent once MetricsLoggerService is initialized.
+        mService = service;
+        return true;
+!!!7294853.java!!!	log(inout ev : ConnectivityMetricsEvent) : boolean
+        if (!checkLoggerService()) {
+            if (DBG) {
+                Log.d(TAG, SERVICE_NAME + " service was not ready");
+            }
+            return false;
+        }
+        if (ev.timestamp == 0) {
+            ev.timestamp = System.currentTimeMillis();
+        }
+        try {
+            int left = mService.logEvent(ev);
+            return left >= 0;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error logging event", e);
+            return false;
+        }
+!!!7294981.java!!!	log(in timestamp : long, inout data : Parcelable) : boolean
+        ConnectivityMetricsEvent ev = makeEv(data);
+        ev.timestamp = timestamp;
+        return log(ev);
+!!!7295109.java!!!	log(in ifname : String, inout data : Parcelable) : boolean
+        ConnectivityMetricsEvent ev = makeEv(data);
+        ev.ifname = ifname;
+        return log(ev);
+!!!7295237.java!!!	log(in netid : int, inout transports : int [[]], inout data : Parcelable) : boolean
+        ConnectivityMetricsEvent ev = makeEv(data);
+        ev.netId = netid;
+        ev.transports = BitUtils.packBits(transports);
+        return log(ev);
+!!!7295365.java!!!	log(inout data : Parcelable) : boolean
+        return log(makeEv(data));
+!!!7295493.java!!!	makeEv(inout data : Parcelable) : ConnectivityMetricsEvent
+        ConnectivityMetricsEvent ev = new ConnectivityMetricsEvent();
+        ev.data = data;
+        return ev;

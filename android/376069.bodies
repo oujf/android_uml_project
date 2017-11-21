@@ -1,0 +1,59 @@
+class FormatEntry
+!!!1080581.cpp!!!	FormatEntry(in entry : uint8_t)
+    ALOGW_IF(entry[offsetof(struct entry, type)] != EVENT_START_FMT,
+        "Created format entry with invalid event type %d", entry[offsetof(struct entry, type)]);
+!!!1082757.cpp!!!	formatString() : char
+    return (const char*) mEntry + offsetof(entry, data);
+!!!1082885.cpp!!!	formatStringLength() : size_t
+    return mEntry[offsetof(entry, length)];
+!!!1083013.cpp!!!	args() : NBLog::FormatEntry::iterator
+    auto it = begin();
+    // skip start fmt
+    ++it;
+    // skip timestamp
+    ++it;
+    // Skip author if present
+    if (it->type == EVENT_AUTHOR) {
+        ++it;
+    }
+    return it;
+!!!1083141.cpp!!!	timestamp() : timespec
+    auto it = begin();
+    // skip start fmt
+    ++it;
+    return it.payload<timespec>();
+!!!1083269.cpp!!!	author() : int
+    auto it = begin();
+    // skip start fmt
+    ++it;
+    // skip timestamp
+    ++it;
+    // if there is an author entry, return it, return -1 otherwise
+    if (it->type == EVENT_AUTHOR) {
+        return it.payload<int>();
+    }
+    return -1;
+!!!1083397.cpp!!!	copyWithAuthor(inout dst : std::unique_ptr<audio_utils_fifo_writer>, in author : int) : NBLog::FormatEntry::iterator
+    auto it = begin();
+    // copy fmt start entry
+    it.copyTo(dst);
+    // copy timestamp
+    (++it).copyTo(dst);
+    // insert author entry
+    size_t authorEntrySize = NBLog::Entry::kOverhead + sizeof(author);
+    uint8_t authorEntry[authorEntrySize];
+    authorEntry[offsetof(entry, type)] = EVENT_AUTHOR;
+    authorEntry[offsetof(entry, length)] =
+        authorEntry[authorEntrySize + NBLog::Entry::kPreviousLengthOffset] =
+        sizeof(author);
+    *(int*) (&authorEntry[offsetof(entry, data)]) = author;
+    dst->write(authorEntry, authorEntrySize);
+    // copy rest of entries
+    while ((++it)->type != EVENT_END_FMT) {
+        it.copyTo(dst);
+    }
+    it.copyTo(dst);
+    ++it;
+    return it;
+!!!1083525.cpp!!!	begin() : NBLog::FormatEntry::iterator
+    return iterator(mEntry);

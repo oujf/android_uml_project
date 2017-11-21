@@ -1,0 +1,52 @@
+class IdleController
+!!!11726469.java!!!	get(inout service : JobSchedulerService) : IdleController
+        synchronized (sCreationLock) {
+            if (sController == null) {
+                sController = new IdleController(service, service.getContext(), service.getLock());
+            }
+            return sController;
+        }
+!!!11726597.java!!!	IdleController(inout stateChangedListener : StateChangedListener, inout context : Context, inout lock : Object)
+        super(stateChangedListener, context, lock);
+        initIdleStateTracking();
+!!!11726725.java!!!	maybeStartTrackingJobLocked(inout taskStatus : JobStatus, inout lastJob : JobStatus) : void
+        if (taskStatus.hasIdleConstraint()) {
+            mTrackedTasks.add(taskStatus);
+            taskStatus.setTrackingController(JobStatus.TRACKING_IDLE);
+            taskStatus.setIdleConstraintSatisfied(mIdleTracker.isIdle());
+        }
+!!!11726853.java!!!	maybeStopTrackingJobLocked(inout taskStatus : JobStatus, inout incomingJob : JobStatus, inout forUpdate : boolean) : void
+        if (taskStatus.clearTrackingController(JobStatus.TRACKING_IDLE)) {
+            mTrackedTasks.remove(taskStatus);
+        }
+!!!11726981.java!!!	reportNewIdleState(inout isIdle : boolean) : void
+        synchronized (mLock) {
+            for (int i = mTrackedTasks.size()-1; i >= 0; i--) {
+                mTrackedTasks.valueAt(i).setIdleConstraintSatisfied(isIdle);
+            }
+        }
+        mStateChangedListener.onControllerStateChanged();
+!!!11727109.java!!!	initIdleStateTracking() : void
+        mInactivityIdleThreshold = mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_jobSchedulerInactivityIdleThreshold);
+        mIdleWindowSlop = mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_jobSchedulerIdleWindowSlop);
+        mIdleTracker = new IdlenessTracker();
+        mIdleTracker.startTracking();
+!!!11727749.java!!!	dumpControllerStateLocked(inout pw : PrintWriter, in filterUid : int) : void
+        pw.print("Idle: ");
+        pw.println(mIdleTracker.isIdle());
+        pw.print("Tracking ");
+        pw.print(mTrackedTasks.size());
+        pw.println(":");
+        for (int i = 0; i < mTrackedTasks.size(); i++) {
+            final JobStatus js = mTrackedTasks.valueAt(i);
+            if (!js.shouldDump(filterUid)) {
+                continue;
+            }
+            pw.print("  #");
+            js.printUniqueId(pw);
+            pw.print(" from ");
+            UserHandle.formatUid(pw, js.getSourceUid());
+            pw.println();
+        }

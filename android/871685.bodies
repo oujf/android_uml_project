@@ -1,0 +1,144 @@
+class CollapsedStatusBarFragment
+!!!3895813.java!!!	onCreate(inout savedInstanceState : Bundle) : void
+        super.onCreate(savedInstanceState);
+        mKeyguardMonitor = Dependency.get(KeyguardMonitor.class);
+        mNetworkController = Dependency.get(NetworkController.class);
+        mStatusBarComponent = SysUiServiceProvider.getComponent(getContext(), StatusBar.class);
+!!!3895941.java!!!	onCreateView(inout inflater : LayoutInflater, inout container : ViewGroup, inout savedInstanceState : Bundle) : View
+        return inflater.inflate(R.layout.status_bar, container, false);
+!!!3896069.java!!!	onViewCreated(inout view : View, inout savedInstanceState : Bundle) : void
+        super.onViewCreated(view, savedInstanceState);
+        mStatusBar = (PhoneStatusBarView) view;
+        if (savedInstanceState != null && savedInstanceState.containsKey(EXTRA_PANEL_STATE)) {
+            mStatusBar.go(savedInstanceState.getInt(EXTRA_PANEL_STATE));
+        }
+        mDarkIconManager = new DarkIconManager(view.findViewById(R.id.statusIcons));
+        Dependency.get(StatusBarIconController.class).addIconGroup(mDarkIconManager);
+        mSystemIconArea = mStatusBar.findViewById(R.id.system_icon_area);
+        mSignalClusterView = mStatusBar.findViewById(R.id.signal_cluster);
+        Dependency.get(DarkIconDispatcher.class).addDarkReceiver(mSignalClusterView);
+        // Default to showing until we know otherwise.
+        showSystemIconArea(false);
+        initEmergencyCryptkeeperText();
+!!!3896197.java!!!	onSaveInstanceState(inout outState : Bundle) : void
+        super.onSaveInstanceState(outState);
+        outState.putInt(EXTRA_PANEL_STATE, mStatusBar.getState());
+!!!3896325.java!!!	onResume() : void
+        super.onResume();
+        SysUiServiceProvider.getComponent(getContext(), CommandQueue.class).addCallbacks(this);
+!!!3896453.java!!!	onPause() : void
+        super.onPause();
+        SysUiServiceProvider.getComponent(getContext(), CommandQueue.class).removeCallbacks(this);
+!!!3896581.java!!!	onDestroyView() : void
+        super.onDestroyView();
+        Dependency.get(DarkIconDispatcher.class).removeDarkReceiver(mSignalClusterView);
+        Dependency.get(StatusBarIconController.class).removeIconGroup(mDarkIconManager);
+        if (mNetworkController.hasEmergencyCryptKeeperText()) {
+            mNetworkController.removeCallback(mSignalCallback);
+        }
+!!!3896709.java!!!	initNotificationIconArea(inout notificationIconAreaController : NotificationIconAreaController) : void
+        ViewGroup notificationIconArea = mStatusBar.findViewById(R.id.notification_icon_area);
+        mNotificationIconAreaInner =
+                notificationIconAreaController.getNotificationInnerAreaView();
+        if (mNotificationIconAreaInner.getParent() != null) {
+            ((ViewGroup) mNotificationIconAreaInner.getParent())
+                    .removeView(mNotificationIconAreaInner);
+        }
+        notificationIconArea.addView(mNotificationIconAreaInner);
+        // Default to showing until we know otherwise.
+        showNotificationIconArea(false);
+!!!3896837.java!!!	disable(in state1 : int, in state2 : int, inout animate : boolean) : void
+        state1 = adjustDisableFlags(state1);
+        final int old1 = mDisabled1;
+        final int diff1 = state1 ^ old1;
+        mDisabled1 = state1;
+        if ((diff1 & StatusBarManager.DISABLE_SYSTEM_INFO) != 0) {
+            if ((state1 & StatusBarManager.DISABLE_SYSTEM_INFO) != 0) {
+                hideSystemIconArea(animate);
+            } else {
+                showSystemIconArea(animate);
+            }
+        }
+        if ((diff1 & StatusBarManager.DISABLE_NOTIFICATION_ICONS) != 0) {
+            if ((state1 & StatusBarManager.DISABLE_NOTIFICATION_ICONS) != 0) {
+                hideNotificationIconArea(animate);
+            } else {
+                showNotificationIconArea(animate);
+            }
+        }
+!!!3896965.java!!!	adjustDisableFlags(in state : int) : int
+        if (!mStatusBarComponent.isLaunchTransitionFadingAway()
+                && !mKeyguardMonitor.isKeyguardFadingAway()
+                && shouldHideNotificationIcons()) {
+            state |= StatusBarManager.DISABLE_NOTIFICATION_ICONS;
+            state |= StatusBarManager.DISABLE_SYSTEM_INFO;
+        }
+        if (mNetworkController != null && EncryptionHelper.IS_DATA_ENCRYPTED) {
+            if (mNetworkController.hasEmergencyCryptKeeperText()) {
+                state |= StatusBarManager.DISABLE_NOTIFICATION_ICONS;
+            }
+            if (!mNetworkController.isRadioOn()) {
+                state |= StatusBarManager.DISABLE_SYSTEM_INFO;
+            }
+        }
+        return state;
+!!!3897093.java!!!	shouldHideNotificationIcons() : boolean
+        return !mStatusBar.isClosed() && mStatusBarComponent.hideStatusBarIconsWhenExpanded();
+!!!3897221.java!!!	hideSystemIconArea(inout animate : boolean) : void
+        animateHide(mSystemIconArea, animate);
+!!!3897349.java!!!	showSystemIconArea(inout animate : boolean) : void
+        animateShow(mSystemIconArea, animate);
+!!!3897477.java!!!	hideNotificationIconArea(inout animate : boolean) : void
+        animateHide(mNotificationIconAreaInner, animate);
+!!!3897605.java!!!	showNotificationIconArea(inout animate : boolean) : void
+        animateShow(mNotificationIconAreaInner, animate);
+!!!3897733.java!!!	animateHide(in v : View, inout animate : boolean) : void
+        v.animate().cancel();
+        if (!animate) {
+            v.setAlpha(0f);
+            v.setVisibility(View.INVISIBLE);
+            return;
+        }
+        v.animate()
+                .alpha(0f)
+                .setDuration(160)
+                .setStartDelay(0)
+                .setInterpolator(Interpolators.ALPHA_OUT)
+                .withEndAction(() -> v.setVisibility(View.INVISIBLE));
+!!!3897861.java!!!	animateShow(inout v : View, inout animate : boolean) : void
+        v.animate().cancel();
+        v.setVisibility(View.VISIBLE);
+        if (!animate) {
+            v.setAlpha(1f);
+            return;
+        }
+        v.animate()
+                .alpha(1f)
+                .setDuration(320)
+                .setInterpolator(Interpolators.ALPHA_IN)
+                .setStartDelay(50)
+
+                // We need to clean up any pending end action from animateHide if we call
+                // both hide and show in the same frame before the animation actually gets started.
+                // cancel() doesn't really remove the end action.
+                .withEndAction(null);
+
+        // Synchronize the motion with the Keyguard fading if necessary.
+        if (mKeyguardMonitor.isKeyguardFadingAway()) {
+            v.animate()
+                    .setDuration(mKeyguardMonitor.getKeyguardFadingAwayDuration())
+                    .setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN)
+                    .setStartDelay(mKeyguardMonitor.getKeyguardFadingAwayDelay())
+                    .start();
+        }
+!!!3897989.java!!!	initEmergencyCryptkeeperText() : void
+        View emergencyViewStub = mStatusBar.findViewById(R.id.emergency_cryptkeeper_text);
+        if (mNetworkController.hasEmergencyCryptKeeperText()) {
+            if (emergencyViewStub != null) {
+                ((ViewStub) emergencyViewStub).inflate();
+            }
+            mNetworkController.addCallback(mSignalCallback);
+        } else if (emergencyViewStub != null) {
+            ViewGroup parent = (ViewGroup) emergencyViewStub.getParent();
+            parent.removeView(emergencyViewStub);
+        }

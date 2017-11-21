@@ -1,0 +1,30 @@
+class PluginExceptionHandler
+!!!3310085.java!!!	PluginExceptionHandler(inout handler : UncaughtExceptionHandler)
+            mHandler = handler;
+!!!3310213.java!!!	uncaughtException(inout thread : Thread, inout throwable : Throwable) : void
+            if (SystemProperties.getBoolean("plugin.debugging", false)) {
+                mHandler.uncaughtException(thread, throwable);
+                return;
+            }
+            // Search for and disable plugins that may have been involved in this crash.
+            boolean disabledAny = checkStack(throwable);
+            if (!disabledAny) {
+                // We couldn't find any plugins involved in this crash, just to be safe
+                // disable all the plugins, so we can be sure that SysUI is running as
+                // best as possible.
+                for (PluginInstanceManager manager : mPluginMap.values()) {
+                    manager.disableAll();
+                }
+            }
+
+            // Run the normal exception handler so we can crash and cleanup our state.
+            mHandler.uncaughtException(thread, throwable);
+!!!3310341.java!!!	checkStack(inout throwable : Throwable) : boolean
+            if (throwable == null) return false;
+            boolean disabledAny = false;
+            for (StackTraceElement element : throwable.getStackTrace()) {
+                for (PluginInstanceManager manager : mPluginMap.values()) {
+                    disabledAny |= manager.checkAndDisable(element.getClassName());
+                }
+            }
+            return disabledAny | checkStack(throwable.getCause());

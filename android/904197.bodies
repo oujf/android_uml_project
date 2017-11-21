@@ -1,0 +1,78 @@
+class VolumeDialogComponent
+!!!4283013.java!!!	VolumeDialogComponent(inout sysui : SystemUI, inout context : Context, inout handler : Handler)
+        mSysui = sysui;
+        mContext = context;
+        mController = (VolumeDialogControllerImpl) Dependency.get(VolumeDialogController.class);
+        mController.setUserActivityListener(this);
+        // Allow plugins to reference the VolumeDialogController.
+        Dependency.get(PluginDependencyProvider.class)
+                .allowPluginDependency(VolumeDialogController.class);
+        mExtension = Dependency.get(ExtensionController.class).newExtension(VolumeDialog.class)
+                .withPlugin(VolumeDialog.class)
+                .withDefault(this::createDefault)
+                .withCallback(dialog -> {
+                    if (mDialog != null) {
+                        mDialog.destroy();
+                    }
+                    mDialog = dialog;
+                    mDialog.init(LayoutParams.TYPE_VOLUME_OVERLAY, mVolumeDialogCallback);
+                }).build();
+        applyConfiguration();
+        Dependency.get(TunerService.class).addTunable(this, VOLUME_DOWN_SILENT, VOLUME_UP_SILENT,
+                VOLUME_SILENT_DO_NOT_DISTURB);
+!!!4283141.java!!!	createDefault() : VolumeDialog
+        VolumeDialogImpl impl = new VolumeDialogImpl(mContext);
+        impl.setStreamImportant(AudioManager.STREAM_ALARM, true);
+        impl.setStreamImportant(AudioManager.STREAM_SYSTEM, false);
+        impl.setAutomute(true);
+        impl.setSilentMode(false);
+        return impl;
+!!!4283269.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        if (VOLUME_DOWN_SILENT.equals(key)) {
+            final boolean volumeDownToEnterSilent = newValue != null
+                    ? Integer.parseInt(newValue) != 0
+                    : DEFAULT_VOLUME_DOWN_TO_ENTER_SILENT;
+            setVolumePolicy(volumeDownToEnterSilent,
+                    mVolumePolicy.volumeUpToExitSilent, mVolumePolicy.doNotDisturbWhenSilent,
+                    mVolumePolicy.vibrateToSilentDebounce);
+        } else if (VOLUME_UP_SILENT.equals(key)) {
+            final boolean volumeUpToExitSilent = newValue != null
+                    ? Integer.parseInt(newValue) != 0
+                    : DEFAULT_VOLUME_UP_TO_EXIT_SILENT;
+            setVolumePolicy(mVolumePolicy.volumeDownToEnterSilent,
+                    volumeUpToExitSilent, mVolumePolicy.doNotDisturbWhenSilent,
+                    mVolumePolicy.vibrateToSilentDebounce);
+        } else if (VOLUME_SILENT_DO_NOT_DISTURB.equals(key)) {
+            final boolean doNotDisturbWhenSilent = newValue != null
+                    ? Integer.parseInt(newValue) != 0
+                    : DEFAULT_DO_NOT_DISTURB_WHEN_SILENT;
+            setVolumePolicy(mVolumePolicy.volumeDownToEnterSilent,
+                    mVolumePolicy.volumeUpToExitSilent, doNotDisturbWhenSilent,
+                    mVolumePolicy.vibrateToSilentDebounce);
+        }
+!!!4283397.java!!!	setVolumePolicy(inout volumeDownToEnterSilent : boolean, inout volumeUpToExitSilent : boolean, inout doNotDisturbWhenSilent : boolean, in vibrateToSilentDebounce : int) : void
+        mVolumePolicy = new VolumePolicy(volumeDownToEnterSilent, volumeUpToExitSilent,
+                doNotDisturbWhenSilent, vibrateToSilentDebounce);
+        mController.setVolumePolicy(mVolumePolicy);
+!!!4283525.java!!!	onUserActivity() : void
+        final KeyguardViewMediator kvm = mSysui.getComponent(KeyguardViewMediator.class);
+        if (kvm != null) {
+            kvm.userActivity();
+        }
+!!!4283653.java!!!	applyConfiguration() : void
+        mController.setVolumePolicy(mVolumePolicy);
+        mController.showDndTile(true);
+!!!4283781.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        if (mConfigChanges.applyNewConfig(mContext.getResources())) {
+            mExtension.reload();
+        }
+!!!4283909.java!!!	dismissNow() : void
+        mController.dismiss();
+!!!4284037.java!!!	dispatchDemoCommand(in command : String, inout args : Bundle) : void
+        // noop
+!!!4284165.java!!!	register() : void
+        mController.register();
+        DndTile.setCombinedIcon(mContext, true);
+!!!4284421.java!!!	startSettings(inout intent : Intent) : void
+        Dependency.get(ActivityStarter.class).startActivity(intent,
+                true /* onlyProvisioned */, true /* dismissShade */);

@@ -1,0 +1,123 @@
+class PinnedStackWindowController
+!!!12723845.java!!!	PinnedStackWindowController(in stackId : int, inout listener : PinnedStackWindowListener, in displayId : int, inout onTop : boolean, inout outBounds : Rect)
+        super(stackId, listener, displayId, onTop, outBounds, WindowManagerService.getInstance());
+!!!12723973.java!!!	getPictureInPictureBounds(in aspectRatio : float, inout stackBounds : Rect) : Rect
+        synchronized (mWindowMap) {
+            if (!mService.mSupportsPictureInPicture || mContainer == null) {
+                return null;
+            }
+
+            final DisplayContent displayContent = mContainer.getDisplayContent();
+            if (displayContent == null) {
+                return null;
+            }
+
+            final PinnedStackController pinnedStackController =
+                    displayContent.getPinnedStackController();
+            if (stackBounds == null) {
+                // Calculate the aspect ratio bounds from the default bounds
+                stackBounds = pinnedStackController.getDefaultBounds();
+            }
+
+            if (pinnedStackController.isValidPictureInPictureAspectRatio(aspectRatio)) {
+                return pinnedStackController.transformBoundsToAspectRatio(stackBounds, aspectRatio,
+                        true /* useCurrentMinEdgeSize */);
+            } else {
+                return stackBounds;
+            }
+        }
+!!!12724101.java!!!	animateResizePinnedStack(inout toBounds : Rect, inout sourceHintBounds : Rect, in animationDuration : int, inout fromFullscreen : boolean) : void
+        synchronized (mWindowMap) {
+            if (mContainer == null) {
+                throw new IllegalArgumentException("Pinned stack container not found :(");
+            }
+
+            // Get the from-bounds
+            final Rect fromBounds = new Rect();
+            mContainer.getBounds(fromBounds);
+
+            // Get non-null fullscreen to-bounds for animating if the bounds are null
+            @SchedulePipModeChangedState int schedulePipModeChangedState =
+                NO_PIP_MODE_CHANGED_CALLBACKS;
+            final boolean toFullscreen = toBounds == null;
+            if (toFullscreen) {
+                if (fromFullscreen) {
+                    throw new IllegalArgumentException("Should not defer scheduling PiP mode"
+                            + " change on animation to fullscreen.");
+                }
+                schedulePipModeChangedState = SCHEDULE_PIP_MODE_CHANGED_ON_START;
+
+                mService.getStackBounds(FULLSCREEN_WORKSPACE_STACK_ID, mTmpToBounds);
+                if (!mTmpToBounds.isEmpty()) {
+                    // If there is a fullscreen bounds, use that
+                    toBounds = new Rect(mTmpToBounds);
+                } else {
+                    // Otherwise, use the display bounds
+                    toBounds = new Rect();
+                    mContainer.getDisplayContent().getLogicalDisplayRect(toBounds);
+                }
+            } else if (fromFullscreen) {
+                schedulePipModeChangedState = SCHEDULE_PIP_MODE_CHANGED_ON_END;
+            }
+
+            mContainer.setAnimationFinalBounds(sourceHintBounds, toBounds, toFullscreen);
+
+            final Rect finalToBounds = toBounds;
+            final @SchedulePipModeChangedState int finalSchedulePipModeChangedState =
+                schedulePipModeChangedState;
+            mService.mBoundsAnimationController.getHandler().post(() -> {
+                if (mContainer == null) {
+                    return;
+                }
+                mService.mBoundsAnimationController.animateBounds(mContainer, fromBounds,
+                        finalToBounds, animationDuration, finalSchedulePipModeChangedState,
+                        fromFullscreen, toFullscreen);
+            });
+        }
+!!!12724229.java!!!	setPictureInPictureAspectRatio(in aspectRatio : float) : void
+        synchronized (mWindowMap) {
+            if (!mService.mSupportsPictureInPicture || mContainer == null) {
+                return;
+            }
+
+            final PinnedStackController pinnedStackController =
+                    mContainer.getDisplayContent().getPinnedStackController();
+
+            if (Float.compare(aspectRatio, pinnedStackController.getAspectRatio()) != 0) {
+                mContainer.getAnimationOrCurrentBounds(mTmpFromBounds);
+                mTmpToBounds.set(mTmpFromBounds);
+                getPictureInPictureBounds(aspectRatio, mTmpToBounds);
+                if (!mTmpToBounds.equals(mTmpFromBounds)) {
+                    animateResizePinnedStack(mTmpToBounds, null /* sourceHintBounds */,
+                            -1 /* duration */, false /* fromFullscreen */);
+                }
+                pinnedStackController.setAspectRatio(
+                        pinnedStackController.isValidPictureInPictureAspectRatio(aspectRatio)
+                                ? aspectRatio : -1f);
+            }
+        }
+!!!12724357.java!!!	setPictureInPictureActions(inout actions : List<RemoteAction>) : void
+        synchronized (mWindowMap) {
+            if (!mService.mSupportsPictureInPicture || mContainer == null) {
+                return;
+            }
+
+            mContainer.getDisplayContent().getPinnedStackController().setActions(actions);
+        }
+!!!12724485.java!!!	deferScheduleMultiWindowModeChanged() : boolean
+        synchronized(mWindowMap) {
+            return mContainer.deferScheduleMultiWindowModeChanged();
+        }
+!!!12724613.java!!!	isAnimatingBoundsToFullscreen() : boolean
+        synchronized (mWindowMap) {
+            return mContainer.isAnimatingBoundsToFullscreen();
+        }
+!!!12724741.java!!!	pinnedStackResizeDisallowed() : boolean
+        synchronized (mWindowMap) {
+            return mContainer.pinnedStackResizeDisallowed();
+        }
+!!!12724869.java!!!	updatePictureInPictureModeForPinnedStackAnimation(inout targetStackBounds : Rect) : void
+        if (mListener != null) {
+            PinnedStackWindowListener listener = (PinnedStackWindowListener) mListener;
+            listener.updatePictureInPictureModeForPinnedStackAnimation(targetStackBounds);
+        }

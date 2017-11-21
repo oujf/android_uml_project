@@ -1,0 +1,66 @@
+class EnumerateClient
+!!!11546757.java!!!	EnumerateClient(inout context : Context, in halDeviceId : long, inout token : IBinder, inout receiver : IFingerprintServiceReceiver, in groupId : int, in userId : int, inout restricted : boolean, in owner : String)
+        super(context, halDeviceId, token, receiver, userId, groupId, restricted, owner);
+!!!11546885.java!!!	start() : int
+        IBiometricsFingerprint daemon = getFingerprintDaemon();
+        // The fingerprint template ids will be removed when we get confirmation from the HAL
+        try {
+            final int result = daemon.enumerate();
+            if (result != 0) {
+                Slog.w(TAG, "start enumerate for user " + getTargetUserId()
+                    + " failed, result=" + result);
+                MetricsLogger.histogram(getContext(), "fingerprintd_enum_start_error", result);
+                onError(FingerprintManager.FINGERPRINT_ERROR_HW_UNAVAILABLE, 0 /* vendorCode */);
+                return result;
+            }
+        } catch (RemoteException e) {
+            Slog.e(TAG, "startEnumeration failed", e);
+        }
+        return 0;
+!!!11547013.java!!!	stop(inout initiatedByClient : boolean) : int
+        if (mAlreadyCancelled) {
+            Slog.w(TAG, "stopEnumerate: already cancelled!");
+            return 0;
+        }
+        IBiometricsFingerprint daemon = getFingerprintDaemon();
+        if (daemon == null) {
+            Slog.w(TAG, "stopEnumeration: no fingerprint HAL!");
+            return ERROR_ESRCH;
+        }
+        try {
+            final int result = daemon.cancel();
+            if (result != 0) {
+                Slog.w(TAG, "stop enumeration failed, result=" + result);
+                return result;
+            }
+        } catch (RemoteException e) {
+            Slog.e(TAG, "stopEnumeration failed", e);
+            return ERROR_ESRCH;
+        }
+
+        // We don't actually stop enumerate, but inform the client that the cancel operation
+        // succeeded so we can start the next operation.
+        if (initiatedByClient) {
+            onError(FingerprintManager.FINGERPRINT_ERROR_CANCELED, 0 /* vendorCode */);
+        }
+        mAlreadyCancelled = true;
+        return 0; // success
+!!!11547141.java!!!	onEnumerationResult(in fingerId : int, in groupId : int, in remaining : int) : boolean
+        IFingerprintServiceReceiver receiver = getReceiver();
+        if (receiver == null)
+            return true; // client not listening
+        try {
+            receiver.onEnumerated(getHalDeviceId(), fingerId, groupId, remaining);
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to notify enumerated:", e);
+        }
+        return fingerId == 0; // done when id hits 0
+!!!11547269.java!!!	onAuthenticated(in fingerId : int, in groupId : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onAuthenticated() called for enumerate!");
+        return true; // Invalid for Enumerate.
+!!!11547397.java!!!	onEnrollResult(in fingerId : int, in groupId : int, in rem : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onEnrollResult() called for enumerate!");
+        return true; // Invalid for Enumerate.
+!!!11547525.java!!!	onRemoved(in fingerId : int, in groupId : int, in remaining : int) : boolean
+        if (DEBUG) Slog.w(TAG, "onRemoved() called for enumerate!");
+        return true; // Invalid for Enumerate.

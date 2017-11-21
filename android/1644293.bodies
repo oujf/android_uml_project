@@ -1,0 +1,241 @@
+class LocalService
+!!!11069957.java!!!	grantUriPermissionFromIntent(in callingUid : int, in targetPkg : String, inout intent : Intent, in targetUserId : int) : void
+            synchronized (ActivityManagerService.this) {
+                ActivityManagerService.this.grantUriPermissionFromIntentLocked(callingUid,
+                        targetPkg, intent, null, targetUserId);
+            }
+!!!11070085.java!!!	checkContentProviderAccess(in authority : String, in userId : int) : String
+            return ActivityManagerService.this.checkContentProviderAccess(authority, userId);
+!!!11070213.java!!!	onWakefulnessChanged(in wakefulness : int) : void
+            ActivityManagerService.this.onWakefulnessChanged(wakefulness);
+!!!11070341.java!!!	startIsolatedProcess(in entryPoint : String, inout entryPointArgs : String [[]], in processName : String, in abiOverride : String, in uid : int, inout crashHandler : Runnable) : int
+            return ActivityManagerService.this.startIsolatedProcess(entryPoint, entryPointArgs,
+                    processName, abiOverride, uid, crashHandler);
+!!!11070469.java!!!	acquireSleepToken(in tag : String) : ActivityManagerInternal::SleepToken
+            Preconditions.checkNotNull(tag);
+
+            synchronized (ActivityManagerService.this) {
+                SleepTokenImpl token = new SleepTokenImpl(tag);
+                mSleepTokens.add(token);
+                updateSleepIfNeededLocked();
+                return token;
+            }
+!!!11070597.java!!!	getHomeActivityForUser(in userId : int) : ComponentName
+            synchronized (ActivityManagerService.this) {
+                ActivityRecord homeActivity = mStackSupervisor.getHomeActivityForUser(userId);
+                return homeActivity == null ? null : homeActivity.realActivity;
+            }
+!!!11070725.java!!!	onUserRemoved(in userId : int) : void
+            synchronized (ActivityManagerService.this) {
+                ActivityManagerService.this.onUserStoppedLocked(userId);
+            }
+!!!11070853.java!!!	onLocalVoiceInteractionStarted(inout activity : IBinder, inout voiceSession : IVoiceInteractionSession, inout voiceInteractor : IVoiceInteractor) : void
+            synchronized (ActivityManagerService.this) {
+                ActivityManagerService.this.onLocalVoiceInteractionStartedLocked(activity,
+                        voiceSession, voiceInteractor);
+            }
+!!!11070981.java!!!	notifyAppTransitionStarting(inout reasons : SparseIntArray, in timestamp : long) : void
+            synchronized (ActivityManagerService.this) {
+                mStackSupervisor.mActivityMetricsLogger.notifyTransitionStarting(
+                        reasons, timestamp);
+            }
+!!!11071109.java!!!	notifyAppTransitionFinished() : void
+            synchronized (ActivityManagerService.this) {
+                mStackSupervisor.notifyAppTransitionDone();
+            }
+!!!11071237.java!!!	notifyAppTransitionCancelled() : void
+            synchronized (ActivityManagerService.this) {
+                mStackSupervisor.notifyAppTransitionDone();
+            }
+!!!11071365.java!!!	getTopVisibleActivities() : IBinder
+            synchronized (ActivityManagerService.this) {
+                return mStackSupervisor.getTopVisibleActivities();
+            }
+!!!11071493.java!!!	notifyDockedStackMinimizedChanged(inout minimized : boolean) : void
+            synchronized (ActivityManagerService.this) {
+                mStackSupervisor.setDockedStackMinimized(minimized);
+            }
+!!!11071621.java!!!	killForegroundAppsForUser(in userHandle : int) : void
+            synchronized (ActivityManagerService.this) {
+                final ArrayList<ProcessRecord> procs = new ArrayList<>();
+                final int NP = mProcessNames.getMap().size();
+                for (int ip = 0; ip < NP; ip++) {
+                    final SparseArray<ProcessRecord> apps = mProcessNames.getMap().valueAt(ip);
+                    final int NA = apps.size();
+                    for (int ia = 0; ia < NA; ia++) {
+                        final ProcessRecord app = apps.valueAt(ia);
+                        if (app.persistent) {
+                            // We don't kill persistent processes.
+                            continue;
+                        }
+                        if (app.removed) {
+                            procs.add(app);
+                        } else if (app.userId == userHandle && app.foregroundActivities) {
+                            app.removed = true;
+                            procs.add(app);
+                        }
+                    }
+                }
+
+                final int N = procs.size();
+                for (int i = 0; i < N; i++) {
+                    removeProcessLocked(procs.get(i), false, true, "kill all fg");
+                }
+            }
+!!!11071749.java!!!	setPendingIntentWhitelistDuration(inout target : IIntentSender, inout whitelistToken : IBinder, in duration : long) : void
+            if (!(target instanceof PendingIntentRecord)) {
+                Slog.w(TAG, "markAsSentFromNotification(): not a PendingIntentRecord: " + target);
+                return;
+            }
+            ((PendingIntentRecord) target).setWhitelistDurationLocked(whitelistToken, duration);
+!!!11071877.java!!!	setDeviceIdleWhitelist(inout appids : int [[]]) : void
+            synchronized (ActivityManagerService.this) {
+                mDeviceIdleWhitelist = appids;
+            }
+!!!11072005.java!!!	updateDeviceIdleTempWhitelist(inout appids : int [[]], in changingAppId : int, inout adding : boolean) : void
+            synchronized (ActivityManagerService.this) {
+                mDeviceIdleTempWhitelist = appids;
+                setAppIdTempWhitelistStateLocked(changingAppId, adding);
+            }
+!!!11072133.java!!!	updatePersistentConfigurationForUser(inout values : Configuration, in userId : int) : void
+            Preconditions.checkNotNull(values, "Configuration must not be null");
+            Preconditions.checkArgumentNonnegative(userId, "userId " + userId + " not supported");
+            synchronized (ActivityManagerService.this) {
+                updateConfigurationLocked(values, null, false, true, userId,
+                        false /* deferResume */);
+            }
+!!!11072261.java!!!	startActivitiesAsPackage(in packageName : String, in userId : int, inout intents : Intent [[]], inout bOptions : Bundle) : int
+            Preconditions.checkNotNull(intents, "intents");
+            final String[] resolvedTypes = new String[intents.length];
+            for (int i = 0; i < intents.length; i++) {
+                resolvedTypes[i] = intents[i].resolveTypeIfNeeded(mContext.getContentResolver());
+            }
+
+            // UID of the package on user userId.
+            // "= 0" is needed because otherwise catch(RemoteException) would make it look like
+            // packageUid may not be initialized.
+            int packageUid = 0;
+            try {
+                packageUid = AppGlobals.getPackageManager().getPackageUid(
+                        packageName, PackageManager.MATCH_DEBUG_TRIAGED_MISSING, userId);
+            } catch (RemoteException e) {
+                // Shouldn't happen.
+            }
+
+            synchronized (ActivityManagerService.this) {
+                return startActivitiesInPackage(packageUid, packageName, intents, resolvedTypes,
+                        /*resultTo*/ null, bOptions, userId);
+            }
+!!!11072389.java!!!	getUidProcessState(in uid : int) : int
+            return getUidState(uid);
+!!!11072517.java!!!	notifyKeyguardFlagsChanged(inout callback : Runnable) : void
+            synchronized (ActivityManagerService.this) {
+
+                // We might change the visibilities here, so prepare an empty app transition which
+                // might be overridden later if we actually change visibilities.
+                mWindowManager.prepareAppTransition(TRANSIT_NONE, false /* alwaysKeepCurrent */);
+                mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+                mWindowManager.executeAppTransition();
+            }
+            if (callback != null) {
+                callback.run();
+            }
+!!!11072645.java!!!	isSystemReady() : boolean
+            // no need to synchronize(this) just to read & return the value
+            return mSystemReady;
+!!!11072773.java!!!	notifyKeyguardTrustedChanged() : void
+            synchronized (ActivityManagerService.this) {
+                if (mKeyguardController.isKeyguardShowing()) {
+                    mStackSupervisor.ensureActivitiesVisibleLocked(null, 0, !PRESERVE_WINDOWS);
+                }
+            }
+!!!11072901.java!!!	setHasOverlayUi(in pid : int, inout hasOverlayUi : boolean) : void
+            synchronized (ActivityManagerService.this) {
+                final ProcessRecord pr;
+                synchronized (mPidsSelfLocked) {
+                    pr = mPidsSelfLocked.get(pid);
+                    if (pr == null) {
+                        Slog.w(TAG, "setHasOverlayUi called on unknown pid: " + pid);
+                        return;
+                    }
+                }
+                if (pr.hasOverlayUi == hasOverlayUi) {
+                    return;
+                }
+                pr.hasOverlayUi = hasOverlayUi;
+                //Slog.i(TAG, "Setting hasOverlayUi=" + pr.hasOverlayUi + " for pid=" + pid);
+                updateOomAdjLocked(pr, true);
+            }
+!!!11073029.java!!!	notifyNetworkPolicyRulesUpdated(in uid : int, in procStateSeq : long) : void
+            if (DEBUG_NETWORK) {
+                Slog.d(TAG_NETWORK, "Got update from NPMS for uid: "
+                        + uid + " seq: " + procStateSeq);
+            }
+            UidRecord record;
+            synchronized (ActivityManagerService.this) {
+                record = mActiveUids.get(uid);
+                if (record == null) {
+                    if (DEBUG_NETWORK) {
+                        Slog.d(TAG_NETWORK, "No active uidRecord for uid: " + uid
+                                + " procStateSeq: " + procStateSeq);
+                    }
+                    return;
+                }
+            }
+            synchronized (record.networkStateLock) {
+                if (record.lastNetworkUpdatedProcStateSeq >= procStateSeq) {
+                    if (DEBUG_NETWORK) {
+                        Slog.d(TAG_NETWORK, "procStateSeq: " + procStateSeq + " has already"
+                                + " been handled for uid: " + uid);
+                    }
+                    return;
+                }
+                record.lastNetworkUpdatedProcStateSeq = procStateSeq;
+                if (record.curProcStateSeq > procStateSeq) {
+                    if (DEBUG_NETWORK) {
+                        Slog.d(TAG_NETWORK, "No need to handle older seq no., Uid: " + uid
+                                + ", curProcstateSeq: " + record.curProcStateSeq
+                                + ", procStateSeq: " + procStateSeq);
+                    }
+                    return;
+                }
+                if (record.waitingForNetwork) {
+                    if (DEBUG_NETWORK) {
+                        Slog.d(TAG_NETWORK, "Notifying all blocking threads for uid: " + uid
+                                + ", procStateSeq: " + procStateSeq);
+                    }
+                    record.networkStateLock.notifyAll();
+                }
+            }
+!!!11073157.java!!!	setVr2dDisplayId(in vr2dDisplayId : int) : void
+            if (DEBUG_STACK) {
+                Slog.d(TAG, "setVr2dDisplayId called for: " +
+                        vr2dDisplayId);
+            }
+            synchronized (ActivityManagerService.this) {
+                mVr2dDisplayId = vr2dDisplayId;
+            }
+!!!11073285.java!!!	saveANRState(in reason : String) : void
+            synchronized (ActivityManagerService.this) {
+                final StringWriter sw = new StringWriter();
+                final PrintWriter pw = new FastPrintWriter(sw, false, 1024);
+                pw.println("  ANR time: " + DateFormat.getDateTimeInstance().format(new Date()));
+                if (reason != null) {
+                    pw.println("  Reason: " + reason);
+                }
+                pw.println();
+                mActivityStarter.dump(pw, "  ");
+                pw.println();
+                pw.println("-------------------------------------------------------------------------------");
+                dumpActivitiesLocked(null /* fd */, pw, null /* args */, 0 /* opti */,
+                        true /* dumpAll */, false /* dumpClient */, null /* dumpPackage */,
+                        "" /* header */);
+                pw.println();
+                pw.close();
+
+                mLastANRState = sw.toString();
+            }
+!!!11073413.java!!!	clearSavedANRState() : void
+            synchronized (ActivityManagerService.this) {
+                mLastANRState = null;
+            }

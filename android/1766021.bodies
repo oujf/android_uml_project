@@ -1,0 +1,50 @@
+class DiskStatsLoggingService
+!!!12473477.java!!!	onStartJob(inout params : JobParameters) : boolean
+        // We need to check the preconditions again because they may not be enforced for
+        // subsequent runs.
+        if (!isCharging(this) || !isDumpsysTaskEnabled(getContentResolver())) {
+            jobFinished(params, true);
+            return false;
+        }
+
+
+        VolumeInfo volume = getPackageManager().getPrimaryStorageCurrentVolume();
+        // volume is null if the primary storage is not yet mounted.
+        if (volume == null) {
+            return false;
+        }
+        AppCollector collector = new AppCollector(this, volume);
+
+        final int userId = UserHandle.myUserId();
+        UserEnvironment environment = new UserEnvironment(userId);
+        LogRunnable task = new LogRunnable();
+        task.setDownloadsDirectory(
+                environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS));
+        task.setSystemSize(FileCollector.getSystemSize(this));
+        task.setLogOutputFile(new File(DUMPSYS_CACHE_PATH));
+        task.setAppCollector(collector);
+        task.setJobService(this, params);
+        task.setContext(this);
+        AsyncTask.execute(task);
+        return true;
+!!!12473605.java!!!	onStopJob(inout params : JobParameters) : boolean
+        // TODO: Try to stop being handled.
+        return false;
+!!!12473733.java!!!	schedule(inout context : Context) : void
+        JobScheduler js = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+
+        js.schedule(new JobInfo.Builder(JOB_DISKSTATS_LOGGING, sDiskStatsLoggingService)
+                .setRequiresDeviceIdle(true)
+                .setRequiresCharging(true)
+                .setPeriodic(TimeUnit.DAYS.toMillis(1))
+                .build());
+!!!12473861.java!!!	isCharging(inout context : Context) : boolean
+        BatteryManager batteryManager =
+                (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+        if (batteryManager != null) {
+            return batteryManager.isCharging();
+        }
+        return false;
+!!!12473989.java!!!	isDumpsysTaskEnabled(inout resolver : ContentResolver) : boolean
+        // The default is to treat the task as enabled.
+        return Settings.Global.getInt(resolver, Settings.Global.ENABLE_DISKSTATS_LOGGING, 1) != 0;

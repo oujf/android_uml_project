@@ -1,0 +1,362 @@
+class ScrimController
+!!!4069125.java!!!	ScrimController(inout lightBarController : LightBarController, inout scrimBehind : ScrimView, inout scrimInFront : ScrimView, inout headsUpScrim : View)
+        mScrimBehind = scrimBehind;
+        mScrimInFront = scrimInFront;
+        mHeadsUpScrim = headsUpScrim;
+        final Context context = scrimBehind.getContext();
+        mUnlockMethodCache = UnlockMethodCache.getInstance(context);
+        mKeyguardUpdateMonitor = KeyguardUpdateMonitor.getInstance(context);
+        mLightBarController = lightBarController;
+        mScrimBehindAlpha = context.getResources().getFloat(R.dimen.scrim_behind_alpha);
+
+        updateHeadsUpScrim(false);
+        updateScrims();
+!!!4069253.java!!!	setKeyguardShowing(inout showing : boolean) : void
+        mKeyguardShowing = showing;
+        scheduleUpdate();
+!!!4069381.java!!!	setScrimBehindValues(in scrimBehindAlphaKeyguard : float, in scrimBehindAlphaUnlocking : float) : void
+        mScrimBehindAlphaKeyguard = scrimBehindAlphaKeyguard;
+        mScrimBehindAlphaUnlocking = scrimBehindAlphaUnlocking;
+        scheduleUpdate();
+!!!4069509.java!!!	onTrackingStarted() : void
+        mTracking = true;
+        mDarkenWhileDragging = !mUnlockMethodCache.canSkipBouncer();
+!!!4069637.java!!!	onExpandingFinished() : void
+        mTracking = false;
+!!!4069765.java!!!	setPanelExpansion(in fraction : float) : void
+        if (mFraction != fraction) {
+            mFraction = fraction;
+            scheduleUpdate();
+            if (mPinnedHeadsUpCount != 0) {
+                updateHeadsUpScrim(false);
+            }
+            if (mKeyguardFadeoutAnimation != null && mTracking) {
+                mKeyguardFadeoutAnimation.cancel();
+            }
+        }
+!!!4069893.java!!!	setBouncerShowing(inout showing : boolean) : void
+        mBouncerShowing = showing;
+        mAnimateChange = !mTracking && !mDontAnimateBouncerChanges;
+        scheduleUpdate();
+!!!4070021.java!!!	setWakeAndUnlocking() : void
+        mWakeAndUnlocking = true;
+        scheduleUpdate();
+!!!4070149.java!!!	animateKeyguardFadingOut(in delay : long, in duration : long, inout onAnimationFinished : Runnable, inout skipFirstFrame : boolean) : void
+        mWakeAndUnlocking = false;
+        mAnimateKeyguardFadingOut = true;
+        mDurationOverride = duration;
+        mAnimationDelay = delay;
+        mAnimateChange = true;
+        mSkipFirstFrame = skipFirstFrame;
+        mOnAnimationFinished = onAnimationFinished;
+
+        if (!mKeyguardUpdateMonitor.needsSlowUnlockTransition()) {
+            scheduleUpdate();
+
+            // No need to wait for the next frame to be drawn for this case - onPreDraw will execute
+            // the changes we just scheduled.
+            onPreDraw();
+        } else {
+
+            // In case the user isn't unlocked, make sure to delay a bit because the system is hosed
+            // with too many things in this case, in order to not skip the initial frames.
+            mScrimInFront.postOnAnimationDelayed(this::scheduleUpdate, 16);
+        }
+!!!4070277.java!!!	abortKeyguardFadingOut() : void
+        if (mAnimateKeyguardFadingOut) {
+            endAnimateKeyguardFadingOut(true /* force */);
+        }
+!!!4070405.java!!!	animateKeyguardUnoccluding(in duration : long) : void
+        mAnimateChange = false;
+        setScrimBehindColor(0f);
+        mAnimateChange = true;
+        scheduleUpdate();
+        mDurationOverride = duration;
+!!!4070533.java!!!	animateGoingToFullShade(in delay : long, in duration : long) : void
+        mDurationOverride = duration;
+        mAnimationDelay = delay;
+        mAnimateChange = true;
+        scheduleUpdate();
+!!!4070661.java!!!	setDozing(inout dozing : boolean) : void
+        if (mDozing != dozing) {
+            mDozing = dozing;
+            scheduleUpdate();
+        }
+!!!4070789.java!!!	setDozeInFrontAlpha(in alpha : float) : void
+        mDozeInFrontAlpha = alpha;
+        updateScrimColor(mScrimInFront);
+!!!4070917.java!!!	setDozeBehindAlpha(in alpha : float) : void
+        mDozeBehindAlpha = alpha;
+        updateScrimColor(mScrimBehind);
+!!!4071045.java!!!	getDozeBehindAlpha() : float
+        return mDozeBehindAlpha;
+!!!4071173.java!!!	getDozeInFrontAlpha() : float
+        return mDozeInFrontAlpha;
+!!!4071301.java!!!	getScrimInFrontAlpha() : float
+        return mKeyguardUpdateMonitor.needsSlowUnlockTransition()
+                ? SCRIM_IN_FRONT_ALPHA_LOCKED
+                : SCRIM_IN_FRONT_ALPHA;
+!!!4071429.java!!!	scheduleUpdate() : void
+        if (mUpdatePending) return;
+
+        // Make sure that a frame gets scheduled.
+        mScrimBehind.invalidate();
+        mScrimBehind.getViewTreeObserver().addOnPreDrawListener(this);
+        mUpdatePending = true;
+!!!4071557.java!!!	updateScrims() : void
+        if (mAnimateKeyguardFadingOut || mForceHideScrims) {
+            setScrimInFrontColor(0f);
+            setScrimBehindColor(0f);
+        } else if (mWakeAndUnlocking) {
+
+            // During wake and unlock, we first hide everything behind a black scrim, which then
+            // gets faded out from animateKeyguardFadingOut.
+            if (mDozing) {
+                setScrimInFrontColor(0f);
+                setScrimBehindColor(1f);
+            } else {
+                setScrimInFrontColor(1f);
+                setScrimBehindColor(0f);
+            }
+        } else if (!mKeyguardShowing && !mBouncerShowing) {
+            updateScrimNormal();
+            setScrimInFrontColor(0);
+        } else {
+            updateScrimKeyguard();
+        }
+        mAnimateChange = false;
+!!!4071685.java!!!	updateScrimKeyguard() : void
+        if (mTracking && mDarkenWhileDragging) {
+            float behindFraction = Math.max(0, Math.min(mFraction, 1));
+            float fraction = 1 - behindFraction;
+            fraction = (float) Math.pow(fraction, 0.8f);
+            behindFraction = (float) Math.pow(behindFraction, 0.8f);
+            setScrimInFrontColor(fraction * getScrimInFrontAlpha());
+            setScrimBehindColor(behindFraction * mScrimBehindAlphaKeyguard);
+        } else if (mBouncerShowing && !mBouncerIsKeyguard) {
+            setScrimInFrontColor(getScrimInFrontAlpha());
+            updateScrimNormal();
+        } else if (mBouncerShowing) {
+            setScrimInFrontColor(0f);
+            setScrimBehindColor(mScrimBehindAlpha);
+        } else {
+            float fraction = Math.max(0, Math.min(mFraction, 1));
+            setScrimInFrontColor(0f);
+            setScrimBehindColor(fraction
+                    * (mScrimBehindAlphaKeyguard - mScrimBehindAlphaUnlocking)
+                    + mScrimBehindAlphaUnlocking);
+        }
+!!!4071813.java!!!	updateScrimNormal() : void
+        float frac = mFraction;
+        // let's start this 20% of the way down the screen
+        frac = frac * 1.2f - 0.2f;
+        if (frac <= 0) {
+            setScrimBehindColor(0);
+        } else {
+            // woo, special effects
+            final float k = (float)(1f-0.5f*(1f-Math.cos(3.14159f * Math.pow(1f-frac, 2f))));
+            setScrimBehindColor(k * mScrimBehindAlpha);
+        }
+!!!4071941.java!!!	setScrimBehindColor(in alpha : float) : void
+        setScrimColor(mScrimBehind, alpha);
+!!!4072069.java!!!	setScrimInFrontColor(in alpha : float) : void
+        setScrimColor(mScrimInFront, alpha);
+        if (alpha == 0f) {
+            mScrimInFront.setClickable(false);
+        } else {
+
+            // Eat touch events (unless dozing).
+            mScrimInFront.setClickable(!mDozing);
+        }
+!!!4072197.java!!!	setScrimColor(inout scrim : View, in alpha : float) : void
+        updateScrim(mAnimateChange, scrim, alpha, getCurrentScrimAlpha(scrim));
+!!!4072325.java!!!	getDozeAlpha(inout scrim : View) : float
+        return scrim == mScrimBehind ? mDozeBehindAlpha : mDozeInFrontAlpha;
+!!!4072453.java!!!	getCurrentScrimAlpha(inout scrim : View) : float
+        return scrim == mScrimBehind ? mCurrentBehindAlpha
+                : scrim == mScrimInFront ? mCurrentInFrontAlpha
+                : mCurrentHeadsUpAlpha;
+!!!4072581.java!!!	setCurrentScrimAlpha(inout scrim : View, in alpha : float) : void
+        if (scrim == mScrimBehind) {
+            mCurrentBehindAlpha = alpha;
+            mLightBarController.setScrimAlpha(mCurrentBehindAlpha);
+        } else if (scrim == mScrimInFront) {
+            mCurrentInFrontAlpha = alpha;
+        } else {
+            alpha = Math.max(0.0f, Math.min(1.0f, alpha));
+            mCurrentHeadsUpAlpha = alpha;
+        }
+!!!4072709.java!!!	updateScrimColor(inout scrim : View) : void
+        float alpha1 = getCurrentScrimAlpha(scrim);
+        if (scrim instanceof ScrimView) {
+            float alpha2 = getDozeAlpha(scrim);
+            float alpha = 1 - (1 - alpha1) * (1 - alpha2);
+            alpha = Math.max(0, Math.min(1.0f, alpha));
+            int baseColor = ((ScrimView) scrim).getScrimColor();
+            ((ScrimView) scrim).setScrimColor(
+                    ColorUtils.setAlphaComponent(baseColor, (int) (alpha * 255)));
+        } else {
+            scrim.setAlpha(alpha1);
+        }
+!!!4072837.java!!!	startScrimAnimation(in scrim : View, in target : float) : void
+        float current = getCurrentScrimAlpha(scrim);
+        ValueAnimator anim = ValueAnimator.ofFloat(current, target);
+        anim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                float alpha = (float) animation.getAnimatedValue();
+                setCurrentScrimAlpha(scrim, alpha);
+                updateScrimColor(scrim);
+            }
+        });
+        anim.setInterpolator(getInterpolator());
+        anim.setStartDelay(mAnimationDelay);
+        anim.setDuration(mDurationOverride != -1 ? mDurationOverride : ANIMATION_DURATION);
+        anim.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (mOnAnimationFinished != null) {
+                    mOnAnimationFinished.run();
+                    mOnAnimationFinished = null;
+                }
+                if (mKeyguardFadingOutInProgress) {
+                    mKeyguardFadeoutAnimation = null;
+                    mKeyguardFadingOutInProgress = false;
+                }
+                scrim.setTag(TAG_KEY_ANIM, null);
+                scrim.setTag(TAG_KEY_ANIM_TARGET, null);
+            }
+        });
+        anim.start();
+        if (mAnimateKeyguardFadingOut) {
+            mKeyguardFadingOutInProgress = true;
+            mKeyguardFadeoutAnimation = anim;
+        }
+        if (mSkipFirstFrame) {
+            anim.setCurrentPlayTime(16);
+        }
+        scrim.setTag(TAG_KEY_ANIM, anim);
+        scrim.setTag(TAG_KEY_ANIM_TARGET, target);
+!!!4072965.java!!!	getInterpolator() : Interpolator
+        if (mAnimateKeyguardFadingOut && mKeyguardUpdateMonitor.needsSlowUnlockTransition()) {
+            return KEYGUARD_FADE_OUT_INTERPOLATOR_LOCKED;
+        } else if (mAnimateKeyguardFadingOut) {
+            return KEYGUARD_FADE_OUT_INTERPOLATOR;
+        } else {
+            return mInterpolator;
+        }
+!!!4073093.java!!!	onPreDraw() : boolean
+        mScrimBehind.getViewTreeObserver().removeOnPreDrawListener(this);
+        mUpdatePending = false;
+        if (mDontAnimateBouncerChanges) {
+            mDontAnimateBouncerChanges = false;
+        }
+        updateScrims();
+        mDurationOverride = -1;
+        mAnimationDelay = 0;
+        mSkipFirstFrame = false;
+
+        // Make sure that we always call the listener even if we didn't start an animation.
+        endAnimateKeyguardFadingOut(false /* force */);
+        return true;
+!!!4073221.java!!!	endAnimateKeyguardFadingOut(inout force : boolean) : void
+        mAnimateKeyguardFadingOut = false;
+        if (force || (!isAnimating(mScrimInFront) && !isAnimating(mScrimBehind))) {
+            if (mOnAnimationFinished != null) {
+                mOnAnimationFinished.run();
+                mOnAnimationFinished = null;
+            }
+            mKeyguardFadingOutInProgress = false;
+        }
+!!!4073349.java!!!	isAnimating(inout scrim : View) : boolean
+        return scrim.getTag(TAG_KEY_ANIM) != null;
+!!!4073477.java!!!	setDrawBehindAsSrc(inout asSrc : boolean) : void
+        mScrimBehind.setDrawAsSrc(asSrc);
+!!!4073733.java!!!	onHeadsUpPinned(inout headsUp : ExpandableNotificationRow) : void
+        mPinnedHeadsUpCount++;
+        updateHeadsUpScrim(true);
+!!!4073861.java!!!	onHeadsUpUnPinned(inout headsUp : ExpandableNotificationRow) : void
+        mPinnedHeadsUpCount--;
+        if (headsUp == mDraggedHeadsUpView) {
+            mDraggedHeadsUpView = null;
+            mTopHeadsUpDragAmount = 0.0f;
+        }
+        updateHeadsUpScrim(true);
+!!!4074117.java!!!	updateHeadsUpScrim(inout animate : boolean) : void
+        updateScrim(animate, mHeadsUpScrim, calculateHeadsUpAlpha(), mCurrentHeadsUpAlpha);
+!!!4074245.java!!!	updateScrim(inout animate : boolean, inout scrim : View, in alpha : float, in currentAlpha : float) : void
+        if (mKeyguardFadingOutInProgress && mKeyguardFadeoutAnimation.getCurrentPlayTime() != 0) {
+            return;
+        }
+
+        ValueAnimator previousAnimator = ViewState.getChildTag(scrim,
+                TAG_KEY_ANIM);
+        float animEndValue = -1;
+        if (previousAnimator != null) {
+            if (animate || alpha == currentAlpha) {
+                previousAnimator.cancel();
+            } else {
+                animEndValue = ViewState.getChildTag(scrim, TAG_END_ALPHA);
+            }
+        }
+        if (alpha != currentAlpha && alpha != animEndValue) {
+            if (animate) {
+                startScrimAnimation(scrim, alpha);
+                scrim.setTag(TAG_START_ALPHA, currentAlpha);
+                scrim.setTag(TAG_END_ALPHA, alpha);
+            } else {
+                if (previousAnimator != null) {
+                    float previousStartValue = ViewState.getChildTag(scrim, TAG_START_ALPHA);
+                    float previousEndValue = ViewState.getChildTag(scrim, TAG_END_ALPHA);
+                    // we need to increase all animation keyframes of the previous animator by the
+                    // relative change to the end value
+                    PropertyValuesHolder[] values = previousAnimator.getValues();
+                    float relativeDiff = alpha - previousEndValue;
+                    float newStartValue = previousStartValue + relativeDiff;
+                    newStartValue = Math.max(0, Math.min(1.0f, newStartValue));
+                    values[0].setFloatValues(newStartValue, alpha);
+                    scrim.setTag(TAG_START_ALPHA, newStartValue);
+                    scrim.setTag(TAG_END_ALPHA, alpha);
+                    previousAnimator.setCurrentPlayTime(previousAnimator.getCurrentPlayTime());
+                } else {
+                    // update the alpha directly
+                    setCurrentScrimAlpha(scrim, alpha);
+                    updateScrimColor(scrim);
+                }
+            }
+        }
+!!!4074373.java!!!	setTopHeadsUpDragAmount(inout draggedHeadsUpView : View, in topHeadsUpDragAmount : float) : void
+        mTopHeadsUpDragAmount = topHeadsUpDragAmount;
+        mDraggedHeadsUpView = draggedHeadsUpView;
+        updateHeadsUpScrim(false);
+!!!4074501.java!!!	calculateHeadsUpAlpha() : float
+        float alpha;
+        if (mPinnedHeadsUpCount >= 2) {
+            alpha = 1.0f;
+        } else if (mPinnedHeadsUpCount == 0) {
+            alpha = 0.0f;
+        } else {
+            alpha = 1.0f - mTopHeadsUpDragAmount;
+        }
+        float expandFactor = (1.0f - mFraction);
+        expandFactor = Math.max(expandFactor, 0.0f);
+        return alpha * expandFactor;
+!!!4074629.java!!!	forceHideScrims(inout hide : boolean) : void
+        mForceHideScrims = hide;
+        mAnimateChange = false;
+        scheduleUpdate();
+!!!4074757.java!!!	dontAnimateBouncerChangesUntilNextFrame() : void
+        mDontAnimateBouncerChanges = true;
+!!!4074885.java!!!	setExcludedBackgroundArea(inout area : Rect) : void
+        mScrimBehind.setExcludedArea(area);
+!!!4075013.java!!!	getScrimBehindColor() : int
+        return mScrimBehind.getScrimColorWithAlpha();
+!!!4075141.java!!!	setScrimBehindChangeRunnable(inout changeRunnable : Runnable) : void
+        mScrimBehind.setChangeRunnable(changeRunnable);
+!!!4075269.java!!!	onDensityOrFontScaleChanged() : void
+        ViewGroup.LayoutParams layoutParams = mHeadsUpScrim.getLayoutParams();
+        layoutParams.height = mHeadsUpScrim.getResources().getDimensionPixelSize(
+                R.dimen.heads_up_scrim_height);
+        mHeadsUpScrim.setLayoutParams(layoutParams);
+!!!4075397.java!!!	setCurrentUser(in currentUser : int) : void
+        // Don't care in the base class.

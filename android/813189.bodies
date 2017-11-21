@@ -1,0 +1,80 @@
+class DndDetailAdapter
+!!!3439749.java!!!	getTitle() : CharSequence
+            return mContext.getString(R.string.quick_settings_dnd_label);
+!!!3439877.java!!!	getToggleState() : Boolean
+            return mState.value;
+!!!3440005.java!!!	getSettingsIntent() : Intent
+            return ZEN_SETTINGS;
+!!!3440133.java!!!	setToggleState(inout state : boolean) : void
+            MetricsLogger.action(mContext, MetricsEvent.QS_DND_TOGGLE, state);
+            if (!state) {
+                mController.setZen(ZEN_MODE_OFF, null, TAG);
+                mAuto = false;
+            } else {
+                int zen = Prefs.getInt(mContext, Prefs.Key.DND_FAVORITE_ZEN,
+                        ZEN_MODE_ALARMS);
+                mController.setZen(zen, null, TAG);
+            }
+!!!3440261.java!!!	getMetricsCategory() : int
+            return MetricsEvent.QS_DND_DETAILS;
+!!!3440389.java!!!	createDetailView(inout context : Context, inout convertView : View, inout parent : ViewGroup) : View
+            mZenPanel = convertView != null ? (ZenModePanel) convertView
+                    : (ZenModePanel) LayoutInflater.from(context).inflate(
+                            R.layout.zen_mode_panel, parent, false);
+            if (convertView == null) {
+                mZenPanel.init(mController);
+                mZenPanel.addOnAttachStateChangeListener(this);
+                mZenPanel.setCallback(mZenModePanelCallback);
+                mZenPanel.setEmptyState(R.drawable.ic_qs_dnd_off, R.string.dnd_is_off);
+            }
+            updatePanel();
+            return mZenPanel;
+!!!3440517.java!!!	updatePanel() : void
+            if (mZenPanel == null) return;
+            mAuto = false;
+            if (mController.getZen() == ZEN_MODE_OFF) {
+                mZenPanel.setState(ZenModePanel.STATE_OFF);
+            } else {
+                ZenModeConfig config = mController.getConfig();
+                String summary = "";
+                if (config.manualRule != null && config.manualRule.enabler != null) {
+                    summary = getOwnerCaption(config.manualRule.enabler);
+                }
+                for (ZenRule automaticRule : config.automaticRules.values()) {
+                    if (automaticRule.isAutomaticActive()) {
+                        if (summary.isEmpty()) {
+                            summary = mContext.getString(R.string.qs_dnd_prompt_auto_rule,
+                                    automaticRule.name);
+                        } else {
+                            summary = mContext.getString(R.string.qs_dnd_prompt_auto_rule_app);
+                        }
+                    }
+                }
+                if (summary.isEmpty()) {
+                    mZenPanel.setState(ZenModePanel.STATE_MODIFY);
+                } else {
+                    mAuto = true;
+                    mZenPanel.setState(ZenModePanel.STATE_AUTO_RULE);
+                    mZenPanel.setAutoText(summary);
+                }
+            }
+!!!3440645.java!!!	getOwnerCaption(in owner : String) : String
+            final PackageManager pm = mContext.getPackageManager();
+            try {
+                final ApplicationInfo info = pm.getApplicationInfo(owner, 0);
+                if (info != null) {
+                    final CharSequence seq = info.loadLabel(pm);
+                    if (seq != null) {
+                        final String str = seq.toString().trim();
+                        return mContext.getString(R.string.qs_dnd_prompt_app, str);
+                    }
+                }
+            } catch (Throwable e) {
+                Slog.w(TAG, "Error loading owner caption", e);
+            }
+            return "";
+!!!3440773.java!!!	onViewAttachedToWindow(inout v : View) : void
+            mShowingDetail = true;
+!!!3440901.java!!!	onViewDetachedFromWindow(inout v : View) : void
+            mShowingDetail = false;
+            mZenPanel = null;

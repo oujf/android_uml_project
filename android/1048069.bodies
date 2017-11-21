@@ -1,0 +1,110 @@
+class PackageInstaller
+!!!6267269.java!!!	PackageInstaller(inout installer : IPackageInstaller, in installerPackageName : String, in userId : int)
+        mInstaller = installer;
+        mInstallerPackageName = installerPackageName;
+        mUserId = userId;
+!!!6267397.java!!!	createSession(inout params : PackageInstaller::SessionParams) : int
+        try {
+            return mInstaller.createSession(params, mInstallerPackageName, mUserId);
+        } catch (RuntimeException e) {
+            ExceptionUtils.maybeUnwrapIOException(e);
+            throw e;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6267525.java!!!	openSession(in sessionId : int) : PackageInstaller::Session
+        try {
+            return new Session(mInstaller.openSession(sessionId));
+        } catch (RuntimeException e) {
+            ExceptionUtils.maybeUnwrapIOException(e);
+            throw e;
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6267653.java!!!	updateSessionAppIcon(in sessionId : int, inout appIcon : Bitmap) : void
+        try {
+            mInstaller.updateSessionAppIcon(sessionId, appIcon);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6267781.java!!!	updateSessionAppLabel(in sessionId : int, inout appLabel : CharSequence) : void
+        try {
+            final String val = (appLabel != null) ? appLabel.toString() : null;
+            mInstaller.updateSessionAppLabel(sessionId, val);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6267909.java!!!	abandonSession(in sessionId : int) : void
+        try {
+            mInstaller.abandonSession(sessionId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6268037.java!!!	getSessionInfo(in sessionId : int) : PackageInstaller::SessionInfo
+        try {
+            return mInstaller.getSessionInfo(sessionId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6268165.java!!!	getAllSessions() : PackageInstaller::SessionInfo
+        try {
+            return mInstaller.getAllSessions(mUserId).getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6268293.java!!!	getMySessions() : PackageInstaller::SessionInfo
+        try {
+            return mInstaller.getMySessions(mInstallerPackageName, mUserId).getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6268421.java!!!	uninstall(in packageName : String, inout statusReceiver : IntentSender) : void
+       uninstall(new VersionedPackage(packageName, PackageManager.VERSION_CODE_HIGHEST),
+               statusReceiver);
+!!!6268549.java!!!	uninstall(inout versionedPackage : VersionedPackage, inout statusReceiver : IntentSender) : void
+        Preconditions.checkNotNull(versionedPackage, "versionedPackage cannot be null");
+        try {
+            mInstaller.uninstall(versionedPackage, mInstallerPackageName,
+                    0, statusReceiver, mUserId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6268677.java!!!	setPermissionsResult(in sessionId : int, inout accepted : boolean) : void
+        try {
+            mInstaller.setPermissionsResult(sessionId, accepted);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+!!!6270341.java!!!	addSessionCallback(inout callback : PackageInstaller::SessionCallback) : void
+        registerSessionCallback(callback);
+!!!6270469.java!!!	registerSessionCallback(inout callback : PackageInstaller::SessionCallback) : void
+        registerSessionCallback(callback, new Handler());
+!!!6270597.java!!!	addSessionCallback(inout callback : PackageInstaller::SessionCallback, inout handler : Handler) : void
+        registerSessionCallback(callback, handler);
+!!!6270725.java!!!	registerSessionCallback(inout callback : PackageInstaller::SessionCallback, inout handler : Handler) : void
+        synchronized (mDelegates) {
+            final SessionCallbackDelegate delegate = new SessionCallbackDelegate(callback,
+                    handler.getLooper());
+            try {
+                mInstaller.registerCallback(delegate, mUserId);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+            mDelegates.add(delegate);
+        }
+!!!6270853.java!!!	removeSessionCallback(inout callback : PackageInstaller::SessionCallback) : void
+        unregisterSessionCallback(callback);
+!!!6270981.java!!!	unregisterSessionCallback(inout callback : PackageInstaller::SessionCallback) : void
+        synchronized (mDelegates) {
+            for (Iterator<SessionCallbackDelegate> i = mDelegates.iterator(); i.hasNext();) {
+                final SessionCallbackDelegate delegate = i.next();
+                if (delegate.mCallback == callback) {
+                    try {
+                        mInstaller.unregisterCallback(delegate);
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                    i.remove();
+                }
+            }
+        }

@@ -1,0 +1,103 @@
+class QSIconViewImpl
+!!!3320069.java!!!	QSIconViewImpl(inout context : Context)
+        super(context);
+
+        final Resources res = context.getResources();
+        mIconSizePx = res.getDimensionPixelSize(R.dimen.qs_tile_icon_size);
+        mTilePaddingBelowIconPx =  res.getDimensionPixelSize(R.dimen.qs_tile_padding_below_icon);
+
+        mIcon = createIcon();
+        addView(mIcon);
+!!!3320197.java!!!	disableAnimation() : void
+        mAnimationEnabled = false;
+!!!3320325.java!!!	getIconView() : View
+        return mIcon;
+!!!3320453.java!!!	onMeasure(in widthMeasureSpec : int, in heightMeasureSpec : int) : void
+        final int w = MeasureSpec.getSize(widthMeasureSpec);
+        final int iconSpec = exactly(mIconSizePx);
+        mIcon.measure(MeasureSpec.makeMeasureSpec(w, getIconMeasureMode()), iconSpec);
+        setMeasuredDimension(w, mIcon.getMeasuredHeight() + mTilePaddingBelowIconPx);
+!!!3320581.java!!!	onLayout(inout changed : boolean, in l : int, in t : int, in r : int, in b : int) : void
+        final int w = getMeasuredWidth();
+        int top = 0;
+        final int iconLeft = (w - mIcon.getMeasuredWidth()) / 2;
+        layout(mIcon, iconLeft, top);
+!!!3320709.java!!!	setIcon(inout state : QSTile.State) : void
+        setIcon((ImageView) mIcon, state);
+!!!3320837.java!!!	updateIcon(inout iv : ImageView, inout state : State) : void
+        if (!Objects.equals(state.icon, iv.getTag(R.id.qs_icon_tag))) {
+            boolean shouldAnimate = iv.isShown() && mAnimationEnabled
+                    && iv.getDrawable() != null;
+            Drawable d = state.icon != null
+                    ? shouldAnimate ? state.icon.getDrawable(mContext)
+                    : state.icon.getInvisibleDrawable(mContext) : null;
+            int padding = state.icon != null ? state.icon.getPadding() : 0;
+            if (d != null) {
+                d.setAutoMirrored(false);
+            }
+            iv.setImageDrawable(d);
+            iv.setTag(R.id.qs_icon_tag, state.icon);
+            iv.setPadding(0, padding, 0, padding);
+            if (d instanceof Animatable2) {
+                Animatable2 a = (Animatable2) d;
+                a.start();
+                if (state.isTransient) {
+                    a.registerAnimationCallback(new AnimationCallback() {
+                        @Override
+                        public void onAnimationEnd(Drawable drawable) {
+                            a.start();
+                        }
+                    });
+                }
+            }
+        }
+!!!3320965.java!!!	setIcon(inout iv : ImageView, inout state : QSTile.State) : void
+        updateIcon(iv, state);
+        if (state.disabledByPolicy) {
+            iv.setColorFilter(getContext().getColor(R.color.qs_tile_disabled_color));
+        } else {
+            iv.clearColorFilter();
+        }
+        if (state.state != mState) {
+            int color = getColor(state.state);
+            mState = state.state;
+            if (iv.isShown() && mTint != 0) {
+                animateGrayScale(mTint, color, iv);
+                mTint = color;
+            } else {
+                setTint(iv, color);
+                mTint = color;
+            }
+        }
+!!!3321093.java!!!	getColor(in state : int) : int
+        return getColorForState(getContext(), state);
+!!!3321221.java!!!	animateGrayScale(in fromColor : int, in toColor : int, inout iv : ImageView) : void
+        final float fromAlpha = Color.alpha(fromColor);
+        final float toAlpha = Color.alpha(toColor);
+        final float fromChannel = Color.red(fromColor);
+        final float toChannel = Color.red(toColor);
+
+        ValueAnimator anim = ValueAnimator.ofFloat(0, 1);
+        anim.setDuration(350);
+
+        anim.addUpdateListener(animation -> {
+            float fraction = animation.getAnimatedFraction();
+            int alpha = (int) (fromAlpha + (toAlpha - fromAlpha) * fraction);
+            int channel = (int) (fromChannel + (toChannel - fromChannel) * fraction);
+
+            setTint(iv, Color.argb(alpha, channel, channel, channel));
+        });
+        anim.start();
+!!!3321349.java!!!	setTint(inout iv : ImageView, in color : int) : void
+        iv.setImageTintList(ColorStateList.valueOf(color));
+!!!3321477.java!!!	getIconMeasureMode() : int
+        return MeasureSpec.EXACTLY;
+!!!3321605.java!!!	createIcon() : View
+        final ImageView icon = new ImageView(mContext);
+        icon.setId(android.R.id.icon);
+        icon.setScaleType(ScaleType.FIT_CENTER);
+        return icon;
+!!!3321733.java!!!	exactly(in size : int) : int
+        return MeasureSpec.makeMeasureSpec(size, MeasureSpec.EXACTLY);
+!!!3321861.java!!!	layout(inout child : View, in left : int, in top : int) : void
+        child.layout(left, top, left + child.getMeasuredWidth(), top + child.getMeasuredHeight());

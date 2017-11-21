@@ -1,0 +1,106 @@
+class NotificationsQuickSettingsContainer
+!!!4049541.java!!!	NotificationsQuickSettingsContainer(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+!!!4049669.java!!!	onFinishInflate() : void
+        super.onFinishInflate();
+        mQsFrame = (FrameLayout) findViewById(R.id.qs_frame);
+        mStackScroller = findViewById(R.id.notification_stack_scroller);
+        mStackScrollerMargin = ((LayoutParams) mStackScroller.getLayoutParams()).bottomMargin;
+        mKeyguardStatusBar = findViewById(R.id.keyguard_header);
+        ViewStub userSwitcher = (ViewStub) findViewById(R.id.keyguard_user_switcher);
+        userSwitcher.setOnInflateListener(this);
+        mUserSwitcher = userSwitcher;
+!!!4049797.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        FragmentHostManager.get(this).addTagListener(QS.TAG, this);
+        mHeadsUpManager = SysUiServiceProvider.getComponent(getContext(), StatusBar.class)
+                .mHeadsUpManager;
+        mHeadsUpManager.addListener(this);
+!!!4049925.java!!!	onDetachedFromWindow() : void
+        super.onDetachedFromWindow();
+        FragmentHostManager.get(this).removeTagListener(QS.TAG, this);
+        mHeadsUpManager.removeListener(this);
+!!!4050053.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        reloadWidth(mQsFrame);
+        reloadWidth(mStackScroller);
+!!!4050181.java!!!	reloadWidth(inout view : View) : void
+        LayoutParams params = (LayoutParams) view.getLayoutParams();
+        params.width = getContext().getResources().getDimensionPixelSize(
+                R.dimen.notification_panel_width);
+        view.setLayoutParams(params);
+!!!4050309.java!!!	onApplyWindowInsets(inout insets : WindowInsets) : WindowInsets
+        mBottomPadding = insets.getStableInsetBottom();
+        setPadding(0, 0, 0, mBottomPadding);
+        return insets;
+!!!4050437.java!!!	drawChild(inout canvas : Canvas, inout child : View, in drawingTime : long) : boolean
+        boolean userSwitcherVisible = mInflated && mUserSwitcher.getVisibility() == View.VISIBLE;
+        boolean statusBarVisible = mKeyguardStatusBar.getVisibility() == View.VISIBLE;
+
+        final boolean qsBottom = mHeadsUp;
+        View stackQsTop = qsBottom ? mStackScroller : mQsFrame;
+        View stackQsBottom = !qsBottom ? mStackScroller : mQsFrame;
+        // Invert the order of the scroll view and user switcher such that the notifications receive
+        // touches first but the panel gets drawn above.
+        if (child == mQsFrame) {
+            return super.drawChild(canvas, userSwitcherVisible && statusBarVisible ? mUserSwitcher
+                    : statusBarVisible ? mKeyguardStatusBar
+                    : userSwitcherVisible ? mUserSwitcher
+                    : stackQsBottom, drawingTime);
+        } else if (child == mStackScroller) {
+            return super.drawChild(canvas,
+                    userSwitcherVisible && statusBarVisible ? mKeyguardStatusBar
+                    : statusBarVisible || userSwitcherVisible ? stackQsBottom
+                    : stackQsTop,
+                    drawingTime);
+        } else if (child == mUserSwitcher) {
+            return super.drawChild(canvas,
+                    userSwitcherVisible && statusBarVisible ? stackQsBottom
+                    : stackQsTop,
+                    drawingTime);
+        } else if (child == mKeyguardStatusBar) {
+            return super.drawChild(canvas,
+                    stackQsTop,
+                    drawingTime);
+        } else {
+            return super.drawChild(canvas, child, drawingTime);
+        }
+!!!4050565.java!!!	onInflate(inout stub : ViewStub, inout inflated : View) : void
+        if (stub == mUserSwitcher) {
+            mUserSwitcher = inflated;
+            mInflated = true;
+        }
+!!!4050693.java!!!	onFragmentViewCreated(in tag : String, inout fragment : Fragment) : void
+        QS container = (QS) fragment;
+        container.setContainer(this);
+!!!4050821.java!!!	setQsExpanded(inout expanded : boolean) : void
+        if (mQsExpanded != expanded) {
+            mQsExpanded = expanded;
+            invalidate();
+        }
+!!!4050949.java!!!	setCustomizerAnimating(inout isAnimating : boolean) : void
+        if (mCustomizerAnimating != isAnimating) {
+            mCustomizerAnimating = isAnimating;
+            invalidate();
+        }
+!!!4051077.java!!!	setCustomizerShowing(inout isShowing : boolean) : void
+        if (isShowing) {
+            // Clear out bottom paddings/margins so the qs customization can be full height.
+            setPadding(0, 0, 0, 0);
+            setBottomMargin(mStackScroller, 0);
+        } else {
+            setPadding(0, 0, 0, mBottomPadding);
+            setBottomMargin(mStackScroller, mStackScrollerMargin);
+        }
+
+!!!4051205.java!!!	setBottomMargin(inout v : View, in bottomMargin : int) : void
+        LayoutParams params = (LayoutParams) v.getLayoutParams();
+        params.bottomMargin = bottomMargin;
+        v.setLayoutParams(params);
+!!!4051333.java!!!	onHeadsUpStateChanged(inout entry : NotificationData::Entry, inout isHeadsUp : boolean) : void
+        boolean hasHeadsUp = mHeadsUpManager.getAllEntries().size() != 0;
+        if (mHeadsUp == hasHeadsUp) {
+            return;
+        }
+        mHeadsUp = hasHeadsUp;
+        invalidate();

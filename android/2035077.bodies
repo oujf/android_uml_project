@@ -1,0 +1,92 @@
+class ScreenshotClient
+!!!14326661.cpp!!!	capture(in display : sp<IBinder>, in producer : sp<IGraphicBufferProducer>, in sourceCrop : Rect, in reqWidth : uint32_t, in reqHeight : uint32_t, in minLayerZ : int32_t, in maxLayerZ : int32_t, in useIdentityTransform : bool) : status_t
+    sp<ISurfaceComposer> s(ComposerService::getComposerService());
+    if (s == NULL) return NO_INIT;
+    return s->captureScreen(display, producer, sourceCrop,
+            reqWidth, reqHeight, minLayerZ, maxLayerZ, useIdentityTransform);
+!!!14326789.cpp!!!	captureToBuffer(in display : sp<IBinder>, in sourceCrop : Rect, in reqWidth : uint32_t, in reqHeight : uint32_t, in minLayerZ : int32_t, in maxLayerZ : int32_t, in useIdentityTransform : bool, in rotation : uint32_t, inout outBuffer : sp<GraphicBuffer>) : status_t
+    sp<ISurfaceComposer> s(ComposerService::getComposerService());
+    if (s == NULL) return NO_INIT;
+
+    sp<IGraphicBufferConsumer> gbpConsumer;
+    sp<IGraphicBufferProducer> producer;
+    BufferQueue::createBufferQueue(&producer, &gbpConsumer);
+    sp<BufferItemConsumer> consumer(new BufferItemConsumer(gbpConsumer,
+           GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_SW_READ_NEVER | GRALLOC_USAGE_SW_WRITE_NEVER,
+           1, true));
+
+    status_t ret = s->captureScreen(display, producer, sourceCrop, reqWidth, reqHeight,
+            minLayerZ, maxLayerZ, useIdentityTransform,
+            static_cast<ISurfaceComposer::Rotation>(rotation));
+    if (ret != NO_ERROR) {
+        return ret;
+    }
+    BufferItem b;
+    consumer->acquireBuffer(&b, 0, true);
+    *outBuffer = b.mGraphicBuffer;
+    return ret;
+!!!14326917.cpp!!!	ScreenshotClient()
+    memset(&mBuffer, 0, sizeof(mBuffer));
+!!!14327045.cpp!!!	~ScreenshotClient()
+    ScreenshotClient::release();
+!!!14327173.cpp!!!	update(in display : sp<IBinder>, in sourceCrop : Rect, in useIdentityTransform : bool) : status_t
+    return ScreenshotClient::update(display, sourceCrop, 0, 0,
+            INT32_MIN, INT32_MAX,
+            useIdentityTransform, ISurfaceComposer::eRotateNone);
+!!!14327301.cpp!!!	update(in display : sp<IBinder>, in sourceCrop : Rect, in reqWidth : uint32_t, in reqHeight : uint32_t, in useIdentityTransform : bool) : status_t
+    return ScreenshotClient::update(display, sourceCrop, reqWidth, reqHeight,
+            INT32_MIN, INT32_MAX,
+            useIdentityTransform, ISurfaceComposer::eRotateNone);
+!!!14327429.cpp!!!	update(in display : sp<IBinder>, in sourceCrop : Rect, in reqWidth : uint32_t, in reqHeight : uint32_t, in minLayerZ : int32_t, in maxLayerZ : int32_t, in useIdentityTransform : bool) : status_t
+
+    return ScreenshotClient::update(display, sourceCrop, reqWidth, reqHeight,
+            minLayerZ, maxLayerZ, useIdentityTransform, ISurfaceComposer::eRotateNone);
+!!!14327557.cpp!!!	update(in display : sp<IBinder>, in sourceCrop : Rect, in reqWidth : uint32_t, in reqHeight : uint32_t, in minLayerZ : int32_t, in maxLayerZ : int32_t, in useIdentityTransform : bool, in rotation : uint32_t) : status_t
+    sp<ISurfaceComposer> s(ComposerService::getComposerService());
+    if (s == NULL) return NO_INIT;
+    sp<CpuConsumer> cpuConsumer = getCpuConsumer();
+
+    if (mHaveBuffer) {
+        mCpuConsumer->unlockBuffer(mBuffer);
+        memset(&mBuffer, 0, sizeof(mBuffer));
+        mHaveBuffer = false;
+    }
+
+    status_t err = s->captureScreen(display, mProducer, sourceCrop,
+            reqWidth, reqHeight, minLayerZ, maxLayerZ, useIdentityTransform,
+            static_cast<ISurfaceComposer::Rotation>(rotation));
+
+    if (err == NO_ERROR) {
+        err = mCpuConsumer->lockNextBuffer(&mBuffer);
+        if (err == NO_ERROR) {
+            mHaveBuffer = true;
+        }
+    }
+    return err;
+!!!14327685.cpp!!!	getCpuConsumer() : sp<CpuConsumer>
+    if (mCpuConsumer == NULL) {
+        sp<IGraphicBufferConsumer> consumer;
+        BufferQueue::createBufferQueue(&mProducer, &consumer);
+        mCpuConsumer = new CpuConsumer(consumer, 1);
+        mCpuConsumer->setName(String8("ScreenshotClient"));
+    }
+    return mCpuConsumer;
+!!!14327813.cpp!!!	release() : void
+    if (mHaveBuffer) {
+        mCpuConsumer->unlockBuffer(mBuffer);
+        memset(&mBuffer, 0, sizeof(mBuffer));
+        mHaveBuffer = false;
+    }
+    mCpuConsumer.clear();
+!!!14327941.cpp!!!	getPixels() : void
+    return mBuffer.data;
+!!!14328069.cpp!!!	getWidth() : uint32_t
+    return mBuffer.width;
+!!!14328197.cpp!!!	getHeight() : uint32_t
+    return mBuffer.height;
+!!!14328325.cpp!!!	getFormat() : PixelFormat
+    return mBuffer.format;
+!!!14328453.cpp!!!	getStride() : uint32_t
+    return mBuffer.stride;
+!!!14328581.cpp!!!	getSize() : size_t
+    return mBuffer.stride * mBuffer.height * bytesPerPixel(mBuffer.format);

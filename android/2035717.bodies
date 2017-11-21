@@ -1,0 +1,201 @@
+class H2BGraphicBufferProducer
+!!!14333957.cpp!!!	requestBuffer(in slot : int, inout buf : sp<GraphicBuffer>) : status_t
+    *buf = new GraphicBuffer();
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->requestBuffer(
+            static_cast<int32_t>(slot),
+            [&fnStatus, &buf] (Status status, AnwBuffer const& buffer) {
+                fnStatus = toStatusT(status);
+                if (!convertTo(buf->get(), buffer)) {
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14334085.cpp!!!	setMaxDequeuedBufferCount(in maxDequeuedBuffers : int) : status_t
+    return toStatusT(mBase->setMaxDequeuedBufferCount(
+            static_cast<int32_t>(maxDequeuedBuffers)));
+!!!14334213.cpp!!!	setAsyncMode(in async : bool) : status_t
+    return toStatusT(mBase->setAsyncMode(async));
+!!!14334341.cpp!!!	dequeueBuffer(inout slot : int, inout fence : sp<Fence>, in w : uint32_t, in h : uint32_t, in format : PixelFormat, in usage : uint32_t, inout outTimestamps : FrameEventHistoryDelta) : status_t
+    *fence = new Fence();
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->dequeueBuffer(
+            w, h, static_cast<PixelFormat>(format), usage,
+            outTimestamps != nullptr,
+            [&fnStatus, slot, fence, outTimestamps] (
+                    Status status,
+                    int32_t tSlot,
+                    hidl_handle const& tFence,
+                    HGraphicBufferProducer::FrameEventHistoryDelta const& tTs) {
+                fnStatus = toStatusT(status);
+                *slot = tSlot;
+                if (!convertTo(fence->get(), tFence)) {
+                    ALOGE("H2BGraphicBufferProducer::dequeueBuffer - "
+                            "Invalid output fence");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+                if (outTimestamps && !convertTo(outTimestamps, tTs)) {
+                    ALOGE("H2BGraphicBufferProducer::dequeueBuffer - "
+                            "Invalid output timestamps");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14334469.cpp!!!	detachBuffer(in slot : int) : status_t
+    return toStatusT(mBase->detachBuffer(static_cast<int>(slot)));
+!!!14334597.cpp!!!	detachNextBuffer(inout outBuffer : sp<GraphicBuffer>, inout outFence : sp<Fence>) : status_t
+    *outBuffer = new GraphicBuffer();
+    *outFence = new Fence();
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->detachNextBuffer(
+            [&fnStatus, outBuffer, outFence] (
+                    Status status,
+                    AnwBuffer const& tBuffer,
+                    hidl_handle const& tFence) {
+                fnStatus = toStatusT(status);
+                if (!convertTo(outFence->get(), tFence)) {
+                    ALOGE("H2BGraphicBufferProducer::detachNextBuffer - "
+                            "Invalid output fence");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+                if (!convertTo(outBuffer->get(), tBuffer)) {
+                    ALOGE("H2BGraphicBufferProducer::detachNextBuffer - "
+                            "Invalid output buffer");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14334725.cpp!!!	attachBuffer(inout outSlot : int, in buffer : sp<GraphicBuffer>) : status_t
+    AnwBuffer tBuffer;
+    wrapAs(&tBuffer, *buffer);
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->attachBuffer(tBuffer,
+            [&fnStatus, outSlot] (Status status, int32_t slot) {
+                fnStatus = toStatusT(status);
+                *outSlot = slot;
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14334853.cpp!!!	queueBuffer(in slot : int, in input : QueueBufferInput, inout output : QueueBufferOutput) : status_t
+    HGraphicBufferProducer::QueueBufferInput tInput;
+    native_handle_t* nh;
+    if (!wrapAs(&tInput, &nh, input)) {
+        ALOGE("H2BGraphicBufferProducer::queueBuffer - "
+                "Invalid input");
+        return BAD_VALUE;
+    }
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->queueBuffer(slot, tInput,
+            [&fnStatus, output] (
+                    Status status,
+                    HGraphicBufferProducer::QueueBufferOutput const& tOutput) {
+                fnStatus = toStatusT(status);
+                if (!convertTo(output, tOutput)) {
+                    ALOGE("H2BGraphicBufferProducer::queueBuffer - "
+                            "Invalid output");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+            }));
+    native_handle_delete(nh);
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14334981.cpp!!!	cancelBuffer(in slot : int, in fence : sp<Fence>) : status_t
+    hidl_handle tFence;
+    native_handle_t* nh = nullptr;
+    if ((fence == nullptr) || !wrapAs(&tFence, &nh, *fence)) {
+        ALOGE("H2BGraphicBufferProducer::cancelBuffer - "
+                "Invalid input fence");
+        return BAD_VALUE;
+    }
+
+    status_t status = toStatusT(mBase->cancelBuffer(
+            static_cast<int32_t>(slot), tFence));
+    native_handle_delete(nh);
+    return status;
+!!!14335109.cpp!!!	query(in what : int, inout value : int) : int
+    int result;
+    status_t transStatus = toStatusT(mBase->query(
+            static_cast<int32_t>(what),
+            [&result, value] (int32_t tResult, int32_t tValue) {
+                result = static_cast<int>(tResult);
+                *value = static_cast<int>(tValue);
+            }));
+    return transStatus == NO_ERROR ? result : static_cast<int>(transStatus);
+!!!14335237.cpp!!!	connect(in listener : sp<IProducerListener>, in api : int, in producerControlledByApp : bool, inout output : QueueBufferOutput) : status_t
+    sp<HProducerListener> tListener = listener == nullptr ?
+            nullptr : new B2HProducerListener(listener);
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->connect(
+            tListener, static_cast<int32_t>(api), producerControlledByApp,
+            [&fnStatus, output] (
+                    Status status,
+                    HGraphicBufferProducer::QueueBufferOutput const& tOutput) {
+                fnStatus = toStatusT(status);
+                if (!convertTo(output, tOutput)) {
+                    ALOGE("H2BGraphicBufferProducer::connect - "
+                            "Invalid output");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14335365.cpp!!!	disconnect(in api : int, in mode : DisconnectMode = DisconnectMode::Api) : status_t
+    return toStatusT(mBase->disconnect(
+            static_cast<int32_t>(api), toHDisconnectMode(mode)));
+!!!14335493.cpp!!!	setSidebandStream(in stream : sp<NativeHandle>) : status_t
+    return toStatusT(mBase->setSidebandStream(stream == nullptr ? nullptr : stream->handle()));
+!!!14335621.cpp!!!	allocateBuffers(in width : uint32_t, in height : uint32_t, in format : PixelFormat, in usage : uint32_t) : void
+    mBase->allocateBuffers(
+            width, height, static_cast<PixelFormat>(format), usage);
+!!!14335749.cpp!!!	allowAllocation(in allow : bool) : status_t
+    return toStatusT(mBase->allowAllocation(allow));
+!!!14335877.cpp!!!	setGenerationNumber(in generationNumber : uint32_t) : status_t
+    return toStatusT(mBase->setGenerationNumber(generationNumber));
+!!!14336005.cpp!!!	getConsumerName() : String8
+    String8 lName;
+    mBase->getConsumerName([&lName] (hidl_string const& name) {
+                lName = name.c_str();
+            });
+    return lName;
+!!!14336133.cpp!!!	setSharedBufferMode(in sharedBufferMode : bool) : status_t
+    return toStatusT(mBase->setSharedBufferMode(sharedBufferMode));
+!!!14336261.cpp!!!	setAutoRefresh(in autoRefresh : bool) : status_t
+    return toStatusT(mBase->setAutoRefresh(autoRefresh));
+!!!14336389.cpp!!!	setDequeueTimeout(in timeout : nsecs_t) : status_t
+    return toStatusT(mBase->setDequeueTimeout(static_cast<int64_t>(timeout)));
+!!!14336517.cpp!!!	getLastQueuedBuffer(inout outBuffer : sp<GraphicBuffer>, inout outFence : sp<Fence>, in outTransformMatrix : float) : status_t
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getLastQueuedBuffer(
+            [&fnStatus, outBuffer, outFence, &outTransformMatrix] (
+                    Status status,
+                    AnwBuffer const& buffer,
+                    hidl_handle const& fence,
+                    hidl_array<float, 16> const& transformMatrix) {
+                fnStatus = toStatusT(status);
+                *outBuffer = new GraphicBuffer();
+                if (!convertTo(outBuffer->get(), buffer)) {
+                    ALOGE("H2BGraphicBufferProducer::getLastQueuedBuffer - "
+                            "Invalid output buffer");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+                *outFence = new Fence();
+                if (!convertTo(outFence->get(), fence)) {
+                    ALOGE("H2BGraphicBufferProducer::getLastQueuedBuffer - "
+                            "Invalid output fence");
+                    fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
+                }
+                std::copy(transformMatrix.data(),
+                        transformMatrix.data() + 16,
+                        outTransformMatrix);
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;
+!!!14336645.cpp!!!	getFrameTimestamps(inout outDelta : FrameEventHistoryDelta) : void
+    mBase->getFrameTimestamps([outDelta] (
+            HGraphicBufferProducer::FrameEventHistoryDelta const& tDelta) {
+                convertTo(outDelta, tDelta);
+            });
+!!!14336773.cpp!!!	getUniqueId(inout outId : uint64_t) : status_t
+    status_t fnStatus;
+    status_t transStatus = toStatusT(mBase->getUniqueId(
+            [&fnStatus, outId] (Status status, uint64_t id) {
+                fnStatus = toStatusT(status);
+                *outId = id;
+            }));
+    return transStatus == NO_ERROR ? fnStatus : transStatus;

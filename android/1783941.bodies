@@ -1,0 +1,165 @@
+class TaskSnapshotController
+!!!12753669.java!!!	TaskSnapshotController(inout service : WindowManagerService)
+        mService = service;
+        mCache = new TaskSnapshotCache(mService, mLoader);
+        mIsRunningOnTv = mService.mContext.getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_LEANBACK);
+!!!12753797.java!!!	systemReady() : void
+        mPersister.start();
+!!!12753925.java!!!	onTransitionStarting() : void
+        handleClosingApps(mService.mClosingApps);
+!!!12754053.java!!!	notifyAppVisibilityChanged(inout appWindowToken : AppWindowToken, inout visible : boolean) : void
+        if (!visible) {
+            handleClosingApps(Sets.newArraySet(appWindowToken));
+        }
+!!!12754181.java!!!	handleClosingApps(inout closingApps : ArraySet) : void
+        if (shouldDisableSnapshots()) {
+            return;
+        }
+
+        // We need to take a snapshot of the task if and only if all activities of the task are
+        // either closing or hidden.
+        getClosingTasks(closingApps, mTmpTasks);
+        snapshotTasks(mTmpTasks);
+
+!!!12754309.java!!!	snapshotTasks(inout tasks : ArraySet) : void
+        for (int i = tasks.size() - 1; i >= 0; i--) {
+            final Task task = tasks.valueAt(i);
+            final int mode = getSnapshotMode(task);
+            final TaskSnapshot snapshot;
+            switch (mode) {
+                case SNAPSHOT_MODE_NONE:
+                    continue;
+                case SNAPSHOT_MODE_APP_THEME:
+                    snapshot = drawAppThemeSnapshot(task);
+                    break;
+                case SNAPSHOT_MODE_REAL:
+                    snapshot = snapshotTask(task);
+                    break;
+                default:
+                    snapshot = null;
+                    break;
+            }
+            if (snapshot != null) {
+                mCache.putSnapshot(task, snapshot);
+                mPersister.persistSnapshot(task.mTaskId, task.mUserId, snapshot);
+                if (task.getController() != null) {
+                    task.getController().reportSnapshotChanged(snapshot);
+                }
+            }
+        }
+!!!12754437.java!!!	getSnapshot(in taskId : int, in userId : int, inout restoreFromDisk : boolean, inout reducedResolution : boolean) : ActivityManager::TaskSnapshot
+        return mCache.getSnapshot(taskId, userId, restoreFromDisk, reducedResolution);
+!!!12754565.java!!!	createStartingSurface(inout token : AppWindowToken, inout snapshot : ActivityManager::TaskSnapshot) : WindowManagerPolicy::StartingSurface
+        return TaskSnapshotSurface.create(mService, token, snapshot);
+!!!12754693.java!!!	snapshotTask(inout task : Task) : ActivityManager::TaskSnapshot
+        final AppWindowToken top = task.getTopChild();
+        if (top == null) {
+            return null;
+        }
+        final WindowState mainWindow = top.findMainWindow();
+        if (mainWindow == null) {
+            return null;
+        }
+        final GraphicBuffer buffer = top.mDisplayContent.screenshotApplicationsToBuffer(top.token,
+                -1, -1, false, 1.0f, false, true);
+        if (buffer == null) {
+            return null;
+        }
+        return new TaskSnapshot(buffer, top.getConfiguration().orientation,
+                minRect(mainWindow.mContentInsets, mainWindow.mStableInsets), false /* reduced */,
+                1f /* scale */);
+!!!12754821.java!!!	shouldDisableSnapshots() : boolean
+        return !ENABLE_TASK_SNAPSHOTS || ActivityManager.isLowRamDeviceStatic() || mIsRunningOnTv;
+!!!12754949.java!!!	minRect(inout rect1 : Rect, inout rect2 : Rect) : Rect
+        return new Rect(Math.min(rect1.left, rect2.left),
+                Math.min(rect1.top, rect2.top),
+                Math.min(rect1.right, rect2.right),
+                Math.min(rect1.bottom, rect2.bottom));
+!!!12755077.java!!!	getClosingTasks(inout closingApps : ArraySet, inout outClosingTasks : ArraySet) : void
+        outClosingTasks.clear();
+        for (int i = closingApps.size() - 1; i >= 0; i--) {
+            final AppWindowToken atoken = closingApps.valueAt(i);
+            final Task task = atoken.getTask();
+
+            // If the task of the app is not visible anymore, it means no other app in that task
+            // is opening. Thus, the task is closing.
+            if (task != null && !task.isVisible()) {
+                outClosingTasks.add(task);
+            }
+        }
+!!!12755205.java!!!	getSnapshotMode(inout task : Task) : int
+        final AppWindowToken topChild = task.getTopChild();
+        if (StackId.isHomeOrRecentsStack(task.mStack.mStackId)) {
+            return SNAPSHOT_MODE_NONE;
+        } else if (topChild != null && topChild.shouldUseAppThemeSnapshot()) {
+            return SNAPSHOT_MODE_APP_THEME;
+        } else {
+            return SNAPSHOT_MODE_REAL;
+        }
+!!!12755333.java!!!	drawAppThemeSnapshot(inout task : Task) : ActivityManager::TaskSnapshot
+        final AppWindowToken topChild = task.getTopChild();
+        if (topChild == null) {
+            return null;
+        }
+        final WindowState mainWindow = topChild.findMainWindow();
+        if (mainWindow == null) {
+            return null;
+        }
+        final int color = task.getTaskDescription().getBackgroundColor();
+        final int statusBarColor = task.getTaskDescription().getStatusBarColor();
+        final int navigationBarColor = task.getTaskDescription().getNavigationBarColor();
+        final LayoutParams attrs = mainWindow.getAttrs();
+        final SystemBarBackgroundPainter decorPainter = new SystemBarBackgroundPainter(attrs.flags,
+                attrs.privateFlags, attrs.systemUiVisibility, statusBarColor, navigationBarColor);
+        final int width = mainWindow.getFrameLw().width();
+        final int height = mainWindow.getFrameLw().height();
+
+        final RenderNode node = RenderNode.create("TaskSnapshotController", null);
+        node.setLeftTopRightBottom(0, 0, width, height);
+        node.setClipToBounds(false);
+        final DisplayListCanvas c = node.start(width, height);
+        c.drawColor(color);
+        decorPainter.setInsets(mainWindow.mContentInsets, mainWindow.mStableInsets);
+        decorPainter.drawDecors(c, null /* statusBarExcludeFrame */);
+        node.end(c);
+        final Bitmap hwBitmap = ThreadedRenderer.createHardwareBitmap(node, width, height);
+
+        return new TaskSnapshot(hwBitmap.createGraphicBufferHandle(),
+                topChild.getConfiguration().orientation, mainWindow.mStableInsets,
+                false /* reduced */, 1.0f /* scale */);
+!!!12755461.java!!!	onAppRemoved(inout wtoken : AppWindowToken) : void
+        mCache.onAppRemoved(wtoken);
+!!!12755589.java!!!	onAppDied(inout wtoken : AppWindowToken) : void
+        mCache.onAppDied(wtoken);
+!!!12755717.java!!!	notifyTaskRemovedFromRecents(in taskId : int, in userId : int) : void
+        mCache.onTaskRemoved(taskId);
+        mPersister.onTaskRemovedFromRecents(taskId, userId);
+!!!12755845.java!!!	removeObsoleteTaskFiles(inout persistentTaskIds : ArraySet, inout runningUserIds : int [[]]) : void
+        mPersister.removeObsoleteFiles(persistentTaskIds, runningUserIds);
+!!!12755973.java!!!	setPersisterPaused(inout paused : boolean) : void
+        mPersister.setPaused(paused);
+!!!12756101.java!!!	screenTurningOff(inout listener : WindowManagerPolicy::ScreenOffListener) : void
+        if (shouldDisableSnapshots()) {
+            listener.onScreenOff();
+            return;
+        }
+
+        // We can't take a snapshot when screen is off, so take a snapshot now!
+        mHandler.post(() -> {
+            try {
+                synchronized (mService.mWindowMap) {
+                    mTmpTasks.clear();
+                    mService.mRoot.forAllTasks(task -> {
+                        if (task.isVisible()) {
+                            mTmpTasks.add(task);
+                        }
+                    });
+                    snapshotTasks(mTmpTasks);
+                }
+            } finally {
+                listener.onScreenOff();
+            }
+        });
+!!!12756229.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        mCache.dump(pw, prefix);

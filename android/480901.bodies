@@ -1,0 +1,142 @@
+class VideoFrameScheduler
+!!!1396613.cpp!!!	init(in videoFps : float = -1) : void
+    updateVsync();
+
+    mLastVsyncTime = -1;
+    mTimeCorrection = 0;
+
+    mPll.reset(videoFps);
+!!!1396741.cpp!!!	restart() : void
+    mLastVsyncTime = -1;
+    mTimeCorrection = 0;
+
+    mPll.restart();
+!!!1396869.cpp!!!	schedule(in renderTime : nsecs_t) : nsecs_t
+    nsecs_t origRenderTime = renderTime;
+
+    nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+    if (now >= mVsyncRefreshAt) {
+        updateVsync();
+    }
+
+    // without VSYNC info, there is nothing to do
+    if (mVsyncPeriod == 0) {
+        ALOGV("no vsync: render=%lld", (long long)renderTime);
+        return renderTime;
+    }
+
+    // ensure vsync time is well before (corrected) render time
+    if (mVsyncTime > renderTime - 4 * mVsyncPeriod) {
+        mVsyncTime -=
+            ((mVsyncTime - renderTime) / mVsyncPeriod + 5) * mVsyncPeriod;
+    }
+
+    // Video presentation takes place at the VSYNC _after_ renderTime.  Adjust renderTime
+    // so this effectively becomes a rounding operation (to the _closest_ VSYNC.)
+    renderTime -= mVsyncPeriod / 2;
+
+    const nsecs_t videoPeriod = mPll.addSample(origRenderTime);
+    if (videoPeriod > 0) {
+        // Smooth out rendering
+        size_t N = 12;
+        nsecs_t fiveSixthDev =
+            abs(((videoPeriod * 5 + mVsyncPeriod) % (mVsyncPeriod * 6)) - mVsyncPeriod)
+                    / (mVsyncPeriod / 100);
+        // use 20 samples if we are doing 5:6 ratio +- 1% (e.g. playing 50Hz on 60Hz)
+        if (fiveSixthDev < 12) {  /* 12% / 6 = 2% */
+            N = 20;
+        }
+
+        nsecs_t offset = 0;
+        nsecs_t edgeRemainder = 0;
+        for (size_t i = 1; i <= N; i++) {
+            offset +=
+                (renderTime + mTimeCorrection + videoPeriod * i - mVsyncTime) % mVsyncPeriod;
+            edgeRemainder += (videoPeriod * i) % mVsyncPeriod;
+        }
+        mTimeCorrection += mVsyncPeriod / 2 - offset / (nsecs_t)N;
+        renderTime += mTimeCorrection;
+        nsecs_t correctionLimit = mVsyncPeriod * 3 / 5;
+        edgeRemainder = abs(edgeRemainder / (nsecs_t)N - mVsyncPeriod / 2);
+        if (edgeRemainder <= mVsyncPeriod / 3) {
+            correctionLimit /= 2;
+        }
+
+        // estimate how many VSYNCs a frame will spend on the display
+        nsecs_t nextVsyncTime =
+            renderTime + mVsyncPeriod - ((renderTime - mVsyncTime) % mVsyncPeriod);
+        if (mLastVsyncTime >= 0) {
+            size_t minVsyncsPerFrame = videoPeriod / mVsyncPeriod;
+            size_t vsyncsForLastFrame = divRound(nextVsyncTime - mLastVsyncTime, mVsyncPeriod);
+            bool vsyncsPerFrameAreNearlyConstant =
+                periodicError(videoPeriod, mVsyncPeriod) / (mVsyncPeriod / 20) == 0;
+
+            if (mTimeCorrection > correctionLimit &&
+                    (vsyncsPerFrameAreNearlyConstant || vsyncsForLastFrame > minVsyncsPerFrame)) {
+                // remove a VSYNC
+                mTimeCorrection -= mVsyncPeriod / 2;
+                renderTime -= mVsyncPeriod / 2;
+                nextVsyncTime -= mVsyncPeriod;
+                if (vsyncsForLastFrame > 0)
+                    --vsyncsForLastFrame;
+            } else if (mTimeCorrection < -correctionLimit &&
+                    (vsyncsPerFrameAreNearlyConstant || vsyncsForLastFrame == minVsyncsPerFrame)) {
+                // add a VSYNC
+                mTimeCorrection += mVsyncPeriod / 2;
+                renderTime += mVsyncPeriod / 2;
+                nextVsyncTime += mVsyncPeriod;
+                if (vsyncsForLastFrame < ULONG_MAX)
+                    ++vsyncsForLastFrame;
+            }
+            ATRACE_INT("FRAME_VSYNCS", vsyncsForLastFrame);
+        }
+        mLastVsyncTime = nextVsyncTime;
+    }
+
+    // align rendertime to the center between VSYNC edges
+    renderTime -= (renderTime - mVsyncTime) % mVsyncPeriod;
+    renderTime += mVsyncPeriod / 2;
+    ALOGV("adjusting render: %lld => %lld", (long long)origRenderTime, (long long)renderTime);
+    ATRACE_INT("FRAME_FLIP_IN(ms)", (renderTime - now) / 1000000);
+    return renderTime;
+!!!1396997.cpp!!!	getVsyncPeriod() : nsecs_t
+    if (mVsyncPeriod > 0) {
+        return mVsyncPeriod;
+    }
+    return kDefaultVsyncPeriod;
+!!!1397125.cpp!!!	getFrameRate() : float
+    nsecs_t videoPeriod = mPll.getPeriod();
+    if (videoPeriod > 0) {
+        return 1e9 / videoPeriod;
+    }
+    return 0.f;
+!!!1397253.cpp!!!	release() : void
+    mComposer.clear();
+!!!1397381.cpp!!!	~VideoFrameScheduler()
+    release();
+!!!1398533.cpp!!!	updateVsync() : void
+    mVsyncRefreshAt = systemTime(SYSTEM_TIME_MONOTONIC) + kVsyncRefreshPeriod;
+    mVsyncPeriod = 0;
+    mVsyncTime = 0;
+
+    // TODO: schedule frames for the destination surface
+    // For now, surface flinger only schedules frames on the primary display
+    if (mComposer == NULL) {
+        String16 name("SurfaceFlinger");
+        sp<IServiceManager> sm = defaultServiceManager();
+        mComposer = interface_cast<ISurfaceComposer>(sm->checkService(name));
+    }
+    if (mComposer != NULL) {
+        DisplayStatInfo stats;
+        status_t res = mComposer->getDisplayStats(NULL /* display */, &stats);
+        if (res == OK) {
+            ALOGV("vsync time:%lld period:%lld",
+                    (long long)stats.vsyncTime, (long long)stats.vsyncPeriod);
+            mVsyncTime = stats.vsyncTime;
+            mVsyncPeriod = stats.vsyncPeriod;
+        } else {
+            ALOGW("getDisplayStats returned %d", res);
+        }
+    } else {
+        ALOGW("could not get surface mComposer service");
+    }

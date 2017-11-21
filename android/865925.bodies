@@ -1,0 +1,158 @@
+class KeyguardUserSwitcher
+!!!4153733.java!!!	KeyguardUserSwitcher(inout context : Context, inout userSwitcher : ViewStub, inout statusBarView : KeyguardStatusBarView, inout panelView : NotificationPanelView)
+        boolean keyguardUserSwitcherEnabled =
+                context.getResources().getBoolean(R.bool.config_keyguardUserSwitcher) || ALWAYS_ON;
+        UserSwitcherController userSwitcherController = Dependency.get(UserSwitcherController.class);
+        if (userSwitcherController != null && keyguardUserSwitcherEnabled) {
+            mUserSwitcherContainer = (Container) userSwitcher.inflate();
+            mBackground = new KeyguardUserSwitcherScrim(context);
+            reinflateViews();
+            mStatusBarView = statusBarView;
+            mStatusBarView.setKeyguardUserSwitcher(this);
+            panelView.setKeyguardUserSwitcher(this);
+            mAdapter = new Adapter(context, userSwitcherController, this);
+            mAdapter.registerDataSetObserver(mDataSetObserver);
+            mUserSwitcherController = userSwitcherController;
+            mAppearAnimationUtils = new AppearAnimationUtils(context, 400, -0.5f, 0.5f,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            mUserSwitcherContainer.setKeyguardUserSwitcher(this);
+        } else {
+            mUserSwitcherContainer = null;
+            mStatusBarView = null;
+            mAdapter = null;
+            mAppearAnimationUtils = null;
+            mBackground = null;
+        }
+!!!4153861.java!!!	reinflateViews() : void
+        if (mUserSwitcher != null) {
+            mUserSwitcher.setBackground(null);
+            mUserSwitcher.removeOnLayoutChangeListener(mBackground);
+        }
+        mUserSwitcherContainer.removeAllViews();
+
+        LayoutInflater.from(mUserSwitcherContainer.getContext())
+                .inflate(R.layout.keyguard_user_switcher_inner, mUserSwitcherContainer);
+
+        mUserSwitcher = (ViewGroup) mUserSwitcherContainer.findViewById(
+                R.id.keyguard_user_switcher_inner);
+        mUserSwitcher.addOnLayoutChangeListener(mBackground);
+        mUserSwitcher.setBackground(mBackground);
+!!!4153989.java!!!	setKeyguard(inout keyguard : boolean, inout animate : boolean) : void
+        if (mUserSwitcher != null) {
+            if (keyguard && shouldExpandByDefault()) {
+                show(animate);
+            } else {
+                hide(animate);
+            }
+        }
+!!!4154117.java!!!	shouldExpandByDefault() : boolean
+        return (mUserSwitcherController != null) && mUserSwitcherController.isSimpleUserSwitcher();
+!!!4154245.java!!!	show(inout animate : boolean) : void
+        if (mUserSwitcher != null && mUserSwitcherContainer.getVisibility() != View.VISIBLE) {
+            cancelAnimations();
+            mAdapter.refresh();
+            mUserSwitcherContainer.setVisibility(View.VISIBLE);
+            mStatusBarView.setKeyguardUserSwitcherShowing(true, animate);
+            if (animate) {
+                startAppearAnimation();
+            }
+        }
+!!!4154373.java!!!	hide(inout animate : boolean) : boolean
+        if (mUserSwitcher != null && mUserSwitcherContainer.getVisibility() == View.VISIBLE) {
+            cancelAnimations();
+            if (animate) {
+                startDisappearAnimation();
+            } else {
+                mUserSwitcherContainer.setVisibility(View.GONE);
+            }
+            mStatusBarView.setKeyguardUserSwitcherShowing(false, animate);
+            return true;
+        }
+        return false;
+!!!4154501.java!!!	cancelAnimations() : void
+        int count = mUserSwitcher.getChildCount();
+        for (int i = 0; i < count; i++) {
+            mUserSwitcher.getChildAt(i).animate().cancel();
+        }
+        if (mBgAnimator != null) {
+            mBgAnimator.cancel();
+        }
+        mUserSwitcher.animate().cancel();
+        mAnimating = false;
+!!!4154629.java!!!	startAppearAnimation() : void
+        int count = mUserSwitcher.getChildCount();
+        View[] objects = new View[count];
+        for (int i = 0; i < count; i++) {
+            objects[i] = mUserSwitcher.getChildAt(i);
+        }
+        mUserSwitcher.setClipChildren(false);
+        mUserSwitcher.setClipToPadding(false);
+        mAppearAnimationUtils.startAnimation(objects, new Runnable() {
+            @Override
+            public void run() {
+                mUserSwitcher.setClipChildren(true);
+                mUserSwitcher.setClipToPadding(true);
+            }
+        });
+        mAnimating = true;
+        mBgAnimator = ObjectAnimator.ofInt(mBackground, "alpha", 0, 255);
+        mBgAnimator.setDuration(400);
+        mBgAnimator.setInterpolator(Interpolators.ALPHA_IN);
+        mBgAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mBgAnimator = null;
+                mAnimating = false;
+            }
+        });
+        mBgAnimator.start();
+!!!4154757.java!!!	startDisappearAnimation() : void
+        mAnimating = true;
+        mUserSwitcher.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .setInterpolator(Interpolators.ALPHA_OUT)
+                .withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        mUserSwitcherContainer.setVisibility(View.GONE);
+                        mUserSwitcher.setAlpha(1f);
+                        mAnimating = false;
+                    }
+                });
+!!!4154885.java!!!	refresh() : void
+        final int childCount = mUserSwitcher.getChildCount();
+        final int adapterCount = mAdapter.getCount();
+        final int N = Math.max(childCount, adapterCount);
+        for (int i = 0; i < N; i++) {
+            if (i < adapterCount) {
+                View oldView = null;
+                if (i < childCount) {
+                    oldView = mUserSwitcher.getChildAt(i);
+                }
+                View newView = mAdapter.getView(i, oldView, mUserSwitcher);
+                if (oldView == null) {
+                    // We ran out of existing views. Add it at the end.
+                    mUserSwitcher.addView(newView);
+                } else if (oldView != newView) {
+                    // We couldn't rebind the view. Replace it.
+                    mUserSwitcher.removeViewAt(i);
+                    mUserSwitcher.addView(newView, i);
+                }
+            } else {
+                int lastIndex = mUserSwitcher.getChildCount() - 1;
+                mUserSwitcher.removeViewAt(lastIndex);
+            }
+        }
+!!!4155013.java!!!	hideIfNotSimple(inout animate : boolean) : boolean
+        if (mUserSwitcherContainer != null && !mUserSwitcherController.isSimpleUserSwitcher()) {
+            return hide(animate);
+        }
+        return false;
+!!!4155141.java!!!	isAnimating() : boolean
+        return mAnimating;
+!!!4155269.java!!!	onDensityOrFontScaleChanged() : void
+        if (mUserSwitcherContainer != null) {
+            reinflateViews();
+            refresh();
+        }

@@ -1,0 +1,189 @@
+class BluetoothMapClient
+!!!6008837.java!!!	BluetoothMapClient(inout context : Context, inout l : BluetoothProfile::ServiceListener)
+        if (DBG) Log.d(TAG, "Create BluetoothMapClient proxy object");
+        mContext = context;
+        mServiceListener = l;
+        mAdapter = BluetoothAdapter.getDefaultAdapter();
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG, "", e);
+            }
+        }
+        doBind();
+!!!6008965.java!!!	doBind() : boolean
+        Intent intent = new Intent(IBluetoothMapClient.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth MAP MCE Service with " + intent);
+            return false;
+        }
+        return true;
+!!!6009093.java!!!	finalize() : void
+        try {
+            close();
+        } finally {
+            super.finalize();
+        }
+!!!6009221.java!!!	close() : void
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (Exception e) {
+                Log.e(TAG, "", e);
+            }
+        }
+
+        synchronized (mConnection) {
+            if (mService != null) {
+                try {
+                    mService = null;
+                    mContext.unbindService(mConnection);
+                } catch (Exception re) {
+                    Log.e(TAG, "", re);
+                }
+            }
+        }
+        mServiceListener = null;
+!!!6009349.java!!!	isConnected(inout device : BluetoothDevice) : boolean
+        if (VDBG) Log.d(TAG, "isConnected(" + device + ")");
+        if (mService != null) {
+            try {
+                return mService.isConnected(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+        return false;
+!!!6009477.java!!!	connect(inout device : BluetoothDevice) : boolean
+        if (DBG) Log.d(TAG, "connect(" + device + ")" + "for MAPS MCE");
+        if (mService != null) {
+            try {
+                return mService.connect(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+        return false;
+!!!6009605.java!!!	disconnect(inout device : BluetoothDevice) : boolean
+        if (DBG) Log.d(TAG, "disconnect(" + device + ")");
+        if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+            try {
+                return mService.disconnect(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return false;
+!!!6009733.java!!!	getConnectedDevices() : BluetoothDevice
+        if (DBG) Log.d(TAG, "getConnectedDevices()");
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.getConnectedDevices();
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return new ArrayList<>();
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return new ArrayList<>();
+!!!6009861.java!!!	getDevicesMatchingConnectionStates(inout states : int [[]]) : BluetoothDevice
+        if (DBG) Log.d(TAG, "getDevicesMatchingStates()");
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.getDevicesMatchingConnectionStates(states);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return new ArrayList<>();
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return new ArrayList<>();
+!!!6009989.java!!!	getConnectionState(inout device : BluetoothDevice) : int
+        if (DBG) Log.d(TAG, "getConnectionState(" + device + ")");
+        if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+            try {
+                return mService.getConnectionState(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return BluetoothProfile.STATE_DISCONNECTED;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return BluetoothProfile.STATE_DISCONNECTED;
+!!!6010117.java!!!	setPriority(inout device : BluetoothDevice, in priority : int) : boolean
+        if (DBG) Log.d(TAG, "setPriority(" + device + ", " + priority + ")");
+        if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+            if (priority != BluetoothProfile.PRIORITY_OFF &&
+                    priority != BluetoothProfile.PRIORITY_ON) {
+                return false;
+            }
+            try {
+                return mService.setPriority(device, priority);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return false;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return false;
+!!!6010245.java!!!	getPriority(inout device : BluetoothDevice) : int
+        if (VDBG) Log.d(TAG, "getPriority(" + device + ")");
+        if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+            try {
+                return mService.getPriority(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return PRIORITY_OFF;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return PRIORITY_OFF;
+!!!6010373.java!!!	sendMessage(inout device : BluetoothDevice, inout contacts : Uri [[]], in message : String, inout sentIntent : PendingIntent, inout deliveredIntent : PendingIntent) : boolean
+        if (DBG) Log.d(TAG, "sendMessage(" + device + ", " + contacts + ", " + message);
+        if (mService != null && isEnabled() && isValidDevice(device)) {
+            try {
+                return mService.sendMessage(device, contacts, message, sentIntent, deliveredIntent);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return false;
+            }
+        }
+        return false;
+!!!6010501.java!!!	getUnreadMessages(inout device : BluetoothDevice) : boolean
+        if (DBG) Log.d(TAG, "getUnreadMessages(" + device + ")");
+        if (mService != null && isEnabled() && isValidDevice(device)) {
+            try {
+                return mService.getUnreadMessages(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+                return false;
+            }
+        }
+        return false;
+!!!6010629.java!!!	isEnabled() : boolean
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter != null && adapter.getState() == BluetoothAdapter.STATE_ON) return true;
+        if (DBG) Log.d(TAG, "Bluetooth is Not enabled");
+        return false;
+!!!6010757.java!!!	isValidDevice(inout device : BluetoothDevice) : boolean
+        if (device == null) return false;
+
+        if (BluetoothAdapter.checkBluetoothAddress(device.getAddress())) return true;
+        return false;

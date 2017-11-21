@@ -1,0 +1,266 @@
+class CacheQuotaStrategy
+!!!12468357.java!!!	CacheQuotaStrategy(inout context : Context, inout usageStatsManager : UsageStatsManagerInternal, inout installer : Installer, inout quotaMap : ArrayMap)
+        mContext = Preconditions.checkNotNull(context);
+        mUsageStats = Preconditions.checkNotNull(usageStatsManager);
+        mInstaller = Preconditions.checkNotNull(installer);
+        mQuotaMap = Preconditions.checkNotNull(quotaMap);
+        mPreviousValuesFile = new AtomicFile(new File(
+                new File(Environment.getDataDirectory(), "system"), "cachequota.xml"));
+!!!12468485.java!!!	recalculateQuotas() : void
+        createServiceConnection();
+
+        ComponentName component = getServiceComponentName();
+        if (component != null) {
+            Intent intent = new Intent();
+            intent.setComponent(component);
+            mContext.bindServiceAsUser(
+                    intent, mServiceConnection, Context.BIND_AUTO_CREATE, UserHandle.CURRENT);
+        }
+!!!12468613.java!!!	createServiceConnection() : void
+        // If we're already connected, don't create a new connection.
+        if (mServiceConnection != null) {
+            return;
+        }
+
+        mServiceConnection = new ServiceConnection() {
+            @Override
+            @MainThread
+            public void onServiceConnected(ComponentName name, IBinder service) {
+                Runnable runnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        synchronized (mLock) {
+                            mRemoteService = ICacheQuotaService.Stub.asInterface(service);
+                            List<CacheQuotaHint> requests = getUnfulfilledRequests();
+                            final RemoteCallback remoteCallback =
+                                    new RemoteCallback(CacheQuotaStrategy.this);
+                            try {
+                                mRemoteService.computeCacheQuotaHints(remoteCallback, requests);
+                            } catch (RemoteException ex) {
+                                Slog.w(TAG,
+                                        "Remote exception occurred while trying to get cache quota",
+                                        ex);
+                            }
+                        }
+                    }
+                };
+                AsyncTask.execute(runnable);
+            }
+
+            @Override
+            @MainThread
+            public void onServiceDisconnected(ComponentName name) {
+                synchronized (mLock) {
+                    mRemoteService = null;
+                }
+            }
+        };
+!!!12468741.java!!!	getUnfulfilledRequests() : CacheQuotaHint
+        long timeNow = System.currentTimeMillis();
+        long oneYearAgo = timeNow - DateUtils.YEAR_IN_MILLIS;
+
+        List<CacheQuotaHint> requests = new ArrayList<>();
+        UserManager um = mContext.getSystemService(UserManager.class);
+        final List<UserInfo> users = um.getUsers();
+        final int userCount = users.size();
+        final PackageManager packageManager = mContext.getPackageManager();
+        for (int i = 0; i < userCount; i++) {
+            UserInfo info = users.get(i);
+            List<UsageStats> stats =
+                    mUsageStats.queryUsageStatsForUser(info.id, UsageStatsManager.INTERVAL_BEST,
+                            oneYearAgo, timeNow, /*obfuscateInstantApps=*/ false);
+            if (stats == null) {
+                continue;
+            }
+
+            for (UsageStats stat : stats) {
+                String packageName = stat.getPackageName();
+                try {
+                    // We need the app info to determine the uid and the uuid of the volume
+                    // where the app is installed.
+                    ApplicationInfo appInfo = packageManager.getApplicationInfoAsUser(
+                            packageName, 0, info.id);
+                    requests.add(
+                            new CacheQuotaHint.Builder()
+                                    .setVolumeUuid(appInfo.volumeUuid)
+                                    .setUid(appInfo.uid)
+                                    .setUsageStats(stat)
+                                    .setQuota(CacheQuotaHint.QUOTA_NOT_SET)
+                                    .build());
+                } catch (PackageManager.NameNotFoundException e) {
+                    // This may happen if an app has a recorded usage, but has been uninstalled.
+                    continue;
+                }
+            }
+        }
+        return requests;
+!!!12468869.java!!!	onResult(inout data : Bundle) : void
+        final List<CacheQuotaHint> processedRequests =
+                data.getParcelableArrayList(
+                        CacheQuotaService.REQUEST_LIST_KEY);
+        pushProcessedQuotas(processedRequests);
+        writeXmlToFile(processedRequests);
+!!!12468997.java!!!	pushProcessedQuotas(inout processedRequests : List<CacheQuotaHint>) : void
+        final int requestSize = processedRequests.size();
+        for (int i = 0; i < requestSize; i++) {
+            CacheQuotaHint request = processedRequests.get(i);
+            long proposedQuota = request.getQuota();
+            if (proposedQuota == CacheQuotaHint.QUOTA_NOT_SET) {
+                continue;
+            }
+
+            try {
+                int uid = request.getUid();
+                mInstaller.setAppQuota(request.getVolumeUuid(),
+                        UserHandle.getUserId(uid),
+                        UserHandle.getAppId(uid), proposedQuota);
+                insertIntoQuotaMap(request.getVolumeUuid(),
+                        UserHandle.getUserId(uid),
+                        UserHandle.getAppId(uid), proposedQuota);
+            } catch (Installer.InstallerException ex) {
+                Slog.w(TAG,
+                        "Failed to set cache quota for " + request.getUid(),
+                        ex);
+            }
+        }
+
+        disconnectService();
+!!!12469125.java!!!	insertIntoQuotaMap(in volumeUuid : String, in userId : int, in appId : int, in quota : long) : void
+        SparseLongArray volumeMap = mQuotaMap.get(volumeUuid);
+        if (volumeMap == null) {
+            volumeMap = new SparseLongArray();
+            mQuotaMap.put(volumeUuid, volumeMap);
+        }
+        volumeMap.put(UserHandle.getUid(userId, appId), quota);
+!!!12469253.java!!!	disconnectService() : void
+        if (mServiceConnection != null) {
+            mContext.unbindService(mServiceConnection);
+            mServiceConnection = null;
+        }
+!!!12469381.java!!!	getServiceComponentName() : ComponentName
+        String packageName =
+                mContext.getPackageManager().getServicesSystemSharedLibraryPackageName();
+        if (packageName == null) {
+            Slog.w(TAG, "could not access the cache quota service: no package!");
+            return null;
+        }
+
+        Intent intent = new Intent(CacheQuotaService.SERVICE_INTERFACE);
+        intent.setPackage(packageName);
+        ResolveInfo resolveInfo = mContext.getPackageManager().resolveService(intent,
+                PackageManager.GET_SERVICES | PackageManager.GET_META_DATA);
+        if (resolveInfo == null || resolveInfo.serviceInfo == null) {
+            Slog.w(TAG, "No valid components found.");
+            return null;
+        }
+        ServiceInfo serviceInfo = resolveInfo.serviceInfo;
+        return new ComponentName(serviceInfo.packageName, serviceInfo.name);
+!!!12469509.java!!!	writeXmlToFile(inout processedRequests : List<CacheQuotaHint>) : void
+        FileOutputStream fileStream = null;
+        try {
+            XmlSerializer out = new FastXmlSerializer();
+            fileStream = mPreviousValuesFile.startWrite();
+            out.setOutput(fileStream, StandardCharsets.UTF_8.name());
+            saveToXml(out, processedRequests, 0);
+            mPreviousValuesFile.finishWrite(fileStream);
+        } catch (Exception e) {
+            Slog.e(TAG, "An error occurred while writing the cache quota file.", e);
+            mPreviousValuesFile.failWrite(fileStream);
+        }
+!!!12469637.java!!!	setupQuotasFromFile() : long
+        FileInputStream stream;
+        try {
+            stream = mPreviousValuesFile.openRead();
+        } catch (FileNotFoundException e) {
+            // The file may not exist yet -- this isn't truly exceptional.
+            return -1;
+        }
+
+        Pair<Long, List<CacheQuotaHint>> cachedValues = null;
+        try {
+            cachedValues = readFromXml(stream);
+        } catch (XmlPullParserException e) {
+            throw new IllegalStateException(e.getMessage());
+        }
+
+        if (cachedValues == null) {
+            Slog.e(TAG, "An error occurred while parsing the cache quota file.");
+            return -1;
+        }
+        pushProcessedQuotas(cachedValues.second);
+        return cachedValues.first;
+!!!12469765.java!!!	saveToXml(inout out : XmlSerializer, inout requests : List<CacheQuotaHint>, in bytesWhenCalculated : long) : void
+        out.startDocument(null, true);
+        out.startTag(null, CACHE_INFO_TAG);
+        int requestSize = requests.size();
+        out.attribute(null, ATTR_PREVIOUS_BYTES, Long.toString(bytesWhenCalculated));
+
+        for (int i = 0; i < requestSize; i++) {
+            CacheQuotaHint request = requests.get(i);
+            out.startTag(null, TAG_QUOTA);
+            String uuid = request.getVolumeUuid();
+            if (uuid != null) {
+                out.attribute(null, ATTR_UUID, request.getVolumeUuid());
+            }
+            out.attribute(null, ATTR_UID, Integer.toString(request.getUid()));
+            out.attribute(null, ATTR_QUOTA_IN_BYTES, Long.toString(request.getQuota()));
+            out.endTag(null, TAG_QUOTA);
+        }
+        out.endTag(null, CACHE_INFO_TAG);
+        out.endDocument();
+!!!12469893.java!!!	readFromXml(inout inputStream : InputStream) : Pair
+        XmlPullParser parser = Xml.newPullParser();
+        parser.setInput(inputStream, StandardCharsets.UTF_8.name());
+
+        int eventType = parser.getEventType();
+        while (eventType != XmlPullParser.START_TAG &&
+                eventType != XmlPullParser.END_DOCUMENT) {
+            eventType = parser.next();
+        }
+
+        if (eventType == XmlPullParser.END_DOCUMENT) {
+            Slog.d(TAG, "No quotas found in quota file.");
+            return null;
+        }
+
+        String tagName = parser.getName();
+        if (!CACHE_INFO_TAG.equals(tagName)) {
+            throw new IllegalStateException("Invalid starting tag.");
+        }
+
+        final List<CacheQuotaHint> quotas = new ArrayList<>();
+        long previousBytes;
+        try {
+            previousBytes = Long.parseLong(parser.getAttributeValue(
+                    null, ATTR_PREVIOUS_BYTES));
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException(
+                    "Previous bytes formatted incorrectly; aborting quota read.");
+        }
+
+        eventType = parser.next();
+        do {
+            if (eventType == XmlPullParser.START_TAG) {
+                tagName = parser.getName();
+                if (TAG_QUOTA.equals(tagName)) {
+                    CacheQuotaHint request = getRequestFromXml(parser);
+                    if (request == null) {
+                        continue;
+                    }
+                    quotas.add(request);
+                }
+            }
+            eventType = parser.next();
+        } while (eventType != XmlPullParser.END_DOCUMENT);
+        return new Pair<>(previousBytes, quotas);
+!!!12470021.java!!!	getRequestFromXml(inout parser : XmlPullParser) : CacheQuotaHint
+        try {
+            String uuid = parser.getAttributeValue(null, ATTR_UUID);
+            int uid = Integer.parseInt(parser.getAttributeValue(null, ATTR_UID));
+            long bytes = Long.parseLong(parser.getAttributeValue(null, ATTR_QUOTA_IN_BYTES));
+            return new CacheQuotaHint.Builder()
+                    .setVolumeUuid(uuid).setUid(uid).setQuota(bytes).build();
+        } catch (NumberFormatException e) {
+            Slog.e(TAG, "Invalid cache quota request, skipping.");
+            return null;
+        }

@@ -1,0 +1,53 @@
+class SelectionTracker
+!!!9617797.java!!!	SelectionTracker(inout classifier : TextClassifier)
+            mClassifier = classifier;
+!!!9617925.java!!!	setOriginalSelection(in selectionStart : int, in selectionEnd : int) : void
+            mOriginalStart = selectionStart;
+            mOriginalEnd = selectionEnd;
+            resetSelectionFlags();
+!!!9618053.java!!!	onSelectionStarted(in selectionStart : int, in selectionEnd : int, in logTag : String) : void
+            mClassifierSelection = !logTag.isEmpty();
+            mSelectionStart = selectionStart;
+            mSelectionEnd = selectionEnd;
+            // If the started selection is different from the original selection, we have a
+            // smart selection.
+            mMultiSelection =
+                    mSelectionStart != mOriginalStart || mSelectionEnd != mOriginalEnd;
+            if (mMultiSelection) {
+                mClassifier.logEvent(logTag, LOG_EVENT_MULTI_SELECTION);
+            } else if (mClassifierSelection) {
+                mClassifier.logEvent(logTag, LOG_EVENT_SINGLE_SELECTION);
+            }
+!!!9618181.java!!!	onSelectionUpdated(in selectionStart : int, in selectionEnd : int, in logTag : String) : void
+            final boolean selectionChanged =
+                    selectionStart != mSelectionStart || selectionEnd != mSelectionEnd;
+            if (selectionChanged) {
+                if (mMultiSelection) {
+                    mClassifier.logEvent(logTag, LOG_EVENT_MULTI_SELECTION_MODIFIED);
+                } else if (mClassifierSelection) {
+                    mClassifier.logEvent(logTag, LOG_EVENT_SINGLE_SELECTION_MODIFIED);
+                }
+                resetSelectionFlags();
+            }
+!!!9618309.java!!!	onSelectionDestroyed() : void
+            resetSelectionFlags();
+!!!9618437.java!!!	onSelectionAction(in logTag : String) : void
+            if (mMultiSelection) {
+                mClassifier.logEvent(logTag, LOG_EVENT_MULTI_SELECTION_ACTION);
+            } else if (mClassifierSelection) {
+                mClassifier.logEvent(logTag, LOG_EVENT_SINGLE_SELECTION_ACTION);
+            }
+!!!9618565.java!!!	resetSelection(in textIndex : int, inout editor : Editor, in logTag : String) : boolean
+            final CharSequence text = editor.getTextView().getText();
+            if (mMultiSelection
+                    && textIndex >= mSelectionStart && textIndex <= mSelectionEnd
+                    && text instanceof Spannable) {
+                // Only allow a reset once.
+                resetSelectionFlags();
+                mClassifier.logEvent(logTag, LOG_EVENT_MULTI_SELECTION_RESET);
+                return editor.selectCurrentWord();
+            }
+            return false;
+!!!9618693.java!!!	resetSelectionFlags() : void
+            mMultiSelection = false;
+            mClassifierSelection = false;

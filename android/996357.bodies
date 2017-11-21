@@ -1,0 +1,189 @@
+class FragmentHostCallback
+!!!4834693.java!!!	FragmentHostCallback(inout context : Context, inout handler : Handler, in windowAnimations : int)
+        this((context instanceof Activity) ? (Activity)context : null, context,
+                chooseHandler(context, handler), windowAnimations);
+!!!4834821.java!!!	FragmentHostCallback(inout activity : Activity)
+        this(activity, activity /*context*/, activity.mHandler, 0 /*windowAnimations*/);
+!!!4834949.java!!!	FragmentHostCallback(inout activity : Activity, inout context : Context, inout handler : Handler, in windowAnimations : int)
+        mActivity = activity;
+        mContext = context;
+        mHandler = handler;
+        mWindowAnimations = windowAnimations;
+!!!4835077.java!!!	chooseHandler(inout context : Context, inout handler : Handler) : Handler
+        if (handler == null && context instanceof Activity) {
+            Activity activity = (Activity) context;
+            return activity.mHandler;
+        } else {
+            return handler;
+        }
+!!!4835333.java!!!	onShouldSaveFragmentState(inout fragment : Fragment) : boolean
+        return true;
+!!!4835461.java!!!	onGetLayoutInflater() : LayoutInflater
+        return (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+!!!4835589.java!!!	onUseFragmentManagerInflaterFactory() : boolean
+        return false;
+!!!4835973.java!!!	onStartActivityFromFragment(inout fragment : Fragment, inout intent : Intent, in requestCode : int, inout options : Bundle) : void
+        if (requestCode != -1) {
+            throw new IllegalStateException(
+                    "Starting activity with a requestCode requires a FragmentActivity host");
+        }
+        mContext.startActivity(intent);
+!!!4836101.java!!!	onStartActivityAsUserFromFragment(inout fragment : Fragment, inout intent : Intent, in requestCode : int, inout options : Bundle, inout userHandle : UserHandle) : void
+        if (requestCode != -1) {
+            throw new IllegalStateException(
+                    "Starting activity with a requestCode requires a FragmentActivity host");
+        }
+        mContext.startActivityAsUser(intent, userHandle);
+!!!4836229.java!!!	onStartIntentSenderFromFragment(inout fragment : Fragment, inout intent : IntentSender, in requestCode : int, inout fillInIntent : Intent, in flagsMask : int, in flagsValues : int, in extraFlags : int, inout options : Bundle) : void
+        if (requestCode != -1) {
+            throw new IllegalStateException(
+                    "Starting intent sender with a requestCode requires a FragmentActivity host");
+        }
+        mContext.startIntentSender(intent, fillInIntent, flagsMask, flagsValues, extraFlags,
+                options);
+!!!4836485.java!!!	onHasWindowAnimations() : boolean
+        return true;
+!!!4836613.java!!!	onGetWindowAnimations() : int
+        return mWindowAnimations;
+!!!4836869.java!!!	onFindViewById(in id : int) : T
+        return null;
+!!!4836997.java!!!	onHasView() : boolean
+        return true;
+!!!4837125.java!!!	getRetainLoaders() : boolean
+        return mRetainLoaders;
+!!!4837253.java!!!	getActivity() : Activity
+        return mActivity;
+!!!4837381.java!!!	getContext() : Context
+        return mContext;
+!!!4837509.java!!!	getHandler() : Handler
+        return mHandler;
+!!!4837637.java!!!	getFragmentManagerImpl() : FragmentManagerImpl
+        return mFragmentManager;
+!!!4837765.java!!!	getLoaderManagerImpl() : LoaderManagerImpl
+        if (mLoaderManager != null) {
+            return mLoaderManager;
+        }
+        mCheckedForLoaderManager = true;
+        mLoaderManager = getLoaderManager("(root)", mLoadersStarted, true /*create*/);
+        return mLoaderManager;
+!!!4837893.java!!!	inactivateFragment(in who : String) : void
+        //Log.v(TAG, "invalidateSupportFragment: who=" + who);
+        if (mAllLoaderManagers != null) {
+            LoaderManagerImpl lm = (LoaderManagerImpl) mAllLoaderManagers.get(who);
+            if (lm != null && !lm.mRetaining) {
+                lm.doDestroy();
+                mAllLoaderManagers.remove(who);
+            }
+        }
+!!!4838021.java!!!	doLoaderStart() : void
+        if (mLoadersStarted) {
+            return;
+        }
+        mLoadersStarted = true;
+
+        if (mLoaderManager != null) {
+            mLoaderManager.doStart();
+        } else if (!mCheckedForLoaderManager) {
+            mLoaderManager = getLoaderManager("(root)", mLoadersStarted, false);
+        }
+        mCheckedForLoaderManager = true;
+!!!4838149.java!!!	doLoaderStop(inout retain : boolean) : void
+        mRetainLoaders = retain;
+
+        if (mLoaderManager == null) {
+            return;
+        }
+
+        if (!mLoadersStarted) {
+            return;
+        }
+        mLoadersStarted = false;
+
+        if (retain) {
+            mLoaderManager.doRetain();
+        } else {
+            mLoaderManager.doStop();
+        }
+!!!4838277.java!!!	doLoaderRetain() : void
+        if (mLoaderManager == null) {
+            return;
+        }
+        mLoaderManager.doRetain();
+!!!4838405.java!!!	doLoaderDestroy() : void
+        if (mLoaderManager == null) {
+            return;
+        }
+        mLoaderManager.doDestroy();
+!!!4838533.java!!!	reportLoaderStart() : void
+        if (mAllLoaderManagers != null) {
+            final int N = mAllLoaderManagers.size();
+            LoaderManagerImpl loaders[] = new LoaderManagerImpl[N];
+            for (int i=N-1; i>=0; i--) {
+                loaders[i] = (LoaderManagerImpl) mAllLoaderManagers.valueAt(i);
+            }
+            for (int i=0; i<N; i++) {
+                LoaderManagerImpl lm = loaders[i];
+                lm.finishRetain();
+                lm.doReportStart();
+            }
+        }
+!!!4838661.java!!!	getLoaderManager(in who : String, inout started : boolean, inout create : boolean) : LoaderManagerImpl
+        if (mAllLoaderManagers == null) {
+            mAllLoaderManagers = new ArrayMap<String, LoaderManager>();
+        }
+        LoaderManagerImpl lm = (LoaderManagerImpl) mAllLoaderManagers.get(who);
+        if (lm == null && create) {
+            lm = new LoaderManagerImpl(who, this, started);
+            mAllLoaderManagers.put(who, lm);
+        } else if (started && lm != null && !lm.mStarted){
+            lm.doStart();
+        }
+        return lm;
+!!!4838789.java!!!	retainLoaderNonConfig() : ArrayMap
+        boolean retainLoaders = false;
+        if (mAllLoaderManagers != null) {
+            // Restart any loader managers that were already stopped so that they
+            // will be ready to retain
+            final int N = mAllLoaderManagers.size();
+            LoaderManagerImpl loaders[] = new LoaderManagerImpl[N];
+            for (int i=N-1; i>=0; i--) {
+                loaders[i] = (LoaderManagerImpl) mAllLoaderManagers.valueAt(i);
+            }
+            final boolean doRetainLoaders = getRetainLoaders();
+            for (int i=0; i<N; i++) {
+                LoaderManagerImpl lm = loaders[i];
+                if (!lm.mRetaining && doRetainLoaders) {
+                    if (!lm.mStarted) {
+                        lm.doStart();
+                    }
+                    lm.doRetain();
+                }
+                if (lm.mRetaining) {
+                    retainLoaders = true;
+                } else {
+                    lm.doDestroy();
+                    mAllLoaderManagers.remove(lm.mWho);
+                }
+            }
+        }
+
+        if (retainLoaders) {
+            return mAllLoaderManagers;
+        }
+        return null;
+!!!4838917.java!!!	restoreLoaderNonConfig(inout loaderManagers : ArrayMap) : void
+        if (loaderManagers != null) {
+            for (int i = 0, N = loaderManagers.size(); i < N; i++) {
+                ((LoaderManagerImpl) loaderManagers.valueAt(i)).updateHostController(this);
+            }
+        }
+        mAllLoaderManagers = loaderManagers;
+!!!4839045.java!!!	dumpLoaders(in prefix : String, inout fd : FileDescriptor, inout writer : PrintWriter, inout args : String [[]]) : void
+        writer.print(prefix); writer.print("mLoadersStarted=");
+        writer.println(mLoadersStarted);
+        if (mLoaderManager != null) {
+            writer.print(prefix); writer.print("Loader Manager ");
+            writer.print(Integer.toHexString(System.identityHashCode(mLoaderManager)));
+            writer.println(":");
+            mLoaderManager.dump(prefix + "  ", fd, writer, args);
+        }

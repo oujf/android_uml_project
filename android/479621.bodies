@@ -1,0 +1,128 @@
+class MediaMuxer
+!!!1305733.cpp!!!	MediaMuxer(in fd : int, in format : MediaMuxer::OutputFormat)
+    if (format == OUTPUT_FORMAT_MPEG_4 || format == OUTPUT_FORMAT_THREE_GPP) {
+        mWriter = new MPEG4Writer(fd);
+    } else if (format == OUTPUT_FORMAT_WEBM) {
+        mWriter = new WebmWriter(fd);
+    }
+
+    if (mWriter != NULL) {
+        mFileMeta = new MetaData;
+        mState = INITIALIZED;
+    }
+!!!1305861.cpp!!!	~MediaMuxer()
+    Mutex::Autolock autoLock(mMuxerLock);
+
+    // Clean up all the internal resources.
+    mFileMeta.clear();
+    mWriter.clear();
+    mTrackList.clear();
+!!!1305989.cpp!!!	addTrack(in format : sp<AMessage>) : ssize_t
+    Mutex::Autolock autoLock(mMuxerLock);
+
+    if (format.get() == NULL) {
+        ALOGE("addTrack() get a null format");
+        return -EINVAL;
+    }
+
+    if (mState != INITIALIZED) {
+        ALOGE("addTrack() must be called after constructor and before start().");
+        return INVALID_OPERATION;
+    }
+
+    sp<MetaData> trackMeta = new MetaData;
+    convertMessageToMetaData(format, trackMeta);
+
+    sp<MediaAdapter> newTrack = new MediaAdapter(trackMeta);
+    status_t result = mWriter->addSource(newTrack);
+    if (result == OK) {
+        return mTrackList.add(newTrack);
+    }
+    return -1;
+!!!1306117.cpp!!!	start() : status_t
+    Mutex::Autolock autoLock(mMuxerLock);
+    if (mState == INITIALIZED) {
+        mState = STARTED;
+        mFileMeta->setInt32(kKeyRealTimeRecording, false);
+        return mWriter->start(mFileMeta.get());
+    } else {
+        ALOGE("start() is called in invalid state %d", mState);
+        return INVALID_OPERATION;
+    }
+!!!1306245.cpp!!!	setOrientationHint(in degrees : int) : status_t
+    Mutex::Autolock autoLock(mMuxerLock);
+    if (mState != INITIALIZED) {
+        ALOGE("setOrientationHint() must be called before start().");
+        return INVALID_OPERATION;
+    }
+
+    if (degrees != 0 && degrees != 90 && degrees != 180 && degrees != 270) {
+        ALOGE("setOrientationHint() get invalid degrees");
+        return -EINVAL;
+    }
+
+    mFileMeta->setInt32(kKeyRotation, degrees);
+    return OK;
+!!!1306373.cpp!!!	setLocation(in latitude : int, in longitude : int) : status_t
+    Mutex::Autolock autoLock(mMuxerLock);
+    if (mState != INITIALIZED) {
+        ALOGE("setLocation() must be called before start().");
+        return INVALID_OPERATION;
+    }
+    if (mFormat != OUTPUT_FORMAT_MPEG_4 && mFormat != OUTPUT_FORMAT_THREE_GPP) {
+        ALOGE("setLocation() is only supported for .mp4 pr .3gp output.");
+        return INVALID_OPERATION;
+    }
+
+    ALOGV("Setting location: latitude = %d, longitude = %d", latitude, longitude);
+    return static_cast<MPEG4Writer*>(mWriter.get())->setGeoData(latitude, longitude);
+!!!1306501.cpp!!!	stop() : status_t
+    Mutex::Autolock autoLock(mMuxerLock);
+
+    if (mState == STARTED) {
+        mState = STOPPED;
+        for (size_t i = 0; i < mTrackList.size(); i++) {
+            if (mTrackList[i]->stop() != OK) {
+                return INVALID_OPERATION;
+            }
+        }
+        return mWriter->stop();
+    } else {
+        ALOGE("stop() is called in invalid state %d", mState);
+        return INVALID_OPERATION;
+    }
+!!!1306629.cpp!!!	writeSampleData(in buffer : sp<ABuffer>, in trackIndex : size_t, in timeUs : int64_t, in flags : uint32_t) : status_t
+    Mutex::Autolock autoLock(mMuxerLock);
+
+    if (buffer.get() == NULL) {
+        ALOGE("WriteSampleData() get an NULL buffer.");
+        return -EINVAL;
+    }
+
+    if (mState != STARTED) {
+        ALOGE("WriteSampleData() is called in invalid state %d", mState);
+        return INVALID_OPERATION;
+    }
+
+    if (trackIndex >= mTrackList.size()) {
+        ALOGE("WriteSampleData() get an invalid index %zu", trackIndex);
+        return -EINVAL;
+    }
+
+    MediaBuffer* mediaBuffer = new MediaBuffer(buffer);
+
+    mediaBuffer->add_ref(); // Released in MediaAdapter::signalBufferReturned().
+    mediaBuffer->set_range(buffer->offset(), buffer->size());
+
+    sp<MetaData> sampleMetaData = mediaBuffer->meta_data();
+    sampleMetaData->setInt64(kKeyTime, timeUs);
+    // Just set the kKeyDecodingTime as the presentation time for now.
+    sampleMetaData->setInt64(kKeyDecodingTime, timeUs);
+
+    if (flags & MediaCodec::BUFFER_FLAG_SYNCFRAME) {
+        sampleMetaData->setInt32(kKeyIsSyncFrame, true);
+    }
+
+    sp<MediaAdapter> currentTrack = mTrackList[trackIndex];
+    // This pushBuffer will wait until the mediaBuffer is consumed.
+    return currentTrack->pushBuffer(mediaBuffer);

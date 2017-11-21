@@ -1,0 +1,101 @@
+class LinksInfoFactory
+!!!9081733.java!!!	create(inout context : Context, inout smartSelection : SmartSelection, in text : String, in linkMask : int) : LinksInfo
+            final WordIterator wordIterator = new WordIterator();
+            wordIterator.setCharSequence(text, 0, text.length());
+            final List<SpanSpec> spans = new ArrayList<>();
+            int start = 0;
+            int end;
+            while ((end = wordIterator.nextBoundary(start)) != BreakIterator.DONE) {
+                final String token = text.substring(start, end);
+                if (TextUtils.isEmpty(token)) {
+                    continue;
+                }
+
+                final int[] selection = smartSelection.suggest(text, start, end);
+                final int selectionStart = selection[0];
+                final int selectionEnd = selection[1];
+                if (selectionStart >= 0 && selectionEnd <= text.length()
+                        && selectionStart <= selectionEnd) {
+                    final SmartSelection.ClassificationResult[] results =
+                            smartSelection.classifyText(
+                                    text, selectionStart, selectionEnd,
+                                    getHintFlags(text, selectionStart, selectionEnd));
+                    if (results.length > 0) {
+                        final String type = getHighestScoringType(results);
+                        if (matches(type, linkMask)) {
+                            final Intent intent = IntentFactory.create(
+                                    context, type, text.substring(selectionStart, selectionEnd));
+                            if (hasActivityHandler(context, intent)) {
+                                final ClickableSpan span = createSpan(context, intent);
+                                spans.add(new SpanSpec(selectionStart, selectionEnd, span));
+                            }
+                        }
+                    }
+                }
+                start = end;
+            }
+            return new LinksInfoImpl(text, avoidOverlaps(spans, text));
+!!!9081861.java!!!	matches(in type : String, in linkMask : int) : boolean
+            type = type.trim().toLowerCase(Locale.ENGLISH);
+            if ((linkMask & Linkify.PHONE_NUMBERS) != 0
+                    && TextClassifier.TYPE_PHONE.equals(type)) {
+                return true;
+            }
+            if ((linkMask & Linkify.EMAIL_ADDRESSES) != 0
+                    && TextClassifier.TYPE_EMAIL.equals(type)) {
+                return true;
+            }
+            if ((linkMask & Linkify.MAP_ADDRESSES) != 0
+                    && TextClassifier.TYPE_ADDRESS.equals(type)) {
+                return true;
+            }
+            if ((linkMask & Linkify.WEB_URLS) != 0
+                    && TextClassifier.TYPE_URL.equals(type)) {
+                return true;
+            }
+            return false;
+!!!9081989.java!!!	avoidOverlaps(inout spans : List<SpanSpec>, in text : String) : TextClassifierImpl::LinksInfoFactory::SpanSpec
+            Collections.sort(spans, Comparator.comparingInt(span -> span.mStart));
+            // Group spans by start index. Take the longest span.
+            final Map<Integer, SpanSpec> reps = new LinkedHashMap<>();  // order matters.
+            final int size = spans.size();
+            for (int i = 0; i < size; i++) {
+                final SpanSpec span = spans.get(i);
+                final LinksInfoFactory.SpanSpec rep = reps.get(span.mStart);
+                if (rep == null || rep.mEnd < span.mEnd) {
+                    reps.put(span.mStart, span);
+                }
+            }
+            // Avoid span intersections. Take the longer span.
+            final LinkedList<SpanSpec> result = new LinkedList<>();
+            for (SpanSpec rep : reps.values()) {
+                if (result.isEmpty()) {
+                    result.add(rep);
+                    continue;
+                }
+
+                final SpanSpec last = result.getLast();
+                if (rep.mStart < last.mEnd) {
+                    // Spans intersect. Use the one with characters.
+                    if ((rep.mEnd - rep.mStart) > (last.mEnd - last.mStart)) {
+                        result.set(result.size() - 1, rep);
+                    }
+                } else {
+                    result.add(rep);
+                }
+            }
+            return result;
+!!!9082117.java!!!	createSpan(in context : Context, in intent : Intent) : ClickableSpan
+            return new ClickableSpan() {
+                // TODO: Style this span.
+                @Override
+                public void onClick(View widget) {
+                    context.startActivity(intent);
+                }
+            };
+!!!9082245.java!!!	hasActivityHandler(inout context : Context, inout intent : Intent) : boolean
+            if (intent == null) {
+                return false;
+            }
+            final ResolveInfo resolveInfo = context.getPackageManager().resolveActivity(intent, 0);
+            return resolveInfo != null && resolveInfo.activityInfo != null;

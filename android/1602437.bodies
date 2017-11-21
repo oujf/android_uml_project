@@ -1,0 +1,201 @@
+class IpSecService
+!!!10713477.java!!!	IpSecService(inout context : Context)
+        mContext = context;
+!!!10713605.java!!!	create(inout context : Context) : IpSecService
+        final IpSecService service = new IpSecService(context);
+        service.connectNativeNetdService();
+        return service;
+!!!10713733.java!!!	systemReady() : void
+        if (isNetdAlive()) {
+            Slog.d(TAG, "IpSecService is ready");
+        } else {
+            Slog.wtf(TAG, "IpSecService not ready: failed to connect to NetD Native Service!");
+        }
+!!!10713861.java!!!	connectNativeNetdService() : void
+        // Avoid blocking the system server to do this
+        Thread t =
+                new Thread(
+                        new Runnable() {
+                            @Override
+                            public void run() {
+                                synchronized (mLock) {
+                                    NetdService.get(NETD_FETCH_TIMEOUT);
+                                }
+                            }
+                        });
+        t.run();
+!!!10713989.java!!!	getNetdInstance() : INetd
+        final INetd netd = NetdService.getInstance();
+        if (netd == null) {
+            throw new RemoteException("Failed to Get Netd Instance");
+        }
+        return netd;
+!!!10714117.java!!!	isNetdAlive() : boolean
+        synchronized (mLock) {
+            try {
+                final INetd netd = getNetdInstance();
+                if (netd == null) {
+                    return false;
+                }
+                return netd.isAlive();
+            } catch (RemoteException re) {
+                return false;
+            }
+        }
+!!!10714245.java!!!	reserveSecurityParameterIndex(in direction : int, in remoteAddress : String, in requestedSpi : int, inout binder : IBinder) : Bundle
+        int resourceId = mNextResourceId.getAndIncrement();
+
+        int spi = IpSecManager.INVALID_SECURITY_PARAMETER_INDEX;
+        String localAddress = "";
+        Bundle retBundle = new Bundle(3);
+        try {
+            spi =
+                    getNetdInstance()
+                            .ipSecAllocateSpi(
+                                    resourceId,
+                                    direction,
+                                    localAddress,
+                                    remoteAddress,
+                                    requestedSpi);
+            Log.d(TAG, "Allocated SPI " + spi);
+            retBundle.putInt(KEY_STATUS, IpSecManager.Status.OK);
+            retBundle.putInt(KEY_RESOURCE_ID, resourceId);
+            retBundle.putInt(KEY_SPI, spi);
+            synchronized (mSpiRecords) {
+                mSpiRecords.put(
+                        resourceId,
+                        new SpiRecord(
+                                resourceId, direction, localAddress, remoteAddress, spi, binder));
+            }
+        } catch (ServiceSpecificException e) {
+            // TODO: Add appropriate checks when other ServiceSpecificException types are supported
+            retBundle.putInt(KEY_STATUS, IpSecManager.Status.SPI_UNAVAILABLE);
+            retBundle.putInt(KEY_RESOURCE_ID, resourceId);
+            retBundle.putInt(KEY_SPI, spi);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        return retBundle;
+!!!10714501.java!!!	openUdpEncapsulationSocket(in port : int, inout binder : IBinder) : Bundle
+        return null;
+!!!10714757.java!!!	createTransportModeTransform(inout c : IpSecConfig, inout binder : IBinder) : Bundle
+        // TODO: Basic input validation here since it's coming over the Binder
+        int resourceId = mNextResourceId.getAndIncrement();
+        for (int direction : DIRECTIONS) {
+            IpSecAlgorithm auth = c.getAuthentication(direction);
+            IpSecAlgorithm crypt = c.getEncryption(direction);
+            try {
+                int result =
+                        getNetdInstance()
+                                .ipSecAddSecurityAssociation(
+                                        resourceId,
+                                        c.getMode(),
+                                        direction,
+                                        (c.getLocalAddress() != null)
+                                                ? c.getLocalAddress().getHostAddress()
+                                                : "",
+                                        (c.getRemoteAddress() != null)
+                                                ? c.getRemoteAddress().getHostAddress()
+                                                : "",
+                                        (c.getNetwork() != null)
+                                                ? c.getNetwork().getNetworkHandle()
+                                                : 0,
+                                        c.getSpi(direction),
+                                        (auth != null) ? auth.getName() : "",
+                                        (auth != null) ? auth.getKey() : null,
+                                        (auth != null) ? auth.getTruncationLengthBits() : 0,
+                                        (crypt != null) ? crypt.getName() : "",
+                                        (crypt != null) ? crypt.getKey() : null,
+                                        (crypt != null) ? crypt.getTruncationLengthBits() : 0,
+                                        c.getEncapType(),
+                                        c.getEncapLocalPort(),
+                                        c.getEncapRemotePort());
+                if (result != c.getSpi(direction)) {
+                    // TODO: cleanup the first SA if creation of second SA fails
+                    Bundle retBundle = new Bundle(2);
+                    retBundle.putInt(KEY_STATUS, IpSecManager.Status.SPI_UNAVAILABLE);
+                    retBundle.putInt(KEY_RESOURCE_ID, INVALID_RESOURCE_ID);
+                    return retBundle;
+                }
+            } catch (ServiceSpecificException e) {
+                // FIXME: get the error code and throw is at an IOException from Errno Exception
+            }
+        }
+        synchronized (mTransformRecords) {
+            mTransformRecords.put(resourceId, new TransformRecord(c, resourceId, binder));
+        }
+
+        Bundle retBundle = new Bundle(2);
+        retBundle.putInt(KEY_STATUS, IpSecManager.Status.OK);
+        retBundle.putInt(KEY_RESOURCE_ID, resourceId);
+        return retBundle;
+!!!10714885.java!!!	deleteTransportModeTransform(in resourceId : int) : void
+        synchronized (mTransformRecords) {
+            TransformRecord record;
+            // We want to non-destructively get so that we can check credentials before removing
+            // this from the records.
+            record = mTransformRecords.get(resourceId);
+
+            if (record == null) {
+                throw new IllegalArgumentException(
+                        "Transform " + resourceId + " is not available to be deleted");
+            }
+
+            if (record.pid != Binder.getCallingPid() || record.uid != Binder.getCallingUid()) {
+                throw new SecurityException("Only the owner of an IpSec Transform may delete it!");
+            }
+
+            // TODO: if releaseResources() throws RemoteException, we can try again to clean up on
+            // binder death. Need to make sure that path is actually functional.
+            record.releaseResources();
+            mTransformRecords.remove(resourceId);
+            record.nullifyRecord();
+        }
+!!!10715013.java!!!	applyTransportModeTransform(inout socket : ParcelFileDescriptor, in resourceId : int) : void
+
+        synchronized (mTransformRecords) {
+            TransformRecord info;
+            // FIXME: this code should be factored out into a security check + getter
+            info = mTransformRecords.get(resourceId);
+
+            if (info == null) {
+                throw new IllegalArgumentException("Transform " + resourceId + " is not active");
+            }
+
+            // TODO: make this a function.
+            if (info.pid != getCallingPid() || info.uid != getCallingUid()) {
+                throw new SecurityException("Only the owner of an IpSec Transform may apply it!");
+            }
+
+            IpSecConfig c = info.getConfig();
+            try {
+                for (int direction : DIRECTIONS) {
+                    getNetdInstance()
+                            .ipSecApplyTransportModeTransform(
+                                    socket.getFileDescriptor(),
+                                    resourceId,
+                                    direction,
+                                    (c.getLocalAddress() != null)
+                                            ? c.getLocalAddress().getHostAddress()
+                                            : "",
+                                    (c.getRemoteAddress() != null)
+                                            ? c.getRemoteAddress().getHostAddress()
+                                            : "",
+                                    c.getSpi(direction));
+                }
+            } catch (ServiceSpecificException e) {
+                // FIXME: get the error code and throw is at an IOException from Errno Exception
+            }
+        }
+!!!10715141.java!!!	removeTransportModeTransform(inout socket : ParcelFileDescriptor, in resourceId : int) : void
+        try {
+            getNetdInstance().ipSecRemoveTransportModeTransform(socket.getFileDescriptor());
+        } catch (ServiceSpecificException e) {
+            // FIXME: get the error code and throw is at an IOException from Errno Exception
+        }
+!!!10715269.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        mContext.enforceCallingOrSelfPermission(DUMP, TAG);
+
+        pw.println("IpSecService Log:");
+        pw.println("NetdNativeService Connection: " + (isNetdAlive() ? "alive" : "dead"));
+        pw.println();

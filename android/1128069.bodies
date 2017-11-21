@@ -1,0 +1,230 @@
+class BluetoothInputHost
+!!!6003205.java!!!	BluetoothInputHost(inout context : Context, inout listener : BluetoothProfile::ServiceListener)
+        Log.v(TAG, "BluetoothInputHost");
+
+        mContext = context;
+        mServiceListener = listener;
+        mAdapter = BluetoothAdapter.getDefaultAdapter();
+
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.registerStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
+        }
+
+        doBind();
+!!!6003333.java!!!	doBind() : boolean
+        Intent intent = new Intent(IBluetoothInputHost.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth HID Device Service with " + intent);
+            return false;
+        }
+        Log.d(TAG, "Bound to HID Device Service");
+        return true;
+!!!6003461.java!!!	close() : void
+        Log.v(TAG, "close()");
+
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mBluetoothStateChangeCallback);
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
+        }
+
+        synchronized (mConnection) {
+            if (mService != null) {
+                mService = null;
+                try {
+                    mContext.unbindService(mConnection);
+                } catch (IllegalArgumentException e) {
+                    Log.e(TAG,"close: could not unbind HID Dev service: ", e);
+                }
+           }
+        }
+
+        mServiceListener = null;
+!!!6003589.java!!!	getConnectedDevices() : BluetoothDevice
+        Log.v(TAG, "getConnectedDevices()");
+
+        if (mService != null) {
+            try {
+                return mService.getConnectedDevices();
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return new ArrayList<BluetoothDevice>();
+!!!6003717.java!!!	getDevicesMatchingConnectionStates(inout states : int [[]]) : BluetoothDevice
+        Log.v(TAG, "getDevicesMatchingConnectionStates(): states=" + Arrays.toString(states));
+
+        if (mService != null) {
+            try {
+                return mService.getDevicesMatchingConnectionStates(states);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return new ArrayList<BluetoothDevice>();
+!!!6003845.java!!!	getConnectionState(inout device : BluetoothDevice) : int
+        Log.v(TAG, "getConnectionState(): device=" + device);
+
+        if (mService != null) {
+            try {
+                return mService.getConnectionState(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return STATE_DISCONNECTED;
+!!!6003973.java!!!	registerApp(inout sdp : BluetoothHidDeviceAppSdpSettings, inout inQos : BluetoothHidDeviceAppQosSettings, inout outQos : BluetoothHidDeviceAppQosSettings, inout callback : BluetoothHidDeviceCallback) : boolean
+        Log.v(TAG, "registerApp(): sdp=" + sdp + " inQos=" + inQos + " outQos=" + outQos
+                + " callback=" + callback);
+
+        boolean result = false;
+
+        if (sdp == null || callback == null) {
+            return false;
+        }
+
+        if (mService != null) {
+            try {
+                BluetoothHidDeviceAppConfiguration config =
+                    new BluetoothHidDeviceAppConfiguration();
+                BluetoothHidDeviceCallbackWrapper cbw =
+                    new BluetoothHidDeviceCallbackWrapper(callback);
+                result = mService.registerApp(config, sdp, inQos, outQos, cbw);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004101.java!!!	unregisterApp(inout config : BluetoothHidDeviceAppConfiguration) : boolean
+        Log.v(TAG, "unregisterApp()");
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.unregisterApp(config);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004229.java!!!	sendReport(inout device : BluetoothDevice, in id : int, inout data : byte [[]]) : boolean
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.sendReport(device, id, data);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004357.java!!!	replyReport(inout device : BluetoothDevice, in type : byte, in id : byte, inout data : byte [[]]) : boolean
+        Log.v(TAG, "replyReport(): device=" + device + " type=" + type + " id=" + id);
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.replyReport(device, type, id, data);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004485.java!!!	reportError(inout device : BluetoothDevice, in error : byte) : boolean
+        Log.v(TAG, "reportError(): device=" + device + " error=" + error);
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.reportError(device, error);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004613.java!!!	unplug(inout device : BluetoothDevice) : boolean
+        Log.v(TAG, "unplug(): device=" + device);
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.unplug(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004741.java!!!	connect(inout device : BluetoothDevice) : boolean
+        Log.v(TAG, "connect(): device=" + device);
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.connect(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;
+!!!6004869.java!!!	disconnect(inout device : BluetoothDevice) : boolean
+        Log.v(TAG, "disconnect(): device=" + device);
+
+        boolean result = false;
+
+        if (mService != null) {
+            try {
+                result = mService.disconnect(device);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+
+        return result;

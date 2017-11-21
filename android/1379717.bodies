@@ -1,0 +1,240 @@
+class DigitsKeyListener
+!!!8275461.java!!!	getAcceptedChars() : char
+        return mAccepted;
+!!!8275589.java!!!	isSignChar(in c : char) : boolean
+        return mSignChars.indexOf(c) != -1;
+!!!8275717.java!!!	isDecimalPointChar(in c : char) : boolean
+        return mDecimalPointChars.indexOf(c) != -1;
+!!!8275845.java!!!	DigitsKeyListener()
+        this(null, false, false);
+!!!8275973.java!!!	DigitsKeyListener(inout sign : boolean, inout decimal : boolean)
+        this(null, sign, decimal);
+!!!8276101.java!!!	DigitsKeyListener(inout locale : Locale)
+        this(locale, false, false);
+!!!8276229.java!!!	setToCompat() : void
+        mDecimalPointChars = DEFAULT_DECIMAL_POINT_CHARS;
+        mSignChars = DEFAULT_SIGN_CHARS;
+        final int kind = (mSign ? SIGN : 0) | (mDecimal ? DECIMAL : 0);
+        mAccepted = COMPATIBILITY_CHARACTERS[kind];
+        mNeedsAdvancedInput = false;
+!!!8276357.java!!!	calculateNeedForAdvancedInput() : void
+        final int kind = (mSign ? SIGN : 0) | (mDecimal ? DECIMAL : 0);
+        mNeedsAdvancedInput = !ArrayUtils.containsAll(COMPATIBILITY_CHARACTERS[kind], mAccepted);
+!!!8276485.java!!!	stripBidiControls(in sign : String) : String
+        // For the sake of simplicity, we operate on code units, since all bidi controls are
+        // in the BMP. We also expect the string to be very short (almost always 1 character), so we
+        // don't need to use StringBuilder.
+        String result = "";
+        for (int i = 0; i < sign.length(); i++) {
+            final char c = sign.charAt(i);
+            if (!UCharacter.hasBinaryProperty(c, UProperty.BIDI_CONTROL)) {
+                if (result.isEmpty()) {
+                    result = String.valueOf(c);
+                } else {
+                    // This should happen very rarely, only if we have a multi-character sign,
+                    // or a sign outside BMP.
+                    result += c;
+                }
+            }
+        }
+        return result;
+!!!8276613.java!!!	DigitsKeyListener(inout locale : Locale, inout sign : boolean, inout decimal : boolean)
+        mSign = sign;
+        mDecimal = decimal;
+        mStringMode = false;
+        mLocale = locale;
+        if (locale == null) {
+            setToCompat();
+            return;
+        }
+        LinkedHashSet<Character> chars = new LinkedHashSet<>();
+        final boolean success = NumberKeyListener.addDigits(chars, locale);
+        if (!success) {
+            setToCompat();
+            return;
+        }
+        if (sign || decimal) {
+            final DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(locale);
+            if (sign) {
+                final String minusString = stripBidiControls(symbols.getMinusSignString());
+                final String plusString = stripBidiControls(symbols.getPlusSignString());
+                if (minusString.length() > 1 || plusString.length() > 1) {
+                    // non-BMP and multi-character signs are not supported.
+                    setToCompat();
+                    return;
+                }
+                final char minus = minusString.charAt(0);
+                final char plus = plusString.charAt(0);
+                chars.add(Character.valueOf(minus));
+                chars.add(Character.valueOf(plus));
+                mSignChars = "" + minus + plus;
+
+                if (minus == MINUS_SIGN || minus == EN_DASH) {
+                    // If the minus sign is U+2212 MINUS SIGN or U+2013 EN DASH, we also need to
+                    // accept the ASCII hyphen-minus.
+                    chars.add(HYPHEN_MINUS);
+                    mSignChars += HYPHEN_MINUS;
+                }
+            }
+            if (decimal) {
+                final String separatorString = symbols.getDecimalSeparatorString();
+                if (separatorString.length() > 1) {
+                    // non-BMP and multi-character decimal separators are not supported.
+                    setToCompat();
+                    return;
+                }
+                final Character separatorChar = Character.valueOf(separatorString.charAt(0));
+                chars.add(separatorChar);
+                mDecimalPointChars = separatorChar.toString();
+            }
+        }
+        mAccepted = NumberKeyListener.collectionToArray(chars);
+        calculateNeedForAdvancedInput();
+!!!8276741.java!!!	DigitsKeyListener(in accepted : String)
+        mSign = false;
+        mDecimal = false;
+        mStringMode = true;
+        mLocale = null;
+        mAccepted = new char[accepted.length()];
+        accepted.getChars(0, accepted.length(), mAccepted, 0);
+        // Theoretically we may need advanced input, but for backward compatibility, we don't change
+        // the input type.
+        mNeedsAdvancedInput = false;
+!!!8276869.java!!!	getInstance() : DigitsKeyListener
+        return getInstance(false, false);
+!!!8276997.java!!!	getInstance(inout sign : boolean, inout decimal : boolean) : DigitsKeyListener
+        return getInstance(null, sign, decimal);
+!!!8277125.java!!!	getInstance(inout locale : Locale) : DigitsKeyListener
+        return getInstance(locale, false, false);
+!!!8277253.java!!!	getInstance(inout locale : Locale, inout sign : boolean, inout decimal : boolean) : DigitsKeyListener
+        final int kind = (sign ? SIGN : 0) | (decimal ? DECIMAL : 0);
+        synchronized (sLocaleCacheLock) {
+            DigitsKeyListener[] cachedValue = sLocaleInstanceCache.get(locale);
+            if (cachedValue != null && cachedValue[kind] != null) {
+                return cachedValue[kind];
+            }
+            if (cachedValue == null) {
+                cachedValue = new DigitsKeyListener[4];
+                sLocaleInstanceCache.put(locale, cachedValue);
+            }
+            return cachedValue[kind] = new DigitsKeyListener(locale, sign, decimal);
+        }
+!!!8277381.java!!!	getInstance(in accepted : String) : DigitsKeyListener
+        DigitsKeyListener result;
+        synchronized (sStringCacheLock) {
+            result = sStringInstanceCache.get(accepted);
+            if (result == null) {
+                result = new DigitsKeyListener(accepted);
+                sStringInstanceCache.put(accepted, result);
+            }
+        }
+        return result;
+!!!8277509.java!!!	getInstance(inout locale : Locale, inout listener : DigitsKeyListener) : DigitsKeyListener
+        if (listener.mStringMode) {
+            return listener; // string-mode DigitsKeyListeners have no locale.
+        } else {
+            return getInstance(locale, listener.mSign, listener.mDecimal);
+        }
+!!!8277637.java!!!	getInputType() : int
+        int contentType;
+        if (mNeedsAdvancedInput) {
+            contentType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
+        } else {
+            contentType = InputType.TYPE_CLASS_NUMBER;
+            if (mSign) {
+                contentType |= InputType.TYPE_NUMBER_FLAG_SIGNED;
+            }
+            if (mDecimal) {
+                contentType |= InputType.TYPE_NUMBER_FLAG_DECIMAL;
+            }
+        }
+        return contentType;
+!!!8277765.java!!!	filter(inout source : CharSequence, in start : int, in end : int, inout dest : Spanned, in dstart : int, in dend : int) : CharSequence
+        CharSequence out = super.filter(source, start, end, dest, dstart, dend);
+
+        if (mSign == false && mDecimal == false) {
+            return out;
+        }
+
+        if (out != null) {
+            source = out;
+            start = 0;
+            end = out.length();
+        }
+
+        int sign = -1;
+        int decimal = -1;
+        int dlen = dest.length();
+
+        /*
+         * Find out if the existing text has a sign or decimal point characters.
+         */
+
+        for (int i = 0; i < dstart; i++) {
+            char c = dest.charAt(i);
+
+            if (isSignChar(c)) {
+                sign = i;
+            } else if (isDecimalPointChar(c)) {
+                decimal = i;
+            }
+        }
+        for (int i = dend; i < dlen; i++) {
+            char c = dest.charAt(i);
+
+            if (isSignChar(c)) {
+                return "";    // Nothing can be inserted in front of a sign character.
+            } else if (isDecimalPointChar(c)) {
+                decimal = i;
+            }
+        }
+
+        /*
+         * If it does, we must strip them out from the source.
+         * In addition, a sign character must be the very first character,
+         * and nothing can be inserted before an existing sign character.
+         * Go in reverse order so the offsets are stable.
+         */
+
+        SpannableStringBuilder stripped = null;
+
+        for (int i = end - 1; i >= start; i--) {
+            char c = source.charAt(i);
+            boolean strip = false;
+
+            if (isSignChar(c)) {
+                if (i != start || dstart != 0) {
+                    strip = true;
+                } else if (sign >= 0) {
+                    strip = true;
+                } else {
+                    sign = i;
+                }
+            } else if (isDecimalPointChar(c)) {
+                if (decimal >= 0) {
+                    strip = true;
+                } else {
+                    decimal = i;
+                }
+            }
+
+            if (strip) {
+                if (end == start + 1) {
+                    return "";  // Only one character, and it was stripped.
+                }
+
+                if (stripped == null) {
+                    stripped = new SpannableStringBuilder(source, start, end);
+                }
+
+                stripped.delete(i - start, i + 1 - start);
+            }
+        }
+
+        if (stripped != null) {
+            return stripped;
+        } else if (out != null) {
+            return out;
+        } else {
+            return null;
+        }

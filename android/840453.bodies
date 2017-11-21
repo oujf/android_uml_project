@@ -1,0 +1,126 @@
+class GridTaskViewThumbnail
+!!!3611141.java!!!	GridTaskViewThumbnail(inout context : Context)
+        this(context, null);
+!!!3611269.java!!!	GridTaskViewThumbnail(inout context : Context, inout attrs : AttributeSet)
+        this(context, attrs, 0);
+!!!3611397.java!!!	GridTaskViewThumbnail(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int)
+        this(context, attrs, defStyleAttr, 0);
+!!!3611525.java!!!	GridTaskViewThumbnail(inout context : Context, inout attrs : AttributeSet, in defStyleAttr : int, in defStyleRes : int)
+        super(context, attrs, defStyleAttr, defStyleRes);
+        mCornerRadius = getResources().getDimensionPixelSize(
+                R.dimen.recents_grid_task_view_rounded_corners_radius);
+!!!3611653.java!!!	onTaskViewSizeChanged(in width : int, in height : int) : void
+        mUpdateThumbnailOutline = true;
+        super.onTaskViewSizeChanged(width, height);
+!!!3611781.java!!!	updateThumbnailMatrix() : void
+        mUpdateThumbnailOutline = true;
+        super.updateThumbnailMatrix();
+!!!3611909.java!!!	updateThumbnailOutline() : void
+        final int titleHeight = getResources().getDimensionPixelSize(
+            R.dimen.recents_grid_task_view_header_height);
+        final int viewWidth = mTaskViewRect.width();
+        final int viewHeight = mTaskViewRect.height() - titleHeight;
+        final int thumbnailWidth = Math.min(viewWidth,
+            (int) (mThumbnailRect.width() * mThumbnailScale));
+        final int thumbnailHeight = Math.min(viewHeight,
+            (int) (mThumbnailRect.height() * mThumbnailScale));
+        // Draw the thumbnail, we only round the bottom corners:
+        //
+        // outerLeft                outerRight
+        //    <----------------------->            mRestBackgroundOutline
+        //    _________________________            (thumbnailWidth < viewWidth)
+        //    |_______________________| outerTop     A ____ B
+        //    |                       |    ↑           |  |
+        //    |                       |    |           |  |
+        //    |                       |    |           |  |
+        //    |                       |    |           |  | C
+        //    \_______________________/    ↓           |__/
+        //  mCornerRadius             outerBottom    E    D
+        //
+        //  mRestBackgroundOutline (thumbnailHeight < viewHeight)
+        //  A _________________________ B
+        //    |                       | C
+        //  F \_______________________/
+        //    E                       D
+        final int outerLeft = 0;
+        final int outerTop = 0;
+        final int outerRight = outerLeft + thumbnailWidth;
+        final int outerBottom = outerTop + thumbnailHeight;
+        mThumbnailOutline = new Path();
+        mThumbnailOutline.moveTo(outerLeft, outerTop);
+        mThumbnailOutline.lineTo(outerRight, outerTop);
+        mThumbnailOutline.lineTo(outerRight, outerBottom - mCornerRadius);
+        mThumbnailOutline.arcTo(outerRight -  2 * mCornerRadius, outerBottom - 2 * mCornerRadius,
+                outerRight, outerBottom, 0, 90, false);
+        mThumbnailOutline.lineTo(outerLeft + mCornerRadius, outerBottom);
+        mThumbnailOutline.arcTo(outerLeft, outerBottom - 2 * mCornerRadius,
+                outerLeft + 2 * mCornerRadius, outerBottom, 90, 90, false);
+        mThumbnailOutline.lineTo(outerLeft, outerTop);
+        mThumbnailOutline.close();
+
+        if (mBitmapShader != null && thumbnailWidth > 0 && thumbnailHeight > 0) {
+            if (thumbnailWidth < viewWidth) {
+                final int l = Math.max(0, outerRight - mCornerRadius);
+                final int r = outerRight;
+                final int t = outerTop;
+                final int b = outerBottom;
+                mRestBackgroundOutline = new Path();
+                mRestBackgroundOutline.moveTo(l, t); // A
+                mRestBackgroundOutline.lineTo(r, t); // B
+                mRestBackgroundOutline.lineTo(r, b - mCornerRadius); // C
+                mRestBackgroundOutline.arcTo(r -  2 * mCornerRadius, b - 2 * mCornerRadius, r, b,
+                        0, 90, false); // D
+                mRestBackgroundOutline.lineTo(l, b); // E
+                mRestBackgroundOutline.lineTo(l, t); // A
+                mRestBackgroundOutline.close();
+
+            }
+            if (thumbnailHeight < viewHeight) {
+                final int l = outerLeft;
+                final int r = outerRight;
+                final int t = Math.max(0, thumbnailHeight - mCornerRadius);
+                final int b = outerBottom;
+                mRestBackgroundOutline = new Path();
+                mRestBackgroundOutline.moveTo(l, t); // A
+                mRestBackgroundOutline.lineTo(r, t); // B
+                mRestBackgroundOutline.lineTo(r, b - mCornerRadius); // C
+                mRestBackgroundOutline.arcTo(r -  2 * mCornerRadius, b - 2 * mCornerRadius, r, b,
+                        0, 90, false); // D
+                mRestBackgroundOutline.lineTo(l + mCornerRadius, b); // E
+                mRestBackgroundOutline.arcTo(l, b - 2 * mCornerRadius, l + 2 * mCornerRadius, b,
+                        90, 90, false); // F
+                mRestBackgroundOutline.lineTo(l, t); // A
+                mRestBackgroundOutline.close();
+            }
+        }
+!!!3612037.java!!!	onDraw(inout canvas : Canvas) : void
+        final int titleHeight = getResources().getDimensionPixelSize(
+            R.dimen.recents_grid_task_view_header_height);
+        final int viewWidth = mTaskViewRect.width();
+        final int viewHeight = mTaskViewRect.height() - titleHeight;
+        final int thumbnailWidth = Math.min(viewWidth,
+            (int) (mThumbnailRect.width() * mThumbnailScale));
+        final int thumbnailHeight = Math.min(viewHeight,
+            (int) (mThumbnailRect.height() * mThumbnailScale));
+
+        if (mUpdateThumbnailOutline) {
+            updateThumbnailOutline();
+            mUpdateThumbnailOutline = false;
+        }
+
+        if (mUserLocked) {
+            canvas.drawPath(mThumbnailOutline, mLockedPaint);
+        } else if (mBitmapShader != null && thumbnailWidth > 0 && thumbnailHeight > 0) {
+            // Draw the background, there will be some small overdraw with the thumbnail
+            if (thumbnailWidth < viewWidth) {
+                // Portrait thumbnail on a landscape task view
+                canvas.drawPath(mRestBackgroundOutline, mBgFillPaint);
+            }
+            if (thumbnailHeight < viewHeight) {
+                // Landscape thumbnail on a portrait task view
+                canvas.drawPath(mRestBackgroundOutline, mBgFillPaint);
+            }
+            canvas.drawPath(mThumbnailOutline, getDrawPaint());
+        } else {
+            canvas.drawPath(mThumbnailOutline, mBgFillPaint);
+        }

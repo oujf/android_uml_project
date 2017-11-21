@@ -1,0 +1,50 @@
+class LogRunnable
+!!!12474117.java!!!	setDownloadsDirectory(inout file : File) : void
+            mDownloadsDirectory = file;
+!!!12474245.java!!!	setAppCollector(inout collector : AppCollector) : void
+            mCollector = collector;
+!!!12474373.java!!!	setLogOutputFile(inout file : File) : void
+            mOutputFile = file;
+!!!12474501.java!!!	setSystemSize(in size : long) : void
+            mSystemSize = size;
+!!!12474629.java!!!	setContext(inout context : Context) : void
+            mContext = context;
+!!!12474757.java!!!	setJobService(inout jobService : JobService, inout params : JobParameters) : void
+            mJobService = jobService;
+            mParams = params;
+!!!12474885.java!!!	run() : void
+            FileCollector.MeasurementResult mainCategories;
+            try {
+                mainCategories = FileCollector.getMeasurementResult(mContext);
+            } catch (IllegalStateException e) {
+                // This can occur if installd has an issue.
+                Log.e(TAG, "Error while measuring storage", e);
+                finishJob(true);
+                return;
+            }
+            FileCollector.MeasurementResult downloads =
+                    FileCollector.getMeasurementResult(mDownloadsDirectory);
+
+            boolean needsReschedule = true;
+            List<PackageStats> stats = mCollector.getPackageStats(TIMEOUT_MILLIS);
+            if (stats != null) {
+                needsReschedule = false;
+                logToFile(mainCategories, downloads, stats, mSystemSize);
+            } else {
+                Log.w(TAG, "Timed out while fetching package stats.");
+            }
+
+            finishJob(needsReschedule);
+!!!12475013.java!!!	logToFile(inout mainCategories : FileCollector::MeasurementResult, inout downloads : FileCollector::MeasurementResult, inout stats : List<PackageStats>, in systemSize : long) : void
+            DiskStatsFileLogger logger = new DiskStatsFileLogger(mainCategories, downloads, stats,
+                    systemSize);
+            try {
+                mOutputFile.createNewFile();
+                logger.dumpToFile(mOutputFile);
+            } catch (IOException e) {
+                Log.e(TAG, "Exception while writing opportunistic disk file cache.", e);
+            }
+!!!12475141.java!!!	finishJob(inout needsReschedule : boolean) : void
+            if (mJobService != null) {
+                mJobService.jobFinished(mParams, needsReschedule);
+            }

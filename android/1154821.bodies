@@ -1,0 +1,118 @@
+class Component
+!!!6300037.java!!!	Component(inout _owner : PackageParser::Package)
+            owner = _owner;
+            intents = null;
+            className = null;
+!!!6300165.java!!!	Component(in args : PackageParser::ParsePackageItemArgs, in outInfo : PackageItemInfo)
+            owner = args.owner;
+            intents = new ArrayList<II>(0);
+            if (parsePackageItemInfo(args.owner, outInfo, args.outError, args.tag, args.sa,
+                    true /*nameRequired*/, args.nameRes, args.labelRes, args.iconRes,
+                    args.roundIconRes, args.logoRes, args.bannerRes)) {
+                className = outInfo.name;
+            } else {
+                className = null;
+            }
+!!!6300293.java!!!	Component(in args : PackageParser::ParseComponentArgs, in outInfo : ComponentInfo)
+            this(args, (PackageItemInfo)outInfo);
+            if (args.outError[0] != null) {
+                return;
+            }
+
+            if (args.processRes != 0) {
+                CharSequence pname;
+                if (owner.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.FROYO) {
+                    pname = args.sa.getNonConfigurationString(args.processRes,
+                            Configuration.NATIVE_CONFIG_VERSION);
+                } else {
+                    // Some older apps have been seen to use a resource reference
+                    // here that on older builds was ignored (with a warning).  We
+                    // need to continue to do this for them so they don't break.
+                    pname = args.sa.getNonResourceString(args.processRes);
+                }
+                outInfo.processName = buildProcessName(owner.applicationInfo.packageName,
+                        owner.applicationInfo.processName, pname,
+                        args.flags, args.sepProcesses, args.outError);
+            }
+
+            if (args.descriptionRes != 0) {
+                outInfo.descriptionRes = args.sa.getResourceId(args.descriptionRes, 0);
+            }
+
+            outInfo.enabled = args.sa.getBoolean(args.enabledRes, true);
+!!!6300421.java!!!	Component(inout clone : PackageParser::Component)
+            owner = clone.owner;
+            intents = clone.intents;
+            className = clone.className;
+            componentName = clone.componentName;
+            componentShortName = clone.componentShortName;
+!!!6300549.java!!!	getComponentName() : ComponentName
+            if (componentName != null) {
+                return componentName;
+            }
+            if (className != null) {
+                componentName = new ComponentName(owner.applicationInfo.packageName,
+                        className);
+            }
+            return componentName;
+!!!6300677.java!!!	Component(inout in : Parcel)
+            className = in.readString();
+            metaData = in.readBundle();
+            intents = createIntentsList(in);
+
+            owner = null;
+!!!6300805.java!!!	writeToParcel(inout dest : Parcel, in flags : int) : void
+            dest.writeString(className);
+            dest.writeBundle(metaData);
+
+            writeIntentsList(intents, dest, flags);
+!!!6300933.java!!!	writeIntentsList(inout list : ArrayList<? extends IntentInfo>, inout out : Parcel, in flags : int) : void
+            if (list == null) {
+                out.writeInt(-1);
+                return;
+            }
+
+            final int N = list.size();
+            out.writeInt(N);
+
+            // Don't bother writing the component name if the list is empty.
+            if (N > 0) {
+                IntentInfo info = list.get(0);
+                out.writeString(info.getClass().getName());
+
+                for (int i = 0; i < N;i++) {
+                    list.get(i).writeIntentInfoToParcel(out, flags);
+                }
+            }
+!!!6301061.java!!!	createIntentsList(inout in : Parcel) : ArrayList<T>
+            int N = in.readInt();
+            if (N == -1) {
+                return null;
+            }
+
+            if (N == 0) {
+                return new ArrayList<>(0);
+            }
+
+            String componentName = in.readString();
+            final ArrayList<T> intentsList;
+            try {
+                final Class<T> cls = (Class<T>) Class.forName(componentName);
+                final Constructor<T> cons = cls.getConstructor(Parcel.class);
+
+                intentsList = new ArrayList<>(N);
+                for (int i = 0; i < N; ++i) {
+                    intentsList.add(cons.newInstance(in));
+                }
+            } catch (ReflectiveOperationException ree) {
+                throw new AssertionError("Unable to construct intent list for: " + componentName);
+            }
+
+            return intentsList;
+!!!6301189.java!!!	appendComponentShortName(inout sb : StringBuilder) : void
+            ComponentName.appendShortString(sb, owner.applicationInfo.packageName, className);
+!!!6301317.java!!!	printComponentShortName(inout pw : PrintWriter) : void
+            ComponentName.printShortString(pw, owner.applicationInfo.packageName, className);
+!!!6301445.java!!!	setPackageName(in packageName : String) : void
+            componentName = null;
+            componentShortName = null;

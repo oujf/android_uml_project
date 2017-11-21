@@ -1,0 +1,90 @@
+class AlertWindowNotification
+!!!12587653.java!!!	AlertWindowNotification(inout service : WindowManagerService, in packageName : String)
+        mService = service;
+        mPackageName = packageName;
+        mNotificationManager =
+                (NotificationManager) mService.mContext.getSystemService(NOTIFICATION_SERVICE);
+        mNotificationTag = CHANNEL_PREFIX + mPackageName;
+        mRequestCode = sNextRequestCode++;
+        mIconUtilities = new IconUtilities(mService.mContext);
+!!!12587781.java!!!	post() : void
+        // We can't create/post the notification while the window manager lock is held since it will
+        // end up calling into activity manager. So, we post a message to do it later.
+        mService.mH.post(this::onPostNotification);
+!!!12587909.java!!!	cancel() : void
+        // We can't call into NotificationManager with WM lock held since it might call into AM.
+        // So, we post a message to do it later.
+        mService.mH.post(this::onCancelNotification);
+!!!12588037.java!!!	onCancelNotification() : void
+        if (!mPosted) {
+            // Notification isn't currently posted...
+            return;
+        }
+        mPosted = false;
+        mNotificationManager.cancel(mNotificationTag, NOTIFICATION_ID);
+!!!12588165.java!!!	onPostNotification() : void
+        if (mPosted) {
+            // Notification already posted...
+            return;
+        }
+        mPosted = true;
+
+        final Context context = mService.mContext;
+        final PackageManager pm = context.getPackageManager();
+        final ApplicationInfo aInfo = getApplicationInfo(pm, mPackageName);
+        final String appName = (aInfo != null)
+                ? pm.getApplicationLabel(aInfo).toString() : mPackageName;
+
+        createNotificationChannel(context, appName);
+
+        final String message = context.getString(R.string.alert_windows_notification_message,
+                appName);
+        final Notification.Builder builder = new Notification.Builder(context, mNotificationTag)
+                .setOngoing(true)
+                .setContentTitle(
+                        context.getString(R.string.alert_windows_notification_title, appName))
+                .setContentText(message)
+                .setSmallIcon(R.drawable.alert_window_layer)
+                .setColor(context.getColor(R.color.system_notification_accent_color))
+                .setStyle(new Notification.BigTextStyle().bigText(message))
+                .setLocalOnly(true)
+                .setContentIntent(getContentIntent(context, mPackageName));
+
+        if (aInfo != null) {
+            final Drawable drawable = pm.getApplicationIcon(aInfo);
+            if (drawable != null) {
+                final Bitmap bitmap = mIconUtilities.createIconBitmap(drawable);
+                builder.setLargeIcon(bitmap);
+            }
+        }
+
+        mNotificationManager.notify(mNotificationTag, NOTIFICATION_ID, builder.build());
+!!!12588293.java!!!	getContentIntent(inout context : Context, in packageName : String) : PendingIntent
+        final Intent intent = new Intent(ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.fromParts("package", packageName, null));
+        intent.setFlags(FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK);
+        // Calls into activity manager...
+        return PendingIntent.getActivity(context, mRequestCode, intent, FLAG_CANCEL_CURRENT);
+!!!12588421.java!!!	createNotificationChannel(inout context : Context, in appName : String) : void
+        if (sChannelGroup == null) {
+            sChannelGroup = new NotificationChannelGroup(CHANNEL_PREFIX,
+                    mService.mContext.getString(
+                            R.string.alert_windows_notification_channel_group_name));
+            mNotificationManager.createNotificationChannelGroup(sChannelGroup);
+        }
+
+        final String nameChannel =
+                context.getString(R.string.alert_windows_notification_channel_name, appName);
+        final NotificationChannel channel =
+                new NotificationChannel(mNotificationTag, nameChannel, IMPORTANCE_MIN);
+        channel.enableLights(false);
+        channel.enableVibration(false);
+        channel.setBlockableSystem(true);
+        channel.setGroup(sChannelGroup.getId());
+        mNotificationManager.createNotificationChannel(channel);
+!!!12588549.java!!!	getApplicationInfo(inout pm : PackageManager, in packageName : String) : ApplicationInfo
+        try {
+            return pm.getApplicationInfo(packageName, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+            return null;
+        }

@@ -1,0 +1,46 @@
+class AudioStreamOutSink
+!!!1073797.cpp!!!	AudioStreamOutSink(in stream : sp<StreamOutHalInterface>)
+    ALOG_ASSERT(stream != 0);
+!!!1073925.cpp!!!	~AudioStreamOutSink()
+    mStream.clear();
+!!!1074053.cpp!!!	negotiate(in offers : NBAIO_Format, in numOffers : size_t, in counterOffers : NBAIO_Format, inout numCounterOffers : size_t) : ssize_t
+    if (!Format_isValid(mFormat)) {
+        status_t result;
+        result = mStream->getBufferSize(&mStreamBufferSizeBytes);
+        if (result != OK) return result;
+        audio_format_t streamFormat;
+        uint32_t sampleRate;
+        audio_channel_mask_t channelMask;
+        result = mStream->getAudioProperties(&sampleRate, &channelMask, &streamFormat);
+        if (result != OK) return result;
+        mFormat = Format_from_SR_C(sampleRate,
+                audio_channel_count_from_out_mask(channelMask), streamFormat);
+        mFrameSize = Format_frameSize(mFormat);
+    }
+    return NBAIO_Sink::negotiate(offers, numOffers, counterOffers, numCounterOffers);
+!!!1074309.cpp!!!	write(in buffer : void, in count : size_t) : ssize_t
+    if (!mNegotiated) {
+        return NEGOTIATE;
+    }
+    ALOG_ASSERT(Format_isValid(mFormat));
+    size_t written;
+    status_t ret = mStream->write(buffer, count * mFrameSize, &written);
+    if (ret == OK && written > 0) {
+        written /= mFrameSize;
+        mFramesWritten += written;
+        return written;
+    } else {
+        // FIXME verify HAL implementations are returning the correct error codes e.g. WOULD_BLOCK
+        ALOGE_IF(ret != OK, "Error while writing data to HAL: %d", ret);
+        return ret;
+    }
+!!!1074437.cpp!!!	getTimestamp(inout timestamp : ExtendedTimestamp) : status_t
+    uint64_t position64;
+    struct timespec time;
+    if (mStream->getPresentationPosition(&position64, &time) != OK) {
+        return INVALID_OPERATION;
+    }
+    timestamp.mPosition[ExtendedTimestamp::LOCATION_KERNEL] = position64;
+    timestamp.mTimeNs[ExtendedTimestamp::LOCATION_KERNEL] =
+            time.tv_sec * 1000000000LL + time.tv_nsec;
+    return OK;

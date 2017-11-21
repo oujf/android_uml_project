@@ -1,0 +1,166 @@
+class AudioFlingerClient
+!!!738949.cpp!!!	clearIoCache() : void
+    Mutex::Autolock _l(mLock);
+    mIoDescriptors.clear();
+    mInBuffSize = 0;
+    mInSamplingRate = 0;
+    mInFormat = AUDIO_FORMAT_DEFAULT;
+    mInChannelMask = AUDIO_CHANNEL_NONE;
+!!!739077.cpp!!!	getInputBufferSize(in sampleRate : uint32_t, in format : audio_format_t, in channelMask : audio_channel_mask_t, inout buffSize : size_t) : status_t
+    const sp<IAudioFlinger>& af = AudioSystem::get_audio_flinger();
+    if (af == 0) {
+        return PERMISSION_DENIED;
+    }
+    Mutex::Autolock _l(mLock);
+    // Do we have a stale mInBuffSize or are we requesting the input buffer size for new values
+    if ((mInBuffSize == 0) || (sampleRate != mInSamplingRate) || (format != mInFormat)
+        || (channelMask != mInChannelMask)) {
+        size_t inBuffSize = af->getInputBufferSize(sampleRate, format, channelMask);
+        if (inBuffSize == 0) {
+            ALOGE("AudioSystem::getInputBufferSize failed sampleRate %d format %#x channelMask %x",
+                    sampleRate, format, channelMask);
+            return BAD_VALUE;
+        }
+        // A benign race is possible here: we could overwrite a fresher cache entry
+        // save the request params
+        mInSamplingRate = sampleRate;
+        mInFormat = format;
+        mInChannelMask = channelMask;
+
+        mInBuffSize = inBuffSize;
+    }
+
+    *buffSize = mInBuffSize;
+
+    return NO_ERROR;
+!!!739205.cpp!!!	getIoDescriptor(in ioHandle : audio_io_handle_t) : sp<AudioIoDescriptor>
+    Mutex::Autolock _l(mLock);
+    return getIoDescriptor_l(ioHandle);
+!!!739461.cpp!!!	ioConfigChanged(in event : audio_io_config_event, in ioDesc : sp<AudioIoDescriptor>) : void
+    ALOGV("ioConfigChanged() event %d", event);
+
+    if (ioDesc == 0 || ioDesc->mIoHandle == AUDIO_IO_HANDLE_NONE) return;
+
+    audio_port_handle_t deviceId = AUDIO_PORT_HANDLE_NONE;
+    Vector < sp<AudioDeviceCallback> > callbacks;
+
+    {
+        Mutex::Autolock _l(mLock);
+
+        switch (event) {
+        case AUDIO_OUTPUT_OPENED:
+        case AUDIO_INPUT_OPENED: {
+            sp<AudioIoDescriptor> oldDesc = getIoDescriptor_l(ioDesc->mIoHandle);
+            if (oldDesc == 0) {
+                mIoDescriptors.add(ioDesc->mIoHandle, ioDesc);
+            } else {
+                deviceId = oldDesc->getDeviceId();
+                mIoDescriptors.replaceValueFor(ioDesc->mIoHandle, ioDesc);
+            }
+
+            if (ioDesc->getDeviceId() != AUDIO_PORT_HANDLE_NONE) {
+                deviceId = ioDesc->getDeviceId();
+                ssize_t ioIndex = mAudioDeviceCallbacks.indexOfKey(ioDesc->mIoHandle);
+                if (ioIndex >= 0) {
+                    callbacks = mAudioDeviceCallbacks.valueAt(ioIndex);
+                }
+            }
+            ALOGV("ioConfigChanged() new %s opened %d samplingRate %u, format %#x channel mask %#x "
+                    "frameCount %zu deviceId %d", event == AUDIO_OUTPUT_OPENED ? "output" : "input",
+                    ioDesc->mIoHandle, ioDesc->mSamplingRate, ioDesc->mFormat, ioDesc->mChannelMask,
+                    ioDesc->mFrameCount, ioDesc->getDeviceId());
+            } break;
+        case AUDIO_OUTPUT_CLOSED:
+        case AUDIO_INPUT_CLOSED: {
+            if (getIoDescriptor_l(ioDesc->mIoHandle) == 0) {
+                ALOGW("ioConfigChanged() closing unknown %s %d",
+                      event == AUDIO_OUTPUT_CLOSED ? "output" : "input", ioDesc->mIoHandle);
+                break;
+            }
+            ALOGV("ioConfigChanged() %s %d closed",
+                  event == AUDIO_OUTPUT_CLOSED ? "output" : "input", ioDesc->mIoHandle);
+
+            mIoDescriptors.removeItem(ioDesc->mIoHandle);
+            mAudioDeviceCallbacks.removeItem(ioDesc->mIoHandle);
+            } break;
+
+        case AUDIO_OUTPUT_CONFIG_CHANGED:
+        case AUDIO_INPUT_CONFIG_CHANGED: {
+            sp<AudioIoDescriptor> oldDesc = getIoDescriptor_l(ioDesc->mIoHandle);
+            if (oldDesc == 0) {
+                ALOGW("ioConfigChanged() modifying unknown output! %d", ioDesc->mIoHandle);
+                break;
+            }
+
+            deviceId = oldDesc->getDeviceId();
+            mIoDescriptors.replaceValueFor(ioDesc->mIoHandle, ioDesc);
+
+            if (deviceId != ioDesc->getDeviceId()) {
+                deviceId = ioDesc->getDeviceId();
+                ssize_t ioIndex = mAudioDeviceCallbacks.indexOfKey(ioDesc->mIoHandle);
+                if (ioIndex >= 0) {
+                    callbacks = mAudioDeviceCallbacks.valueAt(ioIndex);
+                }
+            }
+            ALOGV("ioConfigChanged() new config for %s %d samplingRate %u, format %#x "
+                    "channel mask %#x frameCount %zu frameCountHAL %zu deviceId %d",
+                    event == AUDIO_OUTPUT_CONFIG_CHANGED ? "output" : "input",
+                    ioDesc->mIoHandle, ioDesc->mSamplingRate, ioDesc->mFormat,
+                    ioDesc->mChannelMask, ioDesc->mFrameCount, ioDesc->mFrameCountHAL,
+                    ioDesc->getDeviceId());
+
+        } break;
+        }
+    }
+    // callbacks.size() != 0 =>  ioDesc->mIoHandle and deviceId are valid
+    for (size_t i = 0; i < callbacks.size(); i++) {
+        callbacks[i]->onAudioDeviceUpdate(ioDesc->mIoHandle, deviceId);
+    }
+!!!739589.cpp!!!	addAudioDeviceCallback(in callback : sp<AudioDeviceCallback>, in audioIo : audio_io_handle_t) : status_t
+    Mutex::Autolock _l(mLock);
+    Vector < sp<AudioDeviceCallback> > callbacks;
+    ssize_t ioIndex = mAudioDeviceCallbacks.indexOfKey(audioIo);
+    if (ioIndex >= 0) {
+        callbacks = mAudioDeviceCallbacks.valueAt(ioIndex);
+    }
+
+    for (size_t cbIndex = 0; cbIndex < callbacks.size(); cbIndex++) {
+        if (callbacks[cbIndex] == callback) {
+            return INVALID_OPERATION;
+        }
+    }
+    callbacks.add(callback);
+
+    mAudioDeviceCallbacks.replaceValueFor(audioIo, callbacks);
+    return NO_ERROR;
+!!!739717.cpp!!!	removeAudioDeviceCallback(in callback : sp<AudioDeviceCallback>, in audioIo : audio_io_handle_t) : status_t
+    Mutex::Autolock _l(mLock);
+    ssize_t ioIndex = mAudioDeviceCallbacks.indexOfKey(audioIo);
+    if (ioIndex < 0) {
+        return INVALID_OPERATION;
+    }
+    Vector < sp<AudioDeviceCallback> > callbacks = mAudioDeviceCallbacks.valueAt(ioIndex);
+
+    size_t cbIndex;
+    for (cbIndex = 0; cbIndex < callbacks.size(); cbIndex++) {
+        if (callbacks[cbIndex] == callback) {
+            break;
+        }
+    }
+    if (cbIndex == callbacks.size()) {
+        return INVALID_OPERATION;
+    }
+    callbacks.removeAt(cbIndex);
+    if (callbacks.size() != 0) {
+        mAudioDeviceCallbacks.replaceValueFor(audioIo, callbacks);
+    } else {
+        mAudioDeviceCallbacks.removeItem(audioIo);
+    }
+    return NO_ERROR;
+!!!739973.cpp!!!	getIoDescriptor_l(in ioHandle : audio_io_handle_t) : sp<AudioIoDescriptor>
+    sp<AudioIoDescriptor> desc;
+    ssize_t index = mIoDescriptors.indexOfKey(ioHandle);
+    if (index >= 0) {
+        desc = mIoDescriptors.valueAt(index);
+    }
+    return desc;

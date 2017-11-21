@@ -1,0 +1,94 @@
+class RemoteEditText
+!!!4176005.java!!!	RemoteEditText(inout context : Context, inout attrs : AttributeSet)
+            super(context, attrs);
+            mBackground = getBackground();
+!!!4176133.java!!!	defocusIfNeeded(inout animate : boolean) : void
+            if (mRemoteInputView != null && mRemoteInputView.mEntry.row.isChangingPosition()
+                    || isTemporarilyDetached()) {
+                if (isTemporarilyDetached()) {
+                    // We might get reattached but then the other one of HUN / expanded might steal
+                    // our focus, so we'll need to save our text here.
+                    if (mRemoteInputView != null) {
+                        mRemoteInputView.mEntry.remoteInputText = getText();
+                    }
+                }
+                return;
+            }
+            if (isFocusable() && isEnabled()) {
+                setInnerFocusable(false);
+                if (mRemoteInputView != null) {
+                    mRemoteInputView.onDefocus(animate);
+                }
+                mShowImeOnInputConnection = false;
+            }
+!!!4176261.java!!!	onVisibilityChanged(inout changedView : View, in visibility : int) : void
+            super.onVisibilityChanged(changedView, visibility);
+
+            if (!isShown()) {
+                defocusIfNeeded(false /* animate */);
+            }
+!!!4176389.java!!!	onFocusChanged(inout focused : boolean, in direction : int, inout previouslyFocusedRect : Rect) : void
+            super.onFocusChanged(focused, direction, previouslyFocusedRect);
+            if (!focused) {
+                defocusIfNeeded(true /* animate */);
+            }
+!!!4176517.java!!!	getFocusedRect(inout r : Rect) : void
+            super.getFocusedRect(r);
+            r.top = mScrollY;
+            r.bottom = mScrollY + (mBottom - mTop);
+!!!4176645.java!!!	requestRectangleOnScreen(inout rectangle : Rect) : boolean
+            return mRemoteInputView.requestScrollTo();
+!!!4176773.java!!!	onKeyDown(in keyCode : int, inout event : KeyEvent) : boolean
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                // Eat the DOWN event here to prevent any default behavior.
+                return true;
+            }
+            return super.onKeyDown(keyCode, event);
+!!!4176901.java!!!	onKeyUp(in keyCode : int, inout event : KeyEvent) : boolean
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                defocusIfNeeded(true /* animate */);
+                return true;
+            }
+            return super.onKeyUp(keyCode, event);
+!!!4177029.java!!!	onCheckIsTextEditor() : boolean
+            // Stop being editable while we're being removed. During removal, we get reattached,
+            // and editable views get their spellchecking state re-evaluated which is too costly
+            // during the removal animation.
+            boolean flyingOut = mRemoteInputView != null && mRemoteInputView.mRemoved;
+            return !flyingOut && super.onCheckIsTextEditor();
+!!!4177157.java!!!	onCreateInputConnection(inout outAttrs : EditorInfo) : InputConnection
+            final InputConnection inputConnection = super.onCreateInputConnection(outAttrs);
+
+            if (mShowImeOnInputConnection && inputConnection != null) {
+                final InputMethodManager imm = InputMethodManager.getInstance();
+                if (imm != null) {
+                    // onCreateInputConnection is called by InputMethodManager in the middle of
+                    // setting up the connection to the IME; wait with requesting the IME until that
+                    // work has completed.
+                    post(new Runnable() {
+                        @Override
+                        public void run() {
+                            imm.viewClicked(RemoteEditText.this);
+                            imm.showSoftInput(RemoteEditText.this, 0);
+                        }
+                    });
+                }
+            }
+
+            return inputConnection;
+!!!4177285.java!!!	onCommitCompletion(inout text : CompletionInfo) : void
+            clearComposingText();
+            setText(text.getText());
+            setSelection(getText().length());
+!!!4177413.java!!!	setInnerFocusable(inout focusable : boolean) : void
+            setFocusableInTouchMode(focusable);
+            setFocusable(focusable);
+            setCursorVisible(focusable);
+
+            if (focusable) {
+                requestFocus();
+                setBackground(mBackground);
+            } else {
+                setBackground(null);
+            }
+

@@ -1,0 +1,121 @@
+class PreferenceScreen
+!!!7760261.java!!!	PreferenceScreen(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs, com.android.internal.R.attr.preferenceScreenStyle);
+
+        TypedArray a = context.obtainStyledAttributes(null,
+                com.android.internal.R.styleable.PreferenceScreen,
+                com.android.internal.R.attr.preferenceScreenStyle,
+                0);
+
+        mLayoutResId = a.getResourceId(
+                com.android.internal.R.styleable.PreferenceScreen_screenLayout,
+                mLayoutResId);
+        if (a.hasValueOrEmpty(com.android.internal.R.styleable.PreferenceScreen_divider)) {
+            mDividerDrawable =
+                    a.getDrawable(com.android.internal.R.styleable.PreferenceScreen_divider);
+            mDividerSpecified = true;
+        }
+
+        a.recycle();
+!!!7760389.java!!!	getRootAdapter() : ListAdapter
+        if (mRootAdapter == null) {
+            mRootAdapter = onCreateRootAdapter();
+        }
+        
+        return mRootAdapter;
+!!!7760517.java!!!	onCreateRootAdapter() : ListAdapter
+        return new PreferenceGroupAdapter(this);
+!!!7760645.java!!!	bind(inout listView : ListView) : void
+        listView.setOnItemClickListener(this);
+        listView.setAdapter(getRootAdapter());
+        
+        onAttachedToActivity();
+!!!7760773.java!!!	onClick() : void
+        if (getIntent() != null || getFragment() != null || getPreferenceCount() == 0) {
+            return;
+        }
+        
+        showDialog(null);
+!!!7760901.java!!!	showDialog(inout state : Bundle) : void
+        Context context = getContext();
+        if (mListView != null) {
+            mListView.setAdapter(null);
+        }
+
+        LayoutInflater inflater = (LayoutInflater)
+                context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        View childPrefScreen = inflater.inflate(mLayoutResId, null);
+        View titleView = childPrefScreen.findViewById(android.R.id.title);
+        mListView = (ListView) childPrefScreen.findViewById(android.R.id.list);
+        if (mDividerSpecified) {
+            mListView.setDivider(mDividerDrawable);
+        }
+
+        bind(mListView);
+
+        // Set the title bar if title is available, else no title bar
+        final CharSequence title = getTitle();
+        Dialog dialog = mDialog = new Dialog(context, context.getThemeResId());
+        if (TextUtils.isEmpty(title)) {
+            if (titleView != null) {
+                titleView.setVisibility(View.GONE);
+            }
+            dialog.getWindow().requestFeature(Window.FEATURE_NO_TITLE);
+        } else {
+            if (titleView instanceof TextView) {
+                ((TextView) titleView).setText(title);
+                titleView.setVisibility(View.VISIBLE);
+            } else {
+                dialog.setTitle(title);
+            }
+        }
+        dialog.setContentView(childPrefScreen);
+        dialog.setOnDismissListener(this);
+        if (state != null) {
+            dialog.onRestoreInstanceState(state);
+        }
+
+        // Add the screen to the list of preferences screens opened as dialogs
+        getPreferenceManager().addPreferencesScreen(dialog);
+        
+        dialog.show();
+!!!7761029.java!!!	onDismiss(inout dialog : DialogInterface) : void
+        mDialog = null;
+        getPreferenceManager().removePreferencesScreen(dialog);
+!!!7761157.java!!!	getDialog() : Dialog
+        return mDialog;
+!!!7761285.java!!!	onItemClick(inout parent : AdapterView, inout view : View, in position : int, in id : long) : void
+        // If the list has headers, subtract them from the index.
+        if (parent instanceof ListView) {
+            position -= ((ListView) parent).getHeaderViewsCount();
+        }
+        Object item = getRootAdapter().getItem(position);
+        if (!(item instanceof Preference)) return;
+
+        final Preference preference = (Preference) item; 
+        preference.performClick(this);
+!!!7761413.java!!!	isOnSameScreenAsChildren() : boolean
+        return false;
+!!!7761541.java!!!	onSaveInstanceState() : Parcelable
+        final Parcelable superState = super.onSaveInstanceState();
+        final Dialog dialog = mDialog;
+        if (dialog == null || !dialog.isShowing()) {
+            return superState;
+        }
+        
+        final SavedState myState = new SavedState(superState);
+        myState.isDialogShowing = true;
+        myState.dialogBundle = dialog.onSaveInstanceState();
+        return myState;
+!!!7761669.java!!!	onRestoreInstanceState(inout state : Parcelable) : void
+        if (state == null || !state.getClass().equals(SavedState.class)) {
+            // Didn't save state for us in onSaveInstanceState
+            super.onRestoreInstanceState(state);
+            return;
+        }
+         
+        SavedState myState = (SavedState) state;
+        super.onRestoreInstanceState(myState.getSuperState());
+        if (myState.isDialogShowing) {
+            showDialog(myState.dialogBundle);
+        }

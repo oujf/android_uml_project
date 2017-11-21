@@ -1,0 +1,84 @@
+class RecycledViewPool
+!!!10327941.java!!!	clear() : void
+            for (int i = 0; i < mScrap.size(); i++) {
+                ScrapData data = mScrap.valueAt(i);
+                data.mScrapHeap.clear();
+            }
+!!!10328069.java!!!	setMaxRecycledViews(in viewType : int, in max : int) : void
+            ScrapData scrapData = getScrapDataForType(viewType);
+            scrapData.mMaxScrap = max;
+            final ArrayList<ViewHolder> scrapHeap = scrapData.mScrapHeap;
+            if (scrapHeap != null) {
+                while (scrapHeap.size() > max) {
+                    scrapHeap.remove(scrapHeap.size() - 1);
+                }
+            }
+!!!10328197.java!!!	getRecycledViewCount(in viewType : int) : int
+            return getScrapDataForType(viewType).mScrapHeap.size();
+!!!10328325.java!!!	getRecycledView(in viewType : int) : RecyclerView::ViewHolder
+            final ScrapData scrapData = mScrap.get(viewType);
+            if (scrapData != null && !scrapData.mScrapHeap.isEmpty()) {
+                final ArrayList<ViewHolder> scrapHeap = scrapData.mScrapHeap;
+                return scrapHeap.remove(scrapHeap.size() - 1);
+            }
+            return null;
+!!!10328453.java!!!	size() : int
+            int count = 0;
+            for (int i = 0; i < mScrap.size(); i++) {
+                ArrayList<ViewHolder> viewHolders = mScrap.valueAt(i).mScrapHeap;
+                if (viewHolders != null) {
+                    count += viewHolders.size();
+                }
+            }
+            return count;
+!!!10328581.java!!!	putRecycledView(inout scrap : RecyclerView::ViewHolder) : void
+            final int viewType = scrap.getItemViewType();
+            final ArrayList scrapHeap = getScrapDataForType(viewType).mScrapHeap;
+            if (mScrap.get(viewType).mMaxScrap <= scrapHeap.size()) {
+                return;
+            }
+            if (DEBUG && scrapHeap.contains(scrap)) {
+                throw new IllegalArgumentException("this scrap item already exists");
+            }
+            scrap.resetInternal();
+            scrapHeap.add(scrap);
+!!!10328709.java!!!	runningAverage(in oldAverage : long, in newValue : long) : long
+            if (oldAverage == 0) {
+                return newValue;
+            }
+            return (oldAverage / 4 * 3) + (newValue / 4);
+!!!10328837.java!!!	factorInCreateTime(in viewType : int, in createTimeNs : long) : void
+            ScrapData scrapData = getScrapDataForType(viewType);
+            scrapData.mCreateRunningAverageNs = runningAverage(
+                    scrapData.mCreateRunningAverageNs, createTimeNs);
+!!!10328965.java!!!	factorInBindTime(in viewType : int, in bindTimeNs : long) : void
+            ScrapData scrapData = getScrapDataForType(viewType);
+            scrapData.mBindRunningAverageNs = runningAverage(
+                    scrapData.mBindRunningAverageNs, bindTimeNs);
+!!!10329093.java!!!	willCreateInTime(in viewType : int, in approxCurrentNs : long, in deadlineNs : long) : boolean
+            long expectedDurationNs = getScrapDataForType(viewType).mCreateRunningAverageNs;
+            return expectedDurationNs == 0 || (approxCurrentNs + expectedDurationNs < deadlineNs);
+!!!10329221.java!!!	willBindInTime(in viewType : int, in approxCurrentNs : long, in deadlineNs : long) : boolean
+            long expectedDurationNs = getScrapDataForType(viewType).mBindRunningAverageNs;
+            return expectedDurationNs == 0 || (approxCurrentNs + expectedDurationNs < deadlineNs);
+!!!10329349.java!!!	attach(inout adapter : RecyclerView::Adapter) : void
+            mAttachCount++;
+!!!10329477.java!!!	detach() : void
+            mAttachCount--;
+!!!10329605.java!!!	onAdapterChanged(inout oldAdapter : RecyclerView::Adapter, inout newAdapter : RecyclerView::Adapter, inout compatibleWithPrevious : boolean) : void
+            if (oldAdapter != null) {
+                detach();
+            }
+            if (!compatibleWithPrevious && mAttachCount == 0) {
+                clear();
+            }
+            if (newAdapter != null) {
+                attach(newAdapter);
+            }
+!!!10329733.java!!!	getScrapDataForType(in viewType : int) : RecyclerView::RecycledViewPool::ScrapData
+            ScrapData scrapData = mScrap.get(viewType);
+            if (scrapData == null) {
+                scrapData = new ScrapData();
+                mScrap.put(viewType, scrapData);
+            }
+            return scrapData;

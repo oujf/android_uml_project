@@ -1,0 +1,88 @@
+class PipNotificationController
+!!!3284869.java!!!	PipNotificationController(inout context : Context, inout activityManager : IActivityManager, inout motionHelper : PipMotionHelper)
+        mContext = context;
+        mActivityManager = activityManager;
+        mAppOpsManager = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+        mNotificationManager = NotificationManager.from(context);
+        mMotionHelper = motionHelper;
+!!!3284997.java!!!	onActivityPinned(in packageName : String, inout deferUntilAnimationEnds : boolean) : void
+        // Clear any existing notification
+        mNotificationManager.cancel(NOTIFICATION_TAG, NOTIFICATION_ID);
+
+        if (deferUntilAnimationEnds) {
+            mDeferredNotificationPackageName = packageName;
+        } else {
+            showNotificationForApp(mDeferredNotificationPackageName);
+        }
+
+        // Register for changes to the app ops setting for this package while it is in PiP
+        registerAppOpsListener(packageName);
+!!!3285125.java!!!	onPinnedStackAnimationEnded() : void
+        if (mDeferredNotificationPackageName != null) {
+            showNotificationForApp(mDeferredNotificationPackageName);
+            mDeferredNotificationPackageName = null;
+        }
+!!!3285253.java!!!	onActivityUnpinned(inout topPipActivity : ComponentName) : void
+        // Unregister for changes to the previously PiP'ed package
+        unregisterAppOpsListener();
+
+        // Reset the deferred notification package
+        mDeferredNotificationPackageName = null;
+
+        if (topPipActivity != null) {
+            // onActivityUnpinned() is only called after the transition is complete, so we don't
+            // need to defer until the animation ends to update the notification
+            onActivityPinned(topPipActivity.getPackageName(), false /* deferUntilAnimationEnds */);
+        } else {
+            mNotificationManager.cancel(NOTIFICATION_TAG, NOTIFICATION_ID);
+        }
+!!!3285381.java!!!	showNotificationForApp(in packageName : String) : void
+        // Build a new notification
+        final Notification.Builder builder =
+                new Notification.Builder(mContext, NotificationChannels.GENERAL)
+                        .setLocalOnly(true)
+                        .setOngoing(true)
+                        .setSmallIcon(R.drawable.pip_notification_icon)
+                        .setColor(mContext.getColor(
+                                com.android.internal.R.color.system_notification_accent_color));
+        if (updateNotificationForApp(builder, packageName)) {
+            SystemUI.overrideNotificationAppName(mContext, builder);
+
+            // Show the new notification
+            mNotificationManager.notify(NOTIFICATION_TAG, NOTIFICATION_ID, builder.build());
+        }
+!!!3285509.java!!!	updateNotificationForApp(inout builder : Notification.Builder, in packageName : String) : boolean
+        final PackageManager pm = mContext.getPackageManager();
+        final ApplicationInfo appInfo;
+        try {
+            appInfo = pm.getApplicationInfo(packageName, 0);
+        } catch (NameNotFoundException e) {
+            Log.e(TAG, "Could not update notification for application", e);
+            return false;
+        }
+
+        if (appInfo != null) {
+            final String appName = pm.getApplicationLabel(appInfo).toString();
+            final String message = mContext.getString(R.string.pip_notification_message, appName);
+            final Intent settingsIntent = new Intent(ACTION_PICTURE_IN_PICTURE_SETTINGS,
+                    Uri.fromParts("package", packageName, null));
+            settingsIntent.setFlags(FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK);
+            final Icon appIcon = appInfo.icon != 0
+                    ? Icon.createWithResource(packageName, appInfo.icon)
+                    : Icon.createWithResource(Resources.getSystem(),
+                            com.android.internal.R.drawable.sym_def_app_icon);
+
+            builder.setContentTitle(mContext.getString(R.string.pip_notification_title, appName))
+                    .setContentText(message)
+                    .setContentIntent(PendingIntent.getActivity(mContext, packageName.hashCode(),
+                            settingsIntent, FLAG_CANCEL_CURRENT))
+                    .setStyle(new Notification.BigTextStyle().bigText(message))
+                    .setLargeIcon(appIcon);
+            return true;
+        }
+        return false;
+!!!3285637.java!!!	registerAppOpsListener(in packageName : String) : void
+        mAppOpsManager.startWatchingMode(OP_PICTURE_IN_PICTURE, packageName,
+                mAppOpsChangedListener);
+!!!3285765.java!!!	unregisterAppOpsListener() : void
+        mAppOpsManager.stopWatchingMode(mAppOpsChangedListener);

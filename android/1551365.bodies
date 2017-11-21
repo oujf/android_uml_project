@@ -1,0 +1,189 @@
+class ChildHelper
+!!!10289541.java!!!	ChildHelper(inout callback : ChildHelper::Callback)
+        mCallback = callback;
+        mBucket = new Bucket();
+        mHiddenViews = new ArrayList<View>();
+!!!10289669.java!!!	hideViewInternal(inout child : View) : void
+        mHiddenViews.add(child);
+        mCallback.onEnteredHiddenState(child);
+!!!10289797.java!!!	unhideViewInternal(inout child : View) : boolean
+        if (mHiddenViews.remove(child)) {
+            mCallback.onLeftHiddenState(child);
+            return true;
+        } else {
+            return false;
+        }
+!!!10289925.java!!!	addView(inout child : View, inout hidden : boolean) : void
+        addView(child, -1, hidden);
+!!!10290053.java!!!	addView(inout child : View, in index : int, inout hidden : boolean) : void
+        final int offset;
+        if (index < 0) {
+            offset = mCallback.getChildCount();
+        } else {
+            offset = getOffset(index);
+        }
+        mBucket.insert(offset, hidden);
+        if (hidden) {
+            hideViewInternal(child);
+        }
+        mCallback.addView(child, offset);
+        if (DEBUG) {
+            Log.d(TAG, "addViewAt " + index + ",h:" + hidden + ", " + this);
+        }
+!!!10290181.java!!!	getOffset(in index : int) : int
+        if (index < 0) {
+            return -1; //anything below 0 won't work as diff will be undefined.
+        }
+        final int limit = mCallback.getChildCount();
+        int offset = index;
+        while (offset < limit) {
+            final int removedBefore = mBucket.countOnesBefore(offset);
+            final int diff = index - (offset - removedBefore);
+            if (diff == 0) {
+                while (mBucket.get(offset)) { // ensure this offset is not hidden
+                    offset++;
+                }
+                return offset;
+            } else {
+                offset += diff;
+            }
+        }
+        return -1;
+!!!10290309.java!!!	removeView(inout view : View) : void
+        int index = mCallback.indexOfChild(view);
+        if (index < 0) {
+            return;
+        }
+        if (mBucket.remove(index)) {
+            unhideViewInternal(view);
+        }
+        mCallback.removeViewAt(index);
+        if (DEBUG) {
+            Log.d(TAG, "remove View off:" + index + "," + this);
+        }
+!!!10290437.java!!!	removeViewAt(in index : int) : void
+        final int offset = getOffset(index);
+        final View view = mCallback.getChildAt(offset);
+        if (view == null) {
+            return;
+        }
+        if (mBucket.remove(offset)) {
+            unhideViewInternal(view);
+        }
+        mCallback.removeViewAt(offset);
+        if (DEBUG) {
+            Log.d(TAG, "removeViewAt " + index + ", off:" + offset + ", " + this);
+        }
+!!!10290565.java!!!	getChildAt(in index : int) : View
+        final int offset = getOffset(index);
+        return mCallback.getChildAt(offset);
+!!!10290693.java!!!	removeAllViewsUnfiltered() : void
+        mBucket.reset();
+        for (int i = mHiddenViews.size() - 1; i >= 0; i--) {
+            mCallback.onLeftHiddenState(mHiddenViews.get(i));
+            mHiddenViews.remove(i);
+        }
+        mCallback.removeAllViews();
+        if (DEBUG) {
+            Log.d(TAG, "removeAllViewsUnfiltered");
+        }
+!!!10290821.java!!!	findHiddenNonRemovedView(in position : int) : View
+        final int count = mHiddenViews.size();
+        for (int i = 0; i < count; i++) {
+            final View view = mHiddenViews.get(i);
+            RecyclerView.ViewHolder holder = mCallback.getChildViewHolder(view);
+            if (holder.getLayoutPosition() == position
+                    && !holder.isInvalid()
+                    && !holder.isRemoved()) {
+                return view;
+            }
+        }
+        return null;
+!!!10290949.java!!!	attachViewToParent(inout child : View, in index : int, inout layoutParams : ViewGroup::LayoutParams, inout hidden : boolean) : void
+        final int offset;
+        if (index < 0) {
+            offset = mCallback.getChildCount();
+        } else {
+            offset = getOffset(index);
+        }
+        mBucket.insert(offset, hidden);
+        if (hidden) {
+            hideViewInternal(child);
+        }
+        mCallback.attachViewToParent(child, offset, layoutParams);
+        if (DEBUG) {
+            Log.d(TAG, "attach view to parent index:" + index + ",off:" + offset + ","
+                    + "h:" + hidden + ", " + this);
+        }
+!!!10291077.java!!!	getChildCount() : int
+        return mCallback.getChildCount() - mHiddenViews.size();
+!!!10291205.java!!!	getUnfilteredChildCount() : int
+        return mCallback.getChildCount();
+!!!10291333.java!!!	getUnfilteredChildAt(in index : int) : View
+        return mCallback.getChildAt(index);
+!!!10291461.java!!!	detachViewFromParent(in index : int) : void
+        final int offset = getOffset(index);
+        mBucket.remove(offset);
+        mCallback.detachViewFromParent(offset);
+        if (DEBUG) {
+            Log.d(TAG, "detach view from parent " + index + ", off:" + offset);
+        }
+!!!10291589.java!!!	indexOfChild(inout child : View) : int
+        final int index = mCallback.indexOfChild(child);
+        if (index == -1) {
+            return -1;
+        }
+        if (mBucket.get(index)) {
+            if (DEBUG) {
+                throw new IllegalArgumentException("cannot get index of a hidden child");
+            } else {
+                return -1;
+            }
+        }
+        // reverse the index
+        return index - mBucket.countOnesBefore(index);
+!!!10291717.java!!!	isHidden(inout view : View) : boolean
+        return mHiddenViews.contains(view);
+!!!10291845.java!!!	hide(inout view : View) : void
+        final int offset = mCallback.indexOfChild(view);
+        if (offset < 0) {
+            throw new IllegalArgumentException("view is not a child, cannot hide " + view);
+        }
+        if (DEBUG && mBucket.get(offset)) {
+            throw new RuntimeException("trying to hide same view twice, how come ? " + view);
+        }
+        mBucket.set(offset);
+        hideViewInternal(view);
+        if (DEBUG) {
+            Log.d(TAG, "hiding child " + view + " at offset " + offset + ", " + this);
+        }
+!!!10291973.java!!!	unhide(inout view : View) : void
+        final int offset = mCallback.indexOfChild(view);
+        if (offset < 0) {
+            throw new IllegalArgumentException("view is not a child, cannot hide " + view);
+        }
+        if (!mBucket.get(offset)) {
+            throw new RuntimeException("trying to unhide a view that was not hidden" + view);
+        }
+        mBucket.clear(offset);
+        unhideViewInternal(view);
+!!!10292101.java!!!	toString() : String
+        return mBucket.toString() + ", hidden list:" + mHiddenViews.size();
+!!!10292229.java!!!	removeViewIfHidden(inout view : View) : boolean
+        final int index = mCallback.indexOfChild(view);
+        if (index == -1) {
+            if (unhideViewInternal(view) && DEBUG) {
+                throw new IllegalStateException("view is in hidden list but not in view group");
+            }
+            return true;
+        }
+        if (mBucket.get(index)) {
+            mBucket.remove(index);
+            if (!unhideViewInternal(view) && DEBUG) {
+                throw new IllegalStateException(
+                        "removed a hidden view but it is not in hidden views list");
+            }
+            mCallback.removeViewAt(index);
+            return true;
+        }
+        return false;

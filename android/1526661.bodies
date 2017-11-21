@@ -1,0 +1,33 @@
+class MemoryPowerCalculator
+!!!9992453.java!!!	MemoryPowerCalculator(inout profile : PowerProfile)
+        int numBuckets = profile.getNumElements(PowerProfile.POWER_MEMORY);
+        powerAverages = new double[numBuckets];
+        for (int i = 0; i < numBuckets; i++) {
+            powerAverages[i] = profile.getAveragePower(PowerProfile.POWER_MEMORY, i);
+            if (powerAverages[i] == 0 && DEBUG) {
+                Log.d(TAG, "Problem with PowerProfile. Received 0 value in MemoryPowerCalculator");
+            }
+        }
+!!!9992709.java!!!	calculateRemaining(inout app : BatterySipper, inout stats : BatteryStats, in rawRealtimeUs : long, in rawUptimeUs : long, in statsType : int) : void
+        double totalMah = 0;
+        long totalTimeMs = 0;
+        LongSparseArray<? extends BatteryStats.Timer> timers = stats.getKernelMemoryStats();
+        for (int i = 0; i < timers.size() && i < powerAverages.length; i++) {
+            double mAatRail = powerAverages[(int) timers.keyAt(i)];
+            long timeMs = timers.valueAt(i).getTotalTimeLocked(rawRealtimeUs, statsType);
+            double mAm = (mAatRail * timeMs) / (1000*60);
+            if(DEBUG) {
+                Log.d(TAG, "Calculating mAh for bucket " + timers.keyAt(i) + " while unplugged");
+                Log.d(TAG, "Converted power profile number from "
+                        + powerAverages[(int) timers.keyAt(i)] + " into " + mAatRail);
+                Log.d(TAG, "Calculated mAm " + mAm);
+            }
+            totalMah += mAm/60;
+            totalTimeMs += timeMs;
+        }
+        app.usagePowerMah = totalMah;
+        app.usageTimeMs = totalTimeMs;
+        if (DEBUG) {
+            Log.d(TAG, String.format("Calculated total mAh for memory %f while unplugged %d ",
+                    totalMah, totalTimeMs));
+        }

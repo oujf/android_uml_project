@@ -1,0 +1,287 @@
+class TextClassifierImpl
+!!!9079557.java!!!	TextClassifierImpl(inout context : Context)
+        mContext = Preconditions.checkNotNull(context);
+!!!9079685.java!!!	suggestSelection(inout text : CharSequence, in selectionStartIndex : int, in selectionEndIndex : int, inout defaultLocales : LocaleList) : TextSelection
+        validateInput(text, selectionStartIndex, selectionEndIndex);
+        try {
+            if (text.length() > 0) {
+                final SmartSelection smartSelection = getSmartSelection(defaultLocales);
+                final String string = text.toString();
+                final int[] startEnd = smartSelection.suggest(
+                        string, selectionStartIndex, selectionEndIndex);
+                final int start = startEnd[0];
+                final int end = startEnd[1];
+                if (start <= end
+                        && start >= 0 && end <= string.length()
+                        && start <= selectionStartIndex && end >= selectionEndIndex) {
+                    final TextSelection.Builder tsBuilder = new TextSelection.Builder(start, end)
+                            .setLogSource(LOG_TAG);
+                    final SmartSelection.ClassificationResult[] results =
+                            smartSelection.classifyText(
+                                    string, start, end,
+                                    getHintFlags(string, start, end));
+                    final int size = results.length;
+                    for (int i = 0; i < size; i++) {
+                        tsBuilder.setEntityType(results[i].mCollection, results[i].mScore);
+                    }
+                    return tsBuilder.build();
+                } else {
+                    // We can not trust the result. Log the issue and ignore the result.
+                    Log.d(LOG_TAG, "Got bad indices for input text. Ignoring result.");
+                }
+            }
+        } catch (Throwable t) {
+            // Avoid throwing from this method. Log the error.
+            Log.e(LOG_TAG,
+                    "Error suggesting selection for text. No changes to selection suggested.",
+                    t);
+        }
+        // Getting here means something went wrong, return a NO_OP result.
+        return TextClassifier.NO_OP.suggestSelection(
+                text, selectionStartIndex, selectionEndIndex, defaultLocales);
+!!!9079813.java!!!	classifyText(inout text : CharSequence, in startIndex : int, in endIndex : int, inout defaultLocales : LocaleList) : TextClassification
+        validateInput(text, startIndex, endIndex);
+        try {
+            if (text.length() > 0) {
+                final String string = text.toString();
+                SmartSelection.ClassificationResult[] results = getSmartSelection(defaultLocales)
+                        .classifyText(string, startIndex, endIndex,
+                                getHintFlags(string, startIndex, endIndex));
+                if (results.length > 0) {
+                    final TextClassification classificationResult =
+                            createClassificationResult(
+                                    results, string.subSequence(startIndex, endIndex));
+                    return classificationResult;
+                }
+            }
+        } catch (Throwable t) {
+            // Avoid throwing from this method. Log the error.
+            Log.e(LOG_TAG, "Error getting assist info.", t);
+        }
+        // Getting here means something went wrong, return a NO_OP result.
+        return TextClassifier.NO_OP.classifyText(
+                text, startIndex, endIndex, defaultLocales);
+!!!9079941.java!!!	getLinks(inout text : CharSequence, in linkMask : int, inout defaultLocales : LocaleList) : LinksInfo
+        Preconditions.checkArgument(text != null);
+        try {
+            return LinksInfoFactory.create(
+                    mContext, getSmartSelection(defaultLocales), text.toString(), linkMask);
+        } catch (Throwable t) {
+            // Avoid throwing from this method. Log the error.
+            Log.e(LOG_TAG, "Error getting links info.", t);
+        }
+        // Getting here means something went wrong, return a NO_OP result.
+        return TextClassifier.NO_OP.getLinks(text, linkMask, defaultLocales);
+!!!9080069.java!!!	logEvent(in source : String, in event : String) : void
+        if (LOG_TAG.equals(source)) {
+            mMetricsLogger.count(event, 1);
+        }
+!!!9080197.java!!!	getSmartSelection(inout localeList : LocaleList) : SmartSelection
+        synchronized (mSmartSelectionLock) {
+            localeList = localeList == null ? LocaleList.getEmptyLocaleList() : localeList;
+            final Locale locale = findBestSupportedLocaleLocked(localeList);
+            if (locale == null) {
+                throw new FileNotFoundException("No file for null locale");
+            }
+            if (mSmartSelection == null || !Objects.equals(mLocale, locale)) {
+                destroySmartSelectionIfExistsLocked();
+                final ParcelFileDescriptor fd = getFdLocked(locale);
+                mSmartSelection = new SmartSelection(fd.getFd());
+                closeAndLogError(fd);
+                mLocale = locale;
+            }
+            return mSmartSelection;
+        }
+!!!9080325.java!!!	getFdLocked(inout locale : Locale) : ParcelFileDescriptor
+        ParcelFileDescriptor updateFd;
+        try {
+            updateFd = ParcelFileDescriptor.open(
+                    new File(UPDATED_MODEL_FILE_PATH), ParcelFileDescriptor.MODE_READ_ONLY);
+        } catch (FileNotFoundException e) {
+            updateFd = null;
+        }
+        ParcelFileDescriptor factoryFd;
+        try {
+            final String factoryModelFilePath = getFactoryModelFilePathsLocked().get(locale);
+            if (factoryModelFilePath != null) {
+                factoryFd = ParcelFileDescriptor.open(
+                        new File(factoryModelFilePath), ParcelFileDescriptor.MODE_READ_ONLY);
+            } else {
+                factoryFd = null;
+            }
+        } catch (FileNotFoundException e) {
+            factoryFd = null;
+        }
+
+        if (updateFd == null) {
+            if (factoryFd != null) {
+                return factoryFd;
+            } else {
+                throw new FileNotFoundException(
+                        String.format("No model file found for %s", locale));
+            }
+        }
+
+        final int updateFdInt = updateFd.getFd();
+        final boolean localeMatches = Objects.equals(
+                locale.getLanguage().trim().toLowerCase(),
+                SmartSelection.getLanguage(updateFdInt).trim().toLowerCase());
+        if (factoryFd == null) {
+            if (localeMatches) {
+                return updateFd;
+            } else {
+                closeAndLogError(updateFd);
+                throw new FileNotFoundException(
+                        String.format("No model file found for %s", locale));
+            }
+        }
+
+        if (!localeMatches) {
+            closeAndLogError(updateFd);
+            return factoryFd;
+        }
+
+        final int updateVersion = SmartSelection.getVersion(updateFdInt);
+        final int factoryVersion = SmartSelection.getVersion(factoryFd.getFd());
+        if (updateVersion > factoryVersion) {
+            closeAndLogError(factoryFd);
+            return updateFd;
+        } else {
+            closeAndLogError(updateFd);
+            return factoryFd;
+        }
+!!!9080453.java!!!	destroySmartSelectionIfExistsLocked() : void
+        if (mSmartSelection != null) {
+            mSmartSelection.close();
+            mSmartSelection = null;
+        }
+!!!9080581.java!!!	findBestSupportedLocaleLocked(inout localeList : LocaleList) : Locale
+        // Specified localeList takes priority over the system default, so it is listed first.
+        final String languages = localeList.isEmpty()
+                ? LocaleList.getDefault().toLanguageTags()
+                : localeList.toLanguageTags() + "," + LocaleList.getDefault().toLanguageTags();
+        final List<Locale.LanguageRange> languageRangeList = Locale.LanguageRange.parse(languages);
+
+        final List<Locale> supportedLocales =
+                new ArrayList<>(getFactoryModelFilePathsLocked().keySet());
+        final Locale updatedModelLocale = getUpdatedModelLocale();
+        if (updatedModelLocale != null) {
+            supportedLocales.add(updatedModelLocale);
+        }
+        return Locale.lookup(languageRangeList, supportedLocales);
+!!!9080709.java!!!	getFactoryModelFilePathsLocked() : Map<Locale, String>
+        if (mModelFilePaths == null) {
+            final Map<Locale, String> modelFilePaths = new HashMap<>();
+            final File modelsDir = new File(MODEL_DIR);
+            if (modelsDir.exists() && modelsDir.isDirectory()) {
+                final File[] models = modelsDir.listFiles();
+                final Pattern modelFilenamePattern = Pattern.compile(MODEL_FILE_REGEX);
+                final int size = models.length;
+                for (int i = 0; i < size; i++) {
+                    final File modelFile = models[i];
+                    final Matcher matcher = modelFilenamePattern.matcher(modelFile.getName());
+                    if (matcher.matches() && modelFile.isFile()) {
+                        final String language = matcher.group(1);
+                        final Locale locale = Locale.forLanguageTag(language);
+                        modelFilePaths.put(locale, modelFile.getAbsolutePath());
+                    }
+                }
+            }
+            mModelFilePaths = modelFilePaths;
+        }
+        return mModelFilePaths;
+!!!9080837.java!!!	getUpdatedModelLocale() : Locale
+        try {
+            final ParcelFileDescriptor updateFd = ParcelFileDescriptor.open(
+                    new File(UPDATED_MODEL_FILE_PATH), ParcelFileDescriptor.MODE_READ_ONLY);
+            final Locale locale = Locale.forLanguageTag(
+                    SmartSelection.getLanguage(updateFd.getFd()));
+            closeAndLogError(updateFd);
+            return locale;
+        } catch (FileNotFoundException e) {
+            return null;
+        }
+!!!9080965.java!!!	createClassificationResult(inout classifications : SmartSelection::ClassificationResult [[]], inout text : CharSequence) : TextClassification
+        final TextClassification.Builder builder = new TextClassification.Builder()
+                .setText(text.toString());
+
+        final int size = classifications.length;
+        for (int i = 0; i < size; i++) {
+            builder.setEntityType(classifications[i].mCollection, classifications[i].mScore);
+        }
+
+        final String type = getHighestScoringType(classifications);
+        builder.setLogType(IntentFactory.getLogType(type));
+
+        final Intent intent = IntentFactory.create(mContext, type, text.toString());
+        final PackageManager pm;
+        final ResolveInfo resolveInfo;
+        if (intent != null) {
+            pm = mContext.getPackageManager();
+            resolveInfo = pm.resolveActivity(intent, 0);
+        } else {
+            pm = null;
+            resolveInfo = null;
+        }
+        if (resolveInfo != null && resolveInfo.activityInfo != null) {
+            builder.setIntent(intent)
+                    .setOnClickListener(TextClassification.createStartActivityOnClickListener(
+                            mContext, intent));
+
+            final String packageName = resolveInfo.activityInfo.packageName;
+            if ("android".equals(packageName)) {
+                // Requires the chooser to find an activity to handle the intent.
+                builder.setLabel(IntentFactory.getLabel(mContext, type));
+            } else {
+                // A default activity will handle the intent.
+                intent.setComponent(new ComponentName(packageName, resolveInfo.activityInfo.name));
+                Drawable icon = resolveInfo.activityInfo.loadIcon(pm);
+                if (icon == null) {
+                    icon = resolveInfo.loadIcon(pm);
+                }
+                builder.setIcon(icon);
+                CharSequence label = resolveInfo.activityInfo.loadLabel(pm);
+                if (label == null) {
+                    label = resolveInfo.loadLabel(pm);
+                }
+                builder.setLabel(label != null ? label.toString() : null);
+            }
+        }
+        return builder.build();
+!!!9081093.java!!!	getHintFlags(inout text : CharSequence, in start : int, in end : int) : int
+        int flag = 0;
+        final CharSequence subText = text.subSequence(start, end);
+        if (Patterns.AUTOLINK_EMAIL_ADDRESS.matcher(subText).matches()) {
+            flag |= SmartSelection.HINT_FLAG_EMAIL;
+        }
+        if (Patterns.AUTOLINK_WEB_URL.matcher(subText).matches()
+                && Linkify.sUrlMatchFilter.acceptMatch(text, start, end)) {
+            flag |= SmartSelection.HINT_FLAG_URL;
+        }
+        return flag;
+!!!9081221.java!!!	getHighestScoringType(inout types : SmartSelection::ClassificationResult [[]]) : String
+        if (types.length < 1) {
+            return "";
+        }
+
+        String type = types[0].mCollection;
+        float highestScore = types[0].mScore;
+        final int size = types.length;
+        for (int i = 1; i < size; i++) {
+            if (types[i].mScore > highestScore) {
+                type = types[i].mCollection;
+                highestScore = types[i].mScore;
+            }
+        }
+        return type;
+!!!9081349.java!!!	closeAndLogError(inout fd : ParcelFileDescriptor) : void
+        try {
+            fd.close();
+        } catch (IOException e) {
+            Log.e(LOG_TAG, "Error closing file.", e);
+        }
+!!!9081477.java!!!	validateInput(inout text : CharSequence, in startIndex : int, in endIndex : int) : void
+        Preconditions.checkArgument(text != null);
+        Preconditions.checkArgument(startIndex >= 0);
+        Preconditions.checkArgument(endIndex <= text.length());
+        Preconditions.checkArgument(endIndex > startIndex);

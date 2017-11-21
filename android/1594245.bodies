@@ -1,0 +1,45 @@
+class NetworkRequestInfo
+!!!10644869.java!!!	NetworkRequestInfo(inout r : NetworkRequest, inout pi : PendingIntent)
+            request = r;
+            ensureNetworkRequestHasType(request);
+            mPendingIntent = pi;
+            messenger = null;
+            mBinder = null;
+            mPid = getCallingPid();
+            mUid = getCallingUid();
+            enforceRequestCountLimit();
+!!!10644997.java!!!	NetworkRequestInfo(inout m : Messenger, inout r : NetworkRequest, inout binder : IBinder)
+            super();
+            messenger = m;
+            request = r;
+            ensureNetworkRequestHasType(request);
+            mBinder = binder;
+            mPid = getCallingPid();
+            mUid = getCallingUid();
+            mPendingIntent = null;
+            enforceRequestCountLimit();
+
+            try {
+                mBinder.linkToDeath(this, 0);
+            } catch (RemoteException e) {
+                binderDied();
+            }
+!!!10645125.java!!!	enforceRequestCountLimit() : void
+            synchronized (mUidToNetworkRequestCount) {
+                int networkRequests = mUidToNetworkRequestCount.get(mUid, 0) + 1;
+                if (networkRequests >= MAX_NETWORK_REQUESTS_PER_UID) {
+                    throw new IllegalArgumentException("Too many NetworkRequests filed");
+                }
+                mUidToNetworkRequestCount.put(mUid, networkRequests);
+            }
+!!!10645253.java!!!	unlinkDeathRecipient() : void
+            if (mBinder != null) {
+                mBinder.unlinkToDeath(this, 0);
+            }
+!!!10645381.java!!!	binderDied() : void
+            log("ConnectivityService NetworkRequestInfo binderDied(" +
+                    request + ", " + mBinder + ")");
+            releaseNetworkRequest(request);
+!!!10645509.java!!!	toString() : String
+            return "uid/pid:" + mUid + "/" + mPid + " " + request +
+                    (mPendingIntent == null ? "" : " to trigger " + mPendingIntent);

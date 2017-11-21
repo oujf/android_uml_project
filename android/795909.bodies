@@ -1,0 +1,354 @@
+class QSPanel
+!!!3326981.java!!!	QSPanel(inout context : Context)
+        this(context, null);
+!!!3327109.java!!!	QSPanel(inout context : Context, inout attrs : AttributeSet)
+        super(context, attrs);
+        mContext = context;
+
+        setOrientation(VERTICAL);
+
+        mBrightnessView = LayoutInflater.from(context).inflate(
+                R.layout.quick_settings_brightness_dialog, this, false);
+        addView(mBrightnessView);
+
+        setupTileLayout();
+
+        mPageIndicator = LayoutInflater.from(context).inflate(
+                R.layout.qs_page_indicator, this, false);
+        addView(mPageIndicator);
+        if (mTileLayout instanceof PagedTileLayout) {
+            ((PagedTileLayout) mTileLayout).setPageIndicator((PageIndicator) mPageIndicator);
+        }
+
+        addDivider();
+
+        mFooter = new QSSecurityFooter(this, context);
+        addView(mFooter.getView());
+
+        updateResources();
+
+        mBrightnessController = new BrightnessController(getContext(),
+                findViewById(R.id.brightness_icon),
+                findViewById(R.id.brightness_slider));
+!!!3327237.java!!!	addDivider() : void
+        mDivider = LayoutInflater.from(mContext).inflate(R.layout.qs_divider, this, false);
+        mDivider.setBackgroundColor(Utils.applyAlpha(mDivider.getAlpha(),
+                getColorForState(mContext, Tile.STATE_ACTIVE)));
+        addView(mDivider);
+!!!3327365.java!!!	getDivider() : View
+        return mDivider;
+!!!3327493.java!!!	getPageIndicator() : View
+        return mPageIndicator;
+!!!3327621.java!!!	setupTileLayout() : void
+        mTileLayout = (QSTileLayout) LayoutInflater.from(mContext).inflate(
+                R.layout.qs_paged_tile_layout, this, false);
+        mTileLayout.setListening(mListening);
+        addView((View) mTileLayout);
+!!!3327749.java!!!	isShowingCustomize() : boolean
+        return mCustomizePanel != null && mCustomizePanel.isCustomizing();
+!!!3327877.java!!!	onAttachedToWindow() : void
+        super.onAttachedToWindow();
+        Dependency.get(TunerService.class).addTunable(this, QS_SHOW_BRIGHTNESS);
+        if (mHost != null) {
+            setTiles(mHost.getTiles());
+        }
+!!!3328005.java!!!	onDetachedFromWindow() : void
+        Dependency.get(TunerService.class).removeTunable(this);
+        if (mHost != null) {
+            mHost.removeCallback(this);
+        }
+        for (TileRecord record : mRecords) {
+            record.tile.removeCallbacks();
+        }
+        super.onDetachedFromWindow();
+!!!3328133.java!!!	onTilesChanged() : void
+        setTiles(mHost.getTiles());
+!!!3328261.java!!!	onTuningChanged(in key : String, in newValue : String) : void
+        if (QS_SHOW_BRIGHTNESS.equals(key)) {
+            mBrightnessView.setVisibility(newValue == null || Integer.parseInt(newValue) != 0
+                    ? VISIBLE : GONE);
+        }
+!!!3328389.java!!!	openDetails(in subPanel : String) : void
+        QSTile tile = getTile(subPanel);
+        showDetailAdapter(true, tile.getDetailAdapter(), new int[]{getWidth() / 2, 0});
+!!!3328517.java!!!	getTile(in subPanel : String) : QSTile
+        for (int i = 0; i < mRecords.size(); i++) {
+            if (subPanel.equals(mRecords.get(i).tile.getTileSpec())) {
+                return mRecords.get(i).tile;
+            }
+        }
+        return mHost.createTile(subPanel);
+!!!3328645.java!!!	setBrightnessMirror(inout c : BrightnessMirrorController) : void
+        mBrightnessMirrorController = c;
+        ToggleSliderView brightnessSlider = findViewById(R.id.brightness_slider);
+        ToggleSliderView mirror = c.getMirror().findViewById(
+                R.id.brightness_slider);
+        brightnessSlider.setMirror(mirror);
+        brightnessSlider.setMirrorController(c);
+!!!3328773.java!!!	getBrightnessView() : View
+        return mBrightnessView;
+!!!3328901.java!!!	setCallback(inout callback : QSDetail::Callback) : void
+        mCallback = callback;
+!!!3329029.java!!!	setHost(inout host : QSTileHost, inout customizer : QSCustomizer) : void
+        mHost = host;
+        mHost.addCallback(this);
+        setTiles(mHost.getTiles());
+        mFooter.setHostEnvironment(host);
+        mCustomizePanel = customizer;
+        if (mCustomizePanel != null) {
+            mCustomizePanel.setHost(mHost);
+        }
+!!!3329157.java!!!	getHost() : QSTileHost
+        return mHost;
+!!!3329285.java!!!	updateResources() : void
+        final Resources res = mContext.getResources();
+        mPanelPaddingBottom = res.getDimensionPixelSize(R.dimen.qs_panel_padding_bottom);
+        mBrightnessPaddingTop = res.getDimensionPixelSize(R.dimen.qs_brightness_padding_top);
+        setPadding(0, mBrightnessPaddingTop, 0, mPanelPaddingBottom);
+        for (TileRecord r : mRecords) {
+            r.tile.clearState();
+        }
+        if (mListening) {
+            refreshAllTiles();
+        }
+        if (mTileLayout != null) {
+            mTileLayout.updateResources();
+        }
+!!!3329413.java!!!	onConfigurationChanged(inout newConfig : Configuration) : void
+        super.onConfigurationChanged(newConfig);
+        mFooter.onConfigurationChanged();
+
+        if (mBrightnessMirrorController != null) {
+            // Reload the mirror in case it got reinflated but we didn't.
+            setBrightnessMirror(mBrightnessMirrorController);
+        }
+!!!3329541.java!!!	onCollapse() : void
+        if (mCustomizePanel != null && mCustomizePanel.isShown()) {
+            mCustomizePanel.hide(mCustomizePanel.getWidth() / 2, mCustomizePanel.getHeight() / 2);
+        }
+!!!3329669.java!!!	setExpanded(inout expanded : boolean) : void
+        if (mExpanded == expanded) return;
+        mExpanded = expanded;
+        if (!mExpanded && mTileLayout instanceof PagedTileLayout) {
+            ((PagedTileLayout) mTileLayout).setCurrentItem(0, false);
+        }
+        mMetricsLogger.visibility(MetricsEvent.QS_PANEL, mExpanded);
+        if (!mExpanded) {
+            closeDetail();
+        } else {
+            logTiles();
+        }
+!!!3329797.java!!!	isExpanded() : boolean
+        return mExpanded;
+!!!3329925.java!!!	setListening(inout listening : boolean) : void
+        if (mListening == listening) return;
+        mListening = listening;
+        if (mTileLayout != null) {
+            mTileLayout.setListening(listening);
+        }
+        mFooter.setListening(mListening);
+        if (mListening) {
+            refreshAllTiles();
+        }
+        if (mBrightnessView.getVisibility() == View.VISIBLE) {
+            if (listening) {
+                mBrightnessController.registerCallbacks();
+            } else {
+                mBrightnessController.unregisterCallbacks();
+            }
+        }
+!!!3330053.java!!!	refreshAllTiles() : void
+        for (TileRecord r : mRecords) {
+            r.tile.refreshState();
+        }
+        mFooter.refreshState();
+!!!3330181.java!!!	showDetailAdapter(inout show : boolean, inout adapter : DetailAdapter, inout locationInWindow : int [[]]) : void
+        int xInWindow = locationInWindow[0];
+        int yInWindow = locationInWindow[1];
+        ((View) getParent()).getLocationInWindow(locationInWindow);
+
+        Record r = new Record();
+        r.detailAdapter = adapter;
+        r.x = xInWindow - locationInWindow[0];
+        r.y = yInWindow - locationInWindow[1];
+
+        locationInWindow[0] = xInWindow;
+        locationInWindow[1] = yInWindow;
+
+        showDetail(show, r);
+!!!3330309.java!!!	showDetail(inout show : boolean, inout r : QSPanel::Record) : void
+        mHandler.obtainMessage(H.SHOW_DETAIL, show ? 1 : 0, 0, r).sendToTarget();
+!!!3330437.java!!!	setTiles(inout tiles : Collection<QSTile>) : void
+        setTiles(tiles, false);
+!!!3330565.java!!!	setTiles(inout tiles : Collection<QSTile>, inout collapsedView : boolean) : void
+        for (TileRecord record : mRecords) {
+            mTileLayout.removeTile(record);
+            record.tile.removeCallback(record.callback);
+        }
+        mRecords.clear();
+        for (QSTile tile : tiles) {
+            addTile(tile, collapsedView);
+        }
+!!!3330693.java!!!	drawTile(inout r : QSPanel::TileRecord, inout state : QSTile.State) : void
+        r.tileView.onStateChanged(state);
+!!!3330821.java!!!	createTileView(inout tile : QSTile, inout collapsedView : boolean) : QSTileView
+        return mHost.createTileView(tile, collapsedView);
+!!!3330949.java!!!	shouldShowDetail() : boolean
+        return mExpanded;
+!!!3331077.java!!!	addTile(in tile : QSTile, inout collapsedView : boolean) : QSPanel::TileRecord
+        final TileRecord r = new TileRecord();
+        r.tile = tile;
+        r.tileView = createTileView(tile, collapsedView);
+        final QSTile.Callback callback = new QSTile.Callback() {
+            @Override
+            public void onStateChanged(QSTile.State state) {
+                drawTile(r, state);
+            }
+
+            @Override
+            public void onShowDetail(boolean show) {
+                // Both the collapsed and full QS panels get this callback, this check determines
+                // which one should handle showing the detail.
+                if (shouldShowDetail()) {
+                    QSPanel.this.showDetail(show, r);
+                }
+            }
+
+            @Override
+            public void onToggleStateChanged(boolean state) {
+                if (mDetailRecord == r) {
+                    fireToggleStateChanged(state);
+                }
+            }
+
+            @Override
+            public void onScanStateChanged(boolean state) {
+                r.scanState = state;
+                if (mDetailRecord == r) {
+                    fireScanStateChanged(r.scanState);
+                }
+            }
+
+            @Override
+            public void onAnnouncementRequested(CharSequence announcement) {
+                if (announcement != null) {
+                    mHandler.obtainMessage(H.ANNOUNCE_FOR_ACCESSIBILITY, announcement)
+                            .sendToTarget();
+                }
+            }
+        };
+        r.tile.addCallback(callback);
+        r.callback = callback;
+        r.tileView.init(r.tile);
+        r.tile.refreshState();
+        mRecords.add(r);
+
+        if (mTileLayout != null) {
+            mTileLayout.addTile(r);
+        }
+
+        return r;
+!!!3331205.java!!!	showEdit(in v : View) : void
+        v.post(new Runnable() {
+            @Override
+            public void run() {
+                if (mCustomizePanel != null) {
+                    if (!mCustomizePanel.isCustomizing()) {
+                        int[] loc = new int[2];
+                        v.getLocationInWindow(loc);
+                        int x = loc[0] + v.getWidth() / 2;
+                        int y = loc[1] + v.getHeight() / 2;
+                        mCustomizePanel.show(x, y);
+                    }
+                }
+
+            }
+        });
+!!!3331333.java!!!	closeDetail() : void
+        if (mCustomizePanel != null && mCustomizePanel.isShown()) {
+            // Treat this as a detail panel for now, to make things easy.
+            mCustomizePanel.hide(mCustomizePanel.getWidth() / 2, mCustomizePanel.getHeight() / 2);
+            return;
+        }
+        showDetail(false, mDetailRecord);
+!!!3331461.java!!!	getGridHeight() : int
+        return getMeasuredHeight();
+!!!3331589.java!!!	handleShowDetail(inout r : QSPanel::Record, inout show : boolean) : void
+        if (r instanceof TileRecord) {
+            handleShowDetailTile((TileRecord) r, show);
+        } else {
+            int x = 0;
+            int y = 0;
+            if (r != null) {
+                x = r.x;
+                y = r.y;
+            }
+            handleShowDetailImpl(r, show, x, y);
+        }
+!!!3331717.java!!!	handleShowDetailTile(inout r : QSPanel::TileRecord, inout show : boolean) : void
+        if ((mDetailRecord != null) == show && mDetailRecord == r) return;
+
+        if (show) {
+            r.detailAdapter = r.tile.getDetailAdapter();
+            if (r.detailAdapter == null) return;
+        }
+        r.tile.setDetailListening(show);
+        int x = r.tileView.getLeft() + r.tileView.getWidth() / 2;
+        int y = r.tileView.getDetailY() + mTileLayout.getOffsetTop(r) + getTop();
+        handleShowDetailImpl(r, show, x, y);
+!!!3331845.java!!!	handleShowDetailImpl(inout r : QSPanel::Record, inout show : boolean, in x : int, in y : int) : void
+        setDetailRecord(show ? r : null);
+        fireShowingDetail(show ? r.detailAdapter : null, x, y);
+!!!3331973.java!!!	setDetailRecord(inout r : QSPanel::Record) : void
+        if (r == mDetailRecord) return;
+        mDetailRecord = r;
+        final boolean scanState = mDetailRecord instanceof TileRecord
+                && ((TileRecord) mDetailRecord).scanState;
+        fireScanStateChanged(scanState);
+!!!3332101.java!!!	setGridContentVisibility(inout visible : boolean) : void
+        int newVis = visible ? VISIBLE : INVISIBLE;
+        setVisibility(newVis);
+        if (mGridContentVisible != visible) {
+            mMetricsLogger.visibility(MetricsEvent.QS_PANEL, newVis);
+        }
+        mGridContentVisible = visible;
+!!!3332229.java!!!	logTiles() : void
+        for (int i = 0; i < mRecords.size(); i++) {
+            QSTile tile = mRecords.get(i).tile;
+            mMetricsLogger.write(tile.populate(new LogMaker(tile.getMetricsCategory())
+                    .setType(MetricsEvent.TYPE_OPEN)));
+        }
+!!!3332357.java!!!	fireShowingDetail(inout detail : DetailAdapter, in x : int, in y : int) : void
+        if (mCallback != null) {
+            mCallback.onShowingDetail(detail, x, y);
+        }
+!!!3332485.java!!!	fireToggleStateChanged(inout state : boolean) : void
+        if (mCallback != null) {
+            mCallback.onToggleStateChanged(state);
+        }
+!!!3332613.java!!!	fireScanStateChanged(inout state : boolean) : void
+        if (mCallback != null) {
+            mCallback.onScanStateChanged(state);
+        }
+!!!3332741.java!!!	clickTile(inout tile : ComponentName) : void
+        final String spec = CustomTile.toSpec(tile);
+        final int N = mRecords.size();
+        for (int i = 0; i < N; i++) {
+            if (mRecords.get(i).tile.getTileSpec().equals(spec)) {
+                mRecords.get(i).tile.click();
+                break;
+            }
+        }
+!!!3332869.java!!!	getTileLayout() : QSPanel::QSTileLayout
+        return mTileLayout;
+!!!3332997.java!!!	getTileView(inout tile : QSTile) : QSTileView
+        for (TileRecord r : mRecords) {
+            if (r.tile == tile) {
+                return r.tileView;
+            }
+        }
+        return null;
+!!!3333125.java!!!	getFooter() : QSSecurityFooter
+        return mFooter;
+!!!3333253.java!!!	showDeviceMonitoringDialog() : void
+        mFooter.showDeviceMonitoringDialog();

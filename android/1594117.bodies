@@ -1,0 +1,202 @@
+class NetworkAgentInfo
+!!!11372293.java!!!	NetworkAgentInfo(inout messenger : Messenger, inout ac : AsyncChannel, inout net : Network, inout info : NetworkInfo, inout lp : LinkProperties, inout nc : NetworkCapabilities, in score : int, inout context : Context, inout handler : Handler, inout misc : NetworkMisc, inout defaultRequest : NetworkRequest, inout connService : ConnectivityService)
+        this.messenger = messenger;
+        asyncChannel = ac;
+        network = net;
+        networkInfo = info;
+        linkProperties = lp;
+        networkCapabilities = nc;
+        currentScore = score;
+        mConnService = connService;
+        mContext = context;
+        mHandler = handler;
+        networkMonitor = mConnService.createNetworkMonitor(context, handler, this, defaultRequest);
+        networkMisc = misc;
+!!!11372421.java!!!	updateRequestCounts(inout add : boolean, inout request : NetworkRequest) : void
+        int delta = add ? +1 : -1;
+        switch (request.type) {
+            case REQUEST:
+            case TRACK_DEFAULT:
+                mNumRequestNetworkRequests += delta;
+                break;
+
+            case BACKGROUND_REQUEST:
+                mNumRequestNetworkRequests += delta;
+                mNumBackgroundNetworkRequests += delta;
+                break;
+
+            case LISTEN:
+                break;
+
+            case NONE:
+            default:
+                Log.wtf(TAG, "Unhandled request type " + request.type);
+                break;
+        }
+!!!11372549.java!!!	addRequest(inout networkRequest : NetworkRequest) : boolean
+        NetworkRequest existing = mNetworkRequests.get(networkRequest.requestId);
+        if (existing == networkRequest) return false;
+        if (existing != null) {
+            // Should only happen if the requestId wraps. If that happens lots of other things will
+            // be broken as well.
+            Log.wtf(TAG, String.format("Duplicate requestId for %s and %s on %s",
+                    networkRequest, existing, name()));
+            updateRequestCounts(REMOVE, existing);
+        }
+        mNetworkRequests.put(networkRequest.requestId, networkRequest);
+        updateRequestCounts(ADD, networkRequest);
+        return true;
+!!!11372677.java!!!	removeRequest(in requestId : int) : void
+        NetworkRequest existing = mNetworkRequests.get(requestId);
+        if (existing == null) return;
+        updateRequestCounts(REMOVE, existing);
+        mNetworkRequests.remove(requestId);
+        if (existing.isRequest()) {
+            unlingerRequest(existing);
+        }
+!!!11372805.java!!!	isSatisfyingRequest(in id : int) : boolean
+        return mNetworkRequests.get(id) != null;
+!!!11372933.java!!!	requestAt(in index : int) : NetworkRequest
+        return mNetworkRequests.valueAt(index);
+!!!11373061.java!!!	numRequestNetworkRequests() : int
+        return mNumRequestNetworkRequests;
+!!!11373189.java!!!	numBackgroundNetworkRequests() : int
+        return mNumBackgroundNetworkRequests;
+!!!11373317.java!!!	numForegroundNetworkRequests() : int
+        return mNumRequestNetworkRequests - mNumBackgroundNetworkRequests;
+!!!11373445.java!!!	numNetworkRequests() : int
+        return mNetworkRequests.size();
+!!!11373573.java!!!	isBackgroundNetwork() : boolean
+        return !isVPN() && numForegroundNetworkRequests() == 0 && mNumBackgroundNetworkRequests > 0;
+!!!11373701.java!!!	satisfies(inout request : NetworkRequest) : boolean
+        return created &&
+                request.networkCapabilities.satisfiedByNetworkCapabilities(networkCapabilities);
+!!!11373829.java!!!	satisfiesImmutableCapabilitiesOf(inout request : NetworkRequest) : boolean
+        return created &&
+                request.networkCapabilities.satisfiedByImmutableNetworkCapabilities(
+                        networkCapabilities);
+!!!11373957.java!!!	isVPN() : boolean
+        return networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+!!!11374085.java!!!	getCurrentScore(inout pretendValidated : boolean) : int
+        // TODO: We may want to refactor this into a NetworkScore class that takes a base score from
+        // the NetworkAgent and signals from the NetworkAgent and uses those signals to modify the
+        // score.  The NetworkScore class would provide a nice place to centralize score constants
+        // so they are not scattered about the transports.
+
+        // If this network is explicitly selected and the user has decided to use it even if it's
+        // unvalidated, give it the maximum score. Also give it the maximum score if it's explicitly
+        // selected and we're trying to see what its score could be. This ensures that we don't tear
+        // down an explicitly selected network before the user gets a chance to prefer it when
+        // a higher-scoring network (e.g., Ethernet) is available.
+        if (networkMisc.explicitlySelected && (networkMisc.acceptUnvalidated || pretendValidated)) {
+            return MAXIMUM_NETWORK_SCORE;
+        }
+
+        int score = currentScore;
+        if (!lastValidated && !pretendValidated && !ignoreWifiUnvalidationPenalty()) {
+            score -= UNVALIDATED_SCORE_PENALTY;
+        }
+        if (score < 0) score = 0;
+        return score;
+!!!11374213.java!!!	ignoreWifiUnvalidationPenalty() : boolean
+        boolean isWifi = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        boolean avoidBadWifi = mConnService.avoidBadWifi() || avoidUnvalidated;
+        return isWifi && !avoidBadWifi && everValidated;
+!!!11374341.java!!!	getCurrentScore() : int
+        return getCurrentScore(false);
+!!!11374469.java!!!	getCurrentScoreAsValidated() : int
+        return getCurrentScore(true);
+!!!11374597.java!!!	setCurrentScore(in newScore : int) : void
+        currentScore = newScore;
+!!!11374725.java!!!	getNetworkState() : NetworkState
+        synchronized (this) {
+            // Network objects are outwardly immutable so there is no point to duplicating.
+            // Duplicating also precludes sharing socket factories and connection pools.
+            final String subscriberId = (networkMisc != null) ? networkMisc.subscriberId : null;
+            return new NetworkState(new NetworkInfo(networkInfo),
+                    new LinkProperties(linkProperties),
+                    new NetworkCapabilities(networkCapabilities), network, subscriberId, null);
+        }
+!!!11374853.java!!!	lingerRequest(inout request : NetworkRequest, in now : long, in duration : long) : void
+        if (mLingerTimerForRequest.get(request.requestId) != null) {
+            // Cannot happen. Once a request is lingering on a particular network, we cannot
+            // re-linger it unless that network becomes the best for that request again, in which
+            // case we should have unlingered it.
+            Log.wtf(TAG, this.name() + ": request " + request.requestId + " already lingered");
+        }
+        final long expiryMs = now + duration;
+        LingerTimer timer = new LingerTimer(request, expiryMs);
+        if (VDBG) Log.d(TAG, "Adding LingerTimer " + timer + " to " + this.name());
+        mLingerTimers.add(timer);
+        mLingerTimerForRequest.put(request.requestId, timer);
+!!!11374981.java!!!	unlingerRequest(inout request : NetworkRequest) : boolean
+        LingerTimer timer = mLingerTimerForRequest.get(request.requestId);
+        if (timer != null) {
+            if (VDBG) Log.d(TAG, "Removing LingerTimer " + timer + " from " + this.name());
+            mLingerTimers.remove(timer);
+            mLingerTimerForRequest.remove(request.requestId);
+            return true;
+        }
+        return false;
+!!!11375109.java!!!	getLingerExpiry() : long
+        return mLingerExpiryMs;
+!!!11375237.java!!!	updateLingerTimer() : void
+        long newExpiry = mLingerTimers.isEmpty() ? 0 : mLingerTimers.last().expiryMs;
+        if (newExpiry == mLingerExpiryMs) return;
+
+        // Even if we're going to reschedule the timer, cancel it first. This is because the
+        // semantics of WakeupMessage guarantee that if cancel is called then the alarm will
+        // never call its callback (handleLingerComplete), even if it has already fired.
+        // WakeupMessage makes no such guarantees about rescheduling a message, so if mLingerMessage
+        // has already been dispatched, rescheduling to some time in the future it won't stop it
+        // from calling its callback immediately.
+        if (mLingerMessage != null) {
+            mLingerMessage.cancel();
+            mLingerMessage = null;
+        }
+
+        if (newExpiry > 0) {
+            mLingerMessage = mConnService.makeWakeupMessage(
+                    mContext, mHandler,
+                    "NETWORK_LINGER_COMPLETE." + network.netId,
+                    EVENT_NETWORK_LINGER_COMPLETE, this);
+            mLingerMessage.schedule(newExpiry);
+        }
+
+        mLingerExpiryMs = newExpiry;
+!!!11375365.java!!!	linger() : void
+        mLingering = true;
+!!!11375493.java!!!	unlinger() : void
+        mLingering = false;
+!!!11375621.java!!!	isLingering() : boolean
+        return mLingering;
+!!!11375749.java!!!	clearLingerState() : void
+        if (mLingerMessage != null) {
+            mLingerMessage.cancel();
+            mLingerMessage = null;
+        }
+        mLingerTimers.clear();
+        mLingerTimerForRequest.clear();
+        updateLingerTimer();  // Sets mLingerExpiryMs, cancels and nulls out mLingerMessage.
+        mLingering = false;
+!!!11375877.java!!!	dumpLingerTimers(inout pw : PrintWriter) : void
+        for (LingerTimer timer : mLingerTimers) { pw.println(timer); }
+!!!11376005.java!!!	toString() : String
+        return "NetworkAgentInfo{ ni{" + networkInfo + "}  " +
+                "network{" + network + "}  nethandle{" + network.getNetworkHandle() + "}  " +
+                "lp{" + linkProperties + "}  " +
+                "nc{" + networkCapabilities + "}  Score{" + getCurrentScore() + "}  " +
+                "everValidated{" + everValidated + "}  lastValidated{" + lastValidated + "}  " +
+                "created{" + created + "} lingering{" + isLingering() + "} " +
+                "explicitlySelected{" + networkMisc.explicitlySelected + "} " +
+                "acceptUnvalidated{" + networkMisc.acceptUnvalidated + "} " +
+                "everCaptivePortalDetected{" + everCaptivePortalDetected + "} " +
+                "lastCaptivePortalDetected{" + lastCaptivePortalDetected + "} " +
+                "}";
+!!!11376133.java!!!	name() : String
+        return "NetworkAgentInfo [" + networkInfo.getTypeName() + " (" +
+                networkInfo.getSubtypeName() + ") - " +
+                (network == null ? "null" : network.toString()) + "]";
+!!!11376261.java!!!	compareTo(inout other : NetworkAgentInfo) : int
+        return other.getCurrentScore() - getCurrentScore();

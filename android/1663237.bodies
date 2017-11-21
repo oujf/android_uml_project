@@ -1,0 +1,80 @@
+class NetdEventListenerService
+!!!11369477.java!!!	registerNetdEventCallback(inout callback : INetdEventCallback) : boolean
+        mNetdEventCallback = callback;
+        return true;
+!!!11369605.java!!!	unregisterNetdEventCallback() : boolean
+        mNetdEventCallback = null;
+        return true;
+!!!11369733.java!!!	NetdEventListenerService(inout context : Context)
+        this(context.getSystemService(ConnectivityManager.class));
+!!!11369861.java!!!	NetdEventListenerService(inout cm : ConnectivityManager)
+        // We are started when boot is complete, so ConnectivityService should already be running.
+        mCm = cm;
+!!!11369989.java!!!	onDnsEvent(in netId : int, in eventType : int, in returnCode : int, in latencyMs : int, in hostname : String, inout ipAddresses : String [[]], in ipAddressesCount : int, in uid : int) : void
+        maybeVerboseLog("onDnsEvent(%d, %d, %d, %dms)", netId, eventType, returnCode, latencyMs);
+
+        DnsEvent dnsEvent = mDnsEvents.get(netId);
+        if (dnsEvent == null) {
+            dnsEvent = makeDnsEvent(netId);
+            mDnsEvents.put(netId, dnsEvent);
+        }
+        dnsEvent.addResult((byte) eventType, (byte) returnCode, latencyMs);
+
+        if (mNetdEventCallback != null) {
+            long timestamp = System.currentTimeMillis();
+            mNetdEventCallback.onDnsEvent(hostname, ipAddresses, ipAddressesCount, timestamp, uid);
+        }
+!!!11370117.java!!!	onConnectEvent(in netId : int, in error : int, in latencyMs : int, in ipAddr : String, in port : int, in uid : int) : void
+        maybeVerboseLog("onConnectEvent(%d, %d, %dms)", netId, error, latencyMs);
+
+        ConnectStats connectStats = mConnectEvents.get(netId);
+        if (connectStats == null) {
+            connectStats = makeConnectStats(netId);
+            mConnectEvents.put(netId, connectStats);
+        }
+        connectStats.addEvent(error, latencyMs, ipAddr);
+
+        if (mNetdEventCallback != null) {
+            mNetdEventCallback.onConnectEvent(ipAddr, port, System.currentTimeMillis(), uid);
+        }
+!!!11370245.java!!!	flushStatistics(inout events : List<IpConnectivityEvent>) : void
+        flushProtos(events, mConnectEvents, IpConnectivityEventBuilder::toProto);
+        flushProtos(events, mDnsEvents, IpConnectivityEventBuilder::toProto);
+!!!11370373.java!!!	dump(inout writer : PrintWriter) : void
+        IndentingPrintWriter pw = new IndentingPrintWriter(writer, "  ");
+        pw.println(TAG + ":");
+        pw.increaseIndent();
+        list(pw);
+        pw.decreaseIndent();
+!!!11370501.java!!!	list(inout pw : PrintWriter) : void
+        listEvents(pw, mConnectEvents, (x) -> x);
+        listEvents(pw, mDnsEvents, (x) -> x);
+!!!11370629.java!!!	listAsProtos(inout pw : PrintWriter) : void
+        listEvents(pw, mConnectEvents, IpConnectivityEventBuilder::toProto);
+        listEvents(pw, mDnsEvents, IpConnectivityEventBuilder::toProto);
+!!!11370757.java!!!	flushProtos(inout out : List<IpConnectivityEvent>, inout in : SparseArray, inout mapper : Function<T, IpConnectivityEvent>) : void
+        for (int i = 0; i < in.size(); i++) {
+            out.add(mapper.apply(in.valueAt(i)));
+        }
+        in.clear();
+!!!11370885.java!!!	listEvents(inout pw : PrintWriter, inout events : SparseArray, inout mapper : Function<T, Object>) : void
+        for (int i = 0; i < events.size(); i++) {
+            pw.println(mapper.apply(events.valueAt(i)).toString());
+        }
+!!!11371013.java!!!	makeConnectStats(in netId : int) : ConnectStats
+        long transports = getTransports(netId);
+        return new ConnectStats(netId, transports, mConnectTb, CONNECT_LATENCY_MAXIMUM_RECORDS);
+!!!11371141.java!!!	makeDnsEvent(in netId : int) : DnsEvent
+        long transports = getTransports(netId);
+        return new DnsEvent(netId, transports, INITIAL_DNS_BATCH_SIZE);
+!!!11371269.java!!!	getTransports(in netId : int) : long
+        // TODO: directly query ConnectivityService instead of going through Binder interface.
+        NetworkCapabilities nc = mCm.getNetworkCapabilities(new Network(netId));
+        if (nc == null) {
+            return 0;
+        }
+        return BitUtils.packBits(nc.getTransportTypes());
+!!!11371397.java!!!	maybeLog(in s : String, inout  : Object...args) : void
+        if (DBG) Log.d(TAG, String.format(s, args));
+!!!11371525.java!!!	maybeVerboseLog(in s : String, inout  : Object...args) : void
+        if (VDBG) Log.d(TAG, String.format(s, args));

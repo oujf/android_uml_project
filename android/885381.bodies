@@ -1,0 +1,119 @@
+class FlashlightControllerImpl
+!!!4132997.java!!!	FlashlightControllerImpl(inout context : Context)
+        mContext = context;
+        mCameraManager = (CameraManager) mContext.getSystemService(Context.CAMERA_SERVICE);
+
+        tryInitCamera();
+!!!4133125.java!!!	tryInitCamera() : void
+        try {
+            mCameraId = getCameraId();
+        } catch (Throwable e) {
+            Log.e(TAG, "Couldn't initialize.", e);
+            return;
+        }
+
+        if (mCameraId != null) {
+            ensureHandler();
+            mCameraManager.registerTorchCallback(mTorchCallback, mHandler);
+        }
+!!!4133253.java!!!	setFlashlight(inout enabled : boolean) : void
+        boolean pendingError = false;
+        synchronized (this) {
+            if (mCameraId == null) return;
+            if (mFlashlightEnabled != enabled) {
+                mFlashlightEnabled = enabled;
+                try {
+                    mCameraManager.setTorchMode(mCameraId, enabled);
+                } catch (CameraAccessException e) {
+                    Log.e(TAG, "Couldn't set torch mode", e);
+                    mFlashlightEnabled = false;
+                    pendingError = true;
+                }
+            }
+        }
+        dispatchModeChanged(mFlashlightEnabled);
+        if (pendingError) {
+            dispatchError();
+        }
+!!!4133381.java!!!	hasFlashlight() : boolean
+        return mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH);
+!!!4133509.java!!!	isEnabled() : boolean
+        return mFlashlightEnabled;
+!!!4133637.java!!!	isAvailable() : boolean
+        return mTorchAvailable;
+!!!4133765.java!!!	addCallback(inout l : FlashlightController::FlashlightListener) : void
+        synchronized (mListeners) {
+            if (mCameraId == null) {
+                tryInitCamera();
+            }
+            cleanUpListenersLocked(l);
+            mListeners.add(new WeakReference<>(l));
+            l.onFlashlightAvailabilityChanged(mTorchAvailable);
+            l.onFlashlightChanged(mFlashlightEnabled);
+        }
+!!!4133893.java!!!	removeCallback(inout l : FlashlightController::FlashlightListener) : void
+        synchronized (mListeners) {
+            cleanUpListenersLocked(l);
+        }
+!!!4134021.java!!!	ensureHandler() : void
+        if (mHandler == null) {
+            HandlerThread thread = new HandlerThread(TAG, Process.THREAD_PRIORITY_BACKGROUND);
+            thread.start();
+            mHandler = new Handler(thread.getLooper());
+        }
+!!!4134149.java!!!	getCameraId() : String
+        String[] ids = mCameraManager.getCameraIdList();
+        for (String id : ids) {
+            CameraCharacteristics c = mCameraManager.getCameraCharacteristics(id);
+            Boolean flashAvailable = c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+            Integer lensFacing = c.get(CameraCharacteristics.LENS_FACING);
+            if (flashAvailable != null && flashAvailable
+                    && lensFacing != null && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+                return id;
+            }
+        }
+        return null;
+!!!4134277.java!!!	dispatchModeChanged(inout enabled : boolean) : void
+        dispatchListeners(DISPATCH_CHANGED, enabled);
+!!!4134405.java!!!	dispatchError() : void
+        dispatchListeners(DISPATCH_CHANGED, false /* argument (ignored) */);
+!!!4134533.java!!!	dispatchAvailabilityChanged(inout available : boolean) : void
+        dispatchListeners(DISPATCH_AVAILABILITY_CHANGED, available);
+!!!4134661.java!!!	dispatchListeners(in message : int, inout argument : boolean) : void
+        synchronized (mListeners) {
+            final int N = mListeners.size();
+            boolean cleanup = false;
+            for (int i = 0; i < N; i++) {
+                FlashlightListener l = mListeners.get(i).get();
+                if (l != null) {
+                    if (message == DISPATCH_ERROR) {
+                        l.onFlashlightError();
+                    } else if (message == DISPATCH_CHANGED) {
+                        l.onFlashlightChanged(argument);
+                    } else if (message == DISPATCH_AVAILABILITY_CHANGED) {
+                        l.onFlashlightAvailabilityChanged(argument);
+                    }
+                } else {
+                    cleanup = true;
+                }
+            }
+            if (cleanup) {
+                cleanUpListenersLocked(null);
+            }
+        }
+!!!4134789.java!!!	cleanUpListenersLocked(inout listener : FlashlightController::FlashlightListener) : void
+        for (int i = mListeners.size() - 1; i >= 0; i--) {
+            FlashlightListener found = mListeners.get(i).get();
+            if (found == null || found == listener) {
+                mListeners.remove(i);
+            }
+        }
+!!!4134917.java!!!	dump(inout fd : FileDescriptor, inout pw : PrintWriter, inout args : String [[]]) : void
+        pw.println("FlashlightController state:");
+
+        pw.print("  mCameraId=");
+        pw.println(mCameraId);
+        pw.print("  mFlashlightEnabled=");
+        pw.println(mFlashlightEnabled);
+        pw.print("  mTorchAvailable=");
+        pw.println(mTorchAvailable);

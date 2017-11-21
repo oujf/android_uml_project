@@ -1,0 +1,128 @@
+class MediaCodecInfo
+!!!866309.cpp!!!	isEncoder() : bool
+    return mIsEncoder;
+!!!866437.cpp!!!	hasQuirk(in name : char) : bool
+    if (name) {
+        for (size_t ix = 0; ix < mQuirks.size(); ix++) {
+            if (mQuirks.itemAt(ix).equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+!!!866565.cpp!!!	getSupportedMimes(inout mimes : Vector<AString>) : void
+    mimes->clear();
+    for (size_t ix = 0; ix < mCaps.size(); ix++) {
+        mimes->push_back(mCaps.keyAt(ix));
+    }
+!!!866693.cpp!!!	getCapabilitiesFor(in mime : char) : sp<Capabilities>
+    ssize_t ix = getCapabilityIndex(mime);
+    if (ix >= 0) {
+        return mCaps.valueAt(ix);
+    }
+    return NULL;
+!!!866821.cpp!!!	getCodecName() : char
+    return mName.c_str();
+!!!866949.cpp!!!	FromParcel(in parcel : Parcel) : sp<MediaCodecInfo>
+    AString name = AString::FromParcel(parcel);
+    bool isEncoder = static_cast<bool>(parcel.readInt32());
+    sp<MediaCodecInfo> info = new MediaCodecInfo(name, isEncoder, NULL);
+    size_t size = static_cast<size_t>(parcel.readInt32());
+    for (size_t i = 0; i < size; i++) {
+        AString quirk = AString::FromParcel(parcel);
+        if (info != NULL) {
+            info->mQuirks.push_back(quirk);
+        }
+    }
+    size = static_cast<size_t>(parcel.readInt32());
+    for (size_t i = 0; i < size; i++) {
+        AString mime = AString::FromParcel(parcel);
+        sp<Capabilities> caps = Capabilities::FromParcel(parcel);
+        if (caps == NULL)
+            return NULL;
+        if (info != NULL) {
+            info->mCaps.add(mime, caps);
+        }
+    }
+    return info;
+!!!867077.cpp!!!	writeToParcel(inout parcel : Parcel) : status_t
+    mName.writeToParcel(parcel);
+    parcel->writeInt32(mIsEncoder);
+    parcel->writeInt32(mQuirks.size());
+    for (size_t i = 0; i < mQuirks.size(); i++) {
+        mQuirks.itemAt(i).writeToParcel(parcel);
+    }
+    parcel->writeInt32(mCaps.size());
+    for (size_t i = 0; i < mCaps.size(); i++) {
+        mCaps.keyAt(i).writeToParcel(parcel);
+        mCaps.valueAt(i)->writeToParcel(parcel);
+    }
+    return OK;
+!!!867205.cpp!!!	getCapabilityIndex(in mime : char) : ssize_t
+    if (mime) {
+        for (size_t ix = 0; ix < mCaps.size(); ix++) {
+            if (mCaps.keyAt(ix).equalsIgnoreCase(mime)) {
+                return ix;
+            }
+        }
+    }
+    return -1;
+!!!867333.cpp!!!	MediaCodecInfo(in name : AString, in encoder : bool, in mime : char)
+    if (mime != NULL) {
+        addMime(mime);
+        mHasSoleMime = true;
+    }
+!!!867461.cpp!!!	addQuirk(in name : char) : void
+    if (!hasQuirk(name)) {
+        mQuirks.push(name);
+    }
+!!!867589.cpp!!!	addMime(in mime : char) : status_t
+    if (mHasSoleMime) {
+        ALOGE("Codec '%s' already had its type specified", mName.c_str());
+        return -EINVAL;
+    }
+    ssize_t ix = getCapabilityIndex(mime);
+    if (ix >= 0) {
+        mCurrentCaps = mCaps.valueAt(ix);
+    } else {
+        mCurrentCaps = new Capabilities();
+        mCaps.add(AString(mime), mCurrentCaps);
+    }
+    return OK;
+!!!867717.cpp!!!	updateMime(in mime : char) : status_t
+    ssize_t ix = getCapabilityIndex(mime);
+    if (ix < 0) {
+        ALOGE("updateMime mime not found %s", mime);
+        return -EINVAL;
+    }
+
+    mCurrentCaps = mCaps.valueAt(ix);
+    return OK;
+!!!867845.cpp!!!	initializeCapabilities(in caps : sp<Capabilities>) : status_t
+    // TRICKY: copy data to mCurrentCaps as it is a reference to
+    // an element of the capabilites map.
+    mCurrentCaps->mColorFormats.clear();
+    mCurrentCaps->mColorFormats.appendVector(caps->mColorFormats);
+    mCurrentCaps->mProfileLevels.clear();
+    mCurrentCaps->mProfileLevels.appendVector(caps->mProfileLevels);
+    mCurrentCaps->mFlags = caps->mFlags;
+    mCurrentCaps->mDetails = caps->mDetails;
+    return OK;
+!!!867973.cpp!!!	addDetail(in key : AString, in value : AString) : void
+    mCurrentCaps->mDetails->setString(key.c_str(), value.c_str());
+!!!868101.cpp!!!	addFeature(in key : AString, in value : int32_t) : void
+    AString tag = "feature-";
+    tag.append(key);
+    mCurrentCaps->mDetails->setInt32(tag.c_str(), value);
+!!!868229.cpp!!!	addFeature(in key : AString, in value : char) : void
+    AString tag = "feature-";
+    tag.append(key);
+    mCurrentCaps->mDetails->setString(tag.c_str(), value);
+!!!868357.cpp!!!	removeMime(in mime : char) : void
+    ssize_t ix = getCapabilityIndex(mime);
+    if (ix >= 0) {
+        mCaps.removeItemsAt(ix);
+        // mCurrentCaps will be removed when completed
+    }
+!!!868485.cpp!!!	complete() : void
+    mCurrentCaps = NULL;

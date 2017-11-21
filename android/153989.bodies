@@ -1,0 +1,115 @@
+class AudioInputDescriptor
+!!!278533.cpp!!!	AudioInputDescriptor(in profile : sp<IOProfile>)
+    if (profile != NULL) {
+        profile->pickAudioProfile(mSamplingRate, mChannelMask, mFormat);
+        if (profile->mGains.size() > 0) {
+            profile->mGains[0]->getDefaultConfig(&mGain);
+        }
+    }
+!!!278661.cpp!!!	setIoHandle(in ioHandle : audio_io_handle_t) : void
+    mId = AudioPort::getNextUniqueId();
+    mIoHandle = ioHandle;
+!!!278789.cpp!!!	getId() : audio_port_handle_t
+    return mId;
+!!!278917.cpp!!!	getModuleHandle() : audio_module_handle_t
+    if (mProfile == 0) {
+        return AUDIO_MODULE_HANDLE_NONE;
+    }
+    return mProfile->getModuleHandle();
+!!!279045.cpp!!!	getOpenRefCount() : uint32_t
+    return mSessions.getOpenCount();
+!!!279173.cpp!!!	dump(in fd : int) : status_t
+    const size_t SIZE = 256;
+    char buffer[SIZE];
+    String8 result;
+
+    snprintf(buffer, SIZE, " ID: %d\n", getId());
+    result.append(buffer);
+    snprintf(buffer, SIZE, " Sampling rate: %d\n", mSamplingRate);
+    result.append(buffer);
+    snprintf(buffer, SIZE, " Format: %d\n", mFormat);
+    result.append(buffer);
+    snprintf(buffer, SIZE, " Channels: %08x\n", mChannelMask);
+    result.append(buffer);
+    snprintf(buffer, SIZE, " Devices %08x\n", mDevice);
+    result.append(buffer);
+
+    write(fd, result.string(), result.size());
+
+    mSessions.dump(fd, 1);
+
+    return NO_ERROR;
+!!!279301.cpp!!!	toAudioPortConfig(inout dstConfig : audio_port_config, in srcConfig : audio_port_config = NULL) : void
+    ALOG_ASSERT(mProfile != 0,
+                "toAudioPortConfig() called on input with null profile %d", mIoHandle);
+    dstConfig->config_mask = AUDIO_PORT_CONFIG_SAMPLE_RATE|AUDIO_PORT_CONFIG_CHANNEL_MASK|
+                            AUDIO_PORT_CONFIG_FORMAT|AUDIO_PORT_CONFIG_GAIN;
+    if (srcConfig != NULL) {
+        dstConfig->config_mask |= srcConfig->config_mask;
+    }
+
+    AudioPortConfig::toAudioPortConfig(dstConfig, srcConfig);
+
+    dstConfig->id = mId;
+    dstConfig->role = AUDIO_PORT_ROLE_SINK;
+    dstConfig->type = AUDIO_PORT_TYPE_MIX;
+    dstConfig->ext.mix.hw_module = getModuleHandle();
+    dstConfig->ext.mix.handle = mIoHandle;
+    dstConfig->ext.mix.usecase.source = inputSource();
+!!!279557.cpp!!!	toAudioPort(inout port : audio_port) : void
+    ALOG_ASSERT(mProfile != 0, "toAudioPort() called on input with null profile %d", mIoHandle);
+
+    mProfile->toAudioPort(port);
+    port->id = mId;
+    toAudioPortConfig(&port->active_config);
+    port->ext.mix.hw_module = getModuleHandle();
+    port->ext.mix.handle = mIoHandle;
+    port->ext.mix.latency_class = AUDIO_LATENCY_NORMAL;
+!!!279685.cpp!!!	setPreemptedSessions(in sessions : SortedVector<audio_session_t>) : void
+    mPreemptedSessions = sessions;
+!!!279813.cpp!!!	getPreemptedSessions() : SortedVector<audio_session_t>
+    return mPreemptedSessions;
+!!!279941.cpp!!!	hasPreemptedSession(in session : audio_session_t) : bool
+    return (mPreemptedSessions.indexOf(session) >= 0);
+!!!280069.cpp!!!	clearPreemptedSessions() : void
+    mPreemptedSessions.clear();
+!!!280197.cpp!!!	isActive() : bool
+    return mSessions.hasActiveSession();
+!!!280325.cpp!!!	isSourceActive(in source : audio_source_t) : bool
+    return mSessions.isSourceActive(source);
+!!!280453.cpp!!!	inputSource(in activeOnly : bool = false) : audio_source_t
+    return getHighestPrioritySource(activeOnly);
+!!!280581.cpp!!!	isSoundTrigger() : bool
+    // sound trigger and non sound trigger sessions are not mixed
+    // on a given input
+    return mSessions.valueAt(0)->isSoundTrigger();
+!!!280709.cpp!!!	addAudioSession(in session : audio_session_t, in audioSession : sp<AudioSession>) : status_t
+    return mSessions.addSession(session, audioSession, /*AudioSessionInfoProvider*/this);
+!!!280837.cpp!!!	removeAudioSession(in session : audio_session_t) : status_t
+    return mSessions.removeSession(session);
+!!!280965.cpp!!!	getAudioSession(in session : audio_session_t) : sp<AudioSession>
+    return mSessions.valueFor(session);
+!!!281093.cpp!!!	getAudioSessions(in activeOnly : bool) : AudioSessionCollection
+    if (activeOnly) {
+        return mSessions.getActiveSessions();
+    } else {
+        return mSessions;
+    }
+!!!281221.cpp!!!	getAudioSessionCount(in activeOnly : bool) : size_t
+    if (activeOnly) {
+        return mSessions.getActiveSessionCount();
+    } else {
+        return mSessions.size();
+    }
+!!!281349.cpp!!!	getHighestPrioritySource(in activeOnly : bool) : audio_source_t
+
+    return mSessions.getHighestPrioritySource(activeOnly);
+!!!281477.cpp!!!	getConfig() : audio_config_base_t
+    const audio_config_base_t config = { .sample_rate = mSamplingRate, .channel_mask = mChannelMask,
+            .format = mFormat };
+    return config;
+!!!281605.cpp!!!	getPatchHandle() : audio_patch_handle_t
+    return mPatchHandle;
+!!!281733.cpp!!!	setPatchHandle(in handle : audio_patch_handle_t) : void
+    mPatchHandle = handle;
+    mSessions.onSessionInfoUpdate();

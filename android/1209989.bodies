@@ -1,0 +1,106 @@
+class MyHandler
+!!!6828421.java!!!	MyHandler(inout context : Context)
+            super(context.getMainLooper());
+!!!6828549.java!!!	MyHandler(inout looper : Looper)
+            super(looper);
+!!!6828677.java!!!	handleMessage(inout msg : Message) : void
+            switch(msg.what) {
+                case MSG_ENROLL_RESULT:
+                    sendEnrollResult((Fingerprint) msg.obj, msg.arg1 /* remaining */);
+                    break;
+                case MSG_ACQUIRED:
+                    sendAcquiredResult((Long) msg.obj /* deviceId */, msg.arg1 /* acquire info */,
+                            msg.arg2 /* vendorCode */);
+                    break;
+                case MSG_AUTHENTICATION_SUCCEEDED:
+                    sendAuthenticatedSucceeded((Fingerprint) msg.obj, msg.arg1 /* userId */);
+                    break;
+                case MSG_AUTHENTICATION_FAILED:
+                    sendAuthenticatedFailed();
+                    break;
+                case MSG_ERROR:
+                    sendErrorResult((Long) msg.obj /* deviceId */, msg.arg1 /* errMsgId */,
+                            msg.arg2 /* vendorCode */);
+                    break;
+                case MSG_REMOVED:
+                    sendRemovedResult((Fingerprint) msg.obj, msg.arg1 /* remaining */);
+                    break;
+                case MSG_ENUMERATED:
+                    sendEnumeratedResult((Long) msg.obj /* deviceId */, msg.arg1 /* fingerId */,
+                            msg.arg2 /* groupId */);
+                    break;
+            }
+!!!6828805.java!!!	sendRemovedResult(inout fingerprint : Fingerprint, in remaining : int) : void
+            if (mRemovalCallback == null) {
+                return;
+            }
+            if (fingerprint == null) {
+                Log.e(TAG, "Received MSG_REMOVED, but fingerprint is null");
+                return;
+            }
+
+            int fingerId = fingerprint.getFingerId();
+            int reqFingerId = mRemovalFingerprint.getFingerId();
+            if (reqFingerId != 0 && fingerId != 0 && fingerId != reqFingerId) {
+                Log.w(TAG, "Finger id didn't match: " + fingerId + " != " + reqFingerId);
+                return;
+            }
+            int groupId = fingerprint.getGroupId();
+            int reqGroupId = mRemovalFingerprint.getGroupId();
+            if (groupId != reqGroupId) {
+                Log.w(TAG, "Group id didn't match: " + groupId + " != " + reqGroupId);
+                return;
+            }
+
+            mRemovalCallback.onRemovalSucceeded(fingerprint, remaining);
+!!!6828933.java!!!	sendEnumeratedResult(in deviceId : long, in fingerId : int, in groupId : int) : void
+            if (mEnumerateCallback != null) {
+                mEnumerateCallback.onEnumerate(new Fingerprint(null, groupId, fingerId, deviceId));
+            }
+!!!6829061.java!!!	sendErrorResult(in deviceId : long, in errMsgId : int, in vendorCode : int) : void
+            // emulate HAL 2.1 behavior and send real errMsgId
+            final int clientErrMsgId = errMsgId == FINGERPRINT_ERROR_VENDOR
+                    ? (vendorCode + FINGERPRINT_ERROR_VENDOR_BASE) : errMsgId;
+            if (mEnrollmentCallback != null) {
+                mEnrollmentCallback.onEnrollmentError(clientErrMsgId,
+                        getErrorString(errMsgId, vendorCode));
+            } else if (mAuthenticationCallback != null) {
+                mAuthenticationCallback.onAuthenticationError(clientErrMsgId,
+                        getErrorString(errMsgId, vendorCode));
+            } else if (mRemovalCallback != null) {
+                mRemovalCallback.onRemovalError(mRemovalFingerprint, clientErrMsgId,
+                        getErrorString(errMsgId, vendorCode));
+            } else if (mEnumerateCallback != null) {
+                mEnumerateCallback.onEnumerateError(clientErrMsgId,
+                        getErrorString(errMsgId, vendorCode));
+            }
+!!!6829189.java!!!	sendEnrollResult(inout fp : Fingerprint, in remaining : int) : void
+            if (mEnrollmentCallback != null) {
+                mEnrollmentCallback.onEnrollmentProgress(remaining);
+            }
+!!!6829317.java!!!	sendAuthenticatedSucceeded(inout fp : Fingerprint, in userId : int) : void
+            if (mAuthenticationCallback != null) {
+                final AuthenticationResult result =
+                        new AuthenticationResult(mCryptoObject, fp, userId);
+                mAuthenticationCallback.onAuthenticationSucceeded(result);
+            }
+!!!6829445.java!!!	sendAuthenticatedFailed() : void
+            if (mAuthenticationCallback != null) {
+                mAuthenticationCallback.onAuthenticationFailed();
+            }
+!!!6829573.java!!!	sendAcquiredResult(in deviceId : long, in acquireInfo : int, in vendorCode : int) : void
+            if (mAuthenticationCallback != null) {
+                mAuthenticationCallback.onAuthenticationAcquired(acquireInfo);
+            }
+            final String msg = getAcquiredString(acquireInfo, vendorCode);
+            if (msg == null) {
+                return;
+            }
+            // emulate HAL 2.1 behavior and send real acquiredInfo
+            final int clientInfo = acquireInfo == FINGERPRINT_ACQUIRED_VENDOR
+                    ? (vendorCode + FINGERPRINT_ACQUIRED_VENDOR_BASE) : acquireInfo;
+            if (mEnrollmentCallback != null) {
+                mEnrollmentCallback.onEnrollmentHelp(clientInfo, msg);
+            } else if (mAuthenticationCallback != null) {
+                mAuthenticationCallback.onAuthenticationHelp(clientInfo, msg);
+            }

@@ -1,0 +1,143 @@
+class WindowToken
+!!!12613765.java!!!	WindowToken(inout service : WindowManagerService, inout _token : IBinder, in type : int, inout persistOnEmpty : boolean, inout dc : DisplayContent, inout ownerCanManageAppTokens : boolean)
+        mService = service;
+        token = _token;
+        windowType = type;
+        mPersistOnEmpty = persistOnEmpty;
+        mOwnerCanManageAppTokens = ownerCanManageAppTokens;
+        onDisplayChanged(dc);
+!!!12613893.java!!!	removeAllWindowsIfPossible() : void
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowState win = mChildren.get(i);
+            if (DEBUG_WINDOW_MOVEMENT) Slog.w(TAG_WM,
+                    "removeAllWindowsIfPossible: removing win=" + win);
+            win.removeIfPossible();
+        }
+!!!12614021.java!!!	setExiting() : void
+        // This token is exiting, so allow it to be removed when it no longer contains any windows.
+        mPersistOnEmpty = false;
+
+        if (hidden) {
+            return;
+        }
+
+        final int count = mChildren.size();
+        boolean changed = false;
+        boolean delayed = false;
+
+        for (int i = 0; i < count; i++) {
+            final WindowState win = mChildren.get(i);
+            if (win.mWinAnimator.isAnimationSet()) {
+                delayed = true;
+            }
+            changed |= win.onSetAppExiting();
+        }
+
+        hidden = true;
+
+        if (changed) {
+            mService.mWindowPlacerLocked.performSurfacePlacement();
+            mService.updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL, false /*updateInputWindows*/);
+        }
+
+        if (delayed) {
+            mDisplayContent.mExitingTokens.add(this);
+        }
+!!!12614149.java!!!	isFirstChildWindowGreaterThanSecond(inout newWindow : WindowState, inout existingWindow : WindowState) : boolean
+        // New window is considered greater if it has a higher or equal base layer.
+        return newWindow.mBaseLayer >= existingWindow.mBaseLayer;
+!!!12614277.java!!!	addWindow(in win : WindowState) : void
+        if (DEBUG_FOCUS) Slog.d(TAG_WM,
+                "addWindow: win=" + win + " Callers=" + Debug.getCallers(5));
+
+        if (win.isChildWindow()) {
+            // Child windows are added to their parent windows.
+            return;
+        }
+        if (!mChildren.contains(win)) {
+            if (DEBUG_ADD_REMOVE) Slog.v(TAG_WM, "Adding " + win + " to " + this);
+            addChild(win, mWindowComparator);
+            mService.mWindowsChanged = true;
+            // TODO: Should we also be setting layout needed here and other places?
+        }
+!!!12614405.java!!!	isEmpty() : boolean
+        return mChildren.isEmpty();
+!!!12614533.java!!!	getAnimLayerAdjustment() : int
+        return 0;
+!!!12614661.java!!!	getReplacingWindow() : WindowState
+        for (int i = mChildren.size() - 1; i >= 0; i--) {
+            final WindowState win = mChildren.get(i);
+            final WindowState replacing = win.getReplacingWindow();
+            if (replacing != null) {
+                return replacing;
+            }
+        }
+        return null;
+!!!12614789.java!!!	windowsCanBeWallpaperTarget() : boolean
+        for (int j = mChildren.size() - 1; j >= 0; j--) {
+            final WindowState w = mChildren.get(j);
+            if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0) {
+                return true;
+            }
+        }
+
+        return false;
+!!!12614917.java!!!	getHighestAnimLayer() : int
+        int highest = -1;
+        for (int j = 0; j < mChildren.size(); j++) {
+            final WindowState w = mChildren.get(j);
+            final int wLayer = w.getHighestAnimLayer();
+            if (wLayer > highest) {
+                highest = wLayer;
+            }
+        }
+        return highest;
+!!!12615045.java!!!	asAppWindowToken() : AppWindowToken
+        // TODO: Not sure if this is the best way to handle this vs. using instanceof and casting.
+        // I am not an app window token!
+        return null;
+!!!12615173.java!!!	getDisplayContent() : DisplayContent
+        return mDisplayContent;
+!!!12615301.java!!!	removeImmediately() : void
+        if (mDisplayContent != null) {
+            mDisplayContent.removeWindowToken(token);
+        }
+        // Needs to occur after the token is removed from the display above to avoid attempt at
+        // duplicate removal of this window container from it's parent.
+        super.removeImmediately();
+!!!12615429.java!!!	onDisplayChanged(inout dc : DisplayContent) : void
+        dc.reParentWindowToken(this);
+        mDisplayContent = dc;
+
+        // TODO(b/36740756): One day this should perhaps be hooked
+        // up with goodToGo, so we don't move a window
+        // to another display before the window behind
+        // it is ready.
+        SurfaceControl.openTransaction();
+        for (int i = mChildren.size() - 1; i >= 0; --i) {
+            final WindowState win = mChildren.get(i);
+            win.mWinAnimator.updateLayerStackInTransaction();
+        }
+        SurfaceControl.closeTransaction();
+
+        super.onDisplayChanged(dc);
+!!!12615557.java!!!	dump(inout pw : PrintWriter, in prefix : String) : void
+        pw.print(prefix); pw.print("windows="); pw.println(mChildren);
+        pw.print(prefix); pw.print("windowType="); pw.print(windowType);
+                pw.print(" hidden="); pw.print(hidden);
+                pw.print(" hasVisible="); pw.println(hasVisible);
+        if (waitingToShow || sendingToBottom) {
+            pw.print(prefix); pw.print("waitingToShow="); pw.print(waitingToShow);
+                    pw.print(" sendingToBottom="); pw.print(sendingToBottom);
+        }
+!!!12615685.java!!!	toString() : String
+        if (stringName == null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("WindowToken{");
+            sb.append(Integer.toHexString(System.identityHashCode(this)));
+            sb.append(" "); sb.append(token); sb.append('}');
+            stringName = sb.toString();
+        }
+        return stringName;
+!!!12615813.java!!!	getName() : String
+        return toString();

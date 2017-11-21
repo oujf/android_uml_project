@@ -1,0 +1,43 @@
+class GlobalActions
+!!!12352773.java!!!	GlobalActions(inout context : Context, inout windowManagerFuncs : WindowManagerPolicy::WindowManagerFuncs)
+        mContext = context;
+        mHandler = new Handler();
+        mWindowManagerFuncs = windowManagerFuncs;
+        mStatusBarInternal = LocalServices.getService(StatusBarManagerInternal.class);
+
+        // Some form factors do not have a status bar.
+        if (mStatusBarInternal != null) {
+            mStatusBarInternal.setGlobalActionsListener(this);
+        }
+!!!12352901.java!!!	ensureLegacyCreated() : void
+        if (mLegacyGlobalActions != null) return;
+        mLegacyGlobalActions = new LegacyGlobalActions(mContext, mWindowManagerFuncs,
+                this::onGlobalActionsDismissed);
+!!!12353029.java!!!	showDialog(inout keyguardShowing : boolean, inout deviceProvisioned : boolean) : void
+        if (DEBUG) Slog.d(TAG, "showDialog " + keyguardShowing + " " + deviceProvisioned);
+        mKeyguardShowing = keyguardShowing;
+        mDeviceProvisioned = deviceProvisioned;
+        mShowing = true;
+        if (mStatusBarConnected) {
+            mStatusBarInternal.showGlobalActions();
+            mHandler.postDelayed(mShowTimeout, 5000);
+        } else {
+            // SysUI isn't alive, show legacy menu.
+            ensureLegacyCreated();
+            mLegacyGlobalActions.showDialog(mKeyguardShowing, mDeviceProvisioned);
+        }
+!!!12353157.java!!!	onGlobalActionsShown() : void
+        if (DEBUG) Slog.d(TAG, "onGlobalActionsShown");
+        // SysUI is showing, remove timeout callbacks.
+        mHandler.removeCallbacks(mShowTimeout);
+!!!12353285.java!!!	onGlobalActionsDismissed() : void
+        if (DEBUG) Slog.d(TAG, "onGlobalActionsDismissed");
+        mShowing = false;
+!!!12353413.java!!!	onStatusBarConnectedChanged(inout connected : boolean) : void
+        if (DEBUG) Slog.d(TAG, "onStatusBarConnectedChanged " + connected);
+        mStatusBarConnected = connected;
+        if (mShowing && !mStatusBarConnected) {
+            // Status bar died but we need to be showing global actions still, show the legacy.
+            ensureLegacyCreated();
+            mLegacyGlobalActions.showDialog(mKeyguardShowing, mDeviceProvisioned);
+        }
