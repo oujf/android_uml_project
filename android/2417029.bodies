@@ -1,0 +1,75 @@
+class CpuSet
+!!!15147269.cpp!!!	GetCpuList() : std::string
+  if (auto file = OpenPropertyFilePointer("cpus")) {
+    stdio_filebuf<char> filebuf(file.get());
+    std::istream file_stream(&filebuf);
+
+    std::string line;
+    if (std::getline(file_stream, line))
+      return line;
+  }
+
+  ALOGE("CpuSet::GetCpuList: Failed to read cpu list!!!");
+  return "";
+!!!15147397.cpp!!!	AttachTask(in task_id : pid_t) : int
+  auto file = OpenFile("tasks", O_RDWR);
+  if (file.get() >= 0) {
+    std::ostringstream stream;
+    stream << task_id;
+    std::string value = stream.str();
+
+    const bool ret = base::WriteStringToFd(value, file.get());
+    return !ret ? -errno : 0;
+  } else {
+    ALOGE("CpuSet::AttachTask: Failed to open %s/tasks: %s", path_.c_str(),
+          strerror(errno));
+    return -errno;
+  }
+!!!15147525.cpp!!!	GetTasks() : std::vector<pid_t>
+  std::vector<pid_t> tasks;
+
+  if (auto file = OpenFilePointer("tasks")) {
+    stdio_filebuf<char> filebuf(file.get());
+    std::istream file_stream(&filebuf);
+
+    for (std::string line; std::getline(file_stream, line);) {
+      pid_t task_id = std::strtol(line.c_str(), nullptr, 10);
+      tasks.push_back(task_id);
+    }
+  }
+
+  return tasks;
+!!!15147653.cpp!!!	CpuSet(inout parent : CpuSet, in name : std::string, inout cpuset_fd : base::unique_fd)
+  if (parent_ == nullptr)
+    path_ = name_;
+  else if (parent_->IsRoot())
+    path_ = parent_->name() + name_;
+  else
+    path_ = parent_->path() + "/" + name_;
+
+  ALOGI("CpuSet::CpuSet: path=%s", path().c_str());
+!!!15147781.cpp!!!	AddChild(in child : std::unique_ptr<CpuSet>) : void
+  children_.push_back(std::move(child));
+!!!15147909.cpp!!!	OpenPropertyFile(in name : std::string) : base::unique_fd
+  return OpenFile(prefix_enabled_ ? "cpuset." + name : name);
+!!!15148037.cpp!!!	OpenPropertyFilePointer(in name : std::string) : UniqueFile
+  return OpenFilePointer(prefix_enabled_ ? "cpuset." + name : name);
+!!!15148165.cpp!!!	OpenFile(in name : std::string, in flags : int = O_RDONLY) : base::unique_fd
+  const std::string relative_path = "./" + name;
+  return base::unique_fd(
+      openat(cpuset_fd_.get(), relative_path.c_str(), flags));
+!!!15148293.cpp!!!	OpenFilePointer(in name : std::string, in flags : int = O_RDONLY) : UniqueFile
+  const std::string relative_path = "./" + name;
+  base::unique_fd fd(openat(cpuset_fd_.get(), relative_path.c_str(), flags));
+  if (fd.get() < 0) {
+    ALOGE("CpuSet::OpenPropertyFilePointer: Failed to open %s/%s: %s",
+          path_.c_str(), name.c_str(), strerror(errno));
+    return nullptr;
+  }
+
+  UniqueFile fp(fdopen(fd.release(), "r"));
+  if (!fp)
+    ALOGE("CpuSet::OpenPropertyFilePointer: Failed to fdopen %s/%s: %s",
+          path_.c_str(), name.c_str(), strerror(errno));
+
+  return fp;

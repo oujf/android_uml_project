@@ -1,0 +1,141 @@
+class Device
+!!!15057797.cpp!!!	Device(in useVrComposer : bool)
+    loadCapabilities();
+    registerCallbacks();
+!!!15057925.cpp!!!	~Device()
+    for (auto element : mDisplays) {
+        auto display = element.second.lock();
+        if (!display) {
+            ALOGE("~Device: Found a display (%" PRId64 " that has already been"
+                    " destroyed", element.first);
+            continue;
+        }
+
+        DisplayType displayType = HWC2::DisplayType::Invalid;
+        auto error = display->getType(&displayType);
+        if (error != Error::None) {
+            ALOGE("~Device: Failed to determine type of display %" PRIu64
+                    ": %s (%d)", display->getId(), to_string(error).c_str(),
+                    static_cast<int32_t>(error));
+            continue;
+        }
+
+        if (displayType == HWC2::DisplayType::Physical) {
+            error = display->setVsyncEnabled(HWC2::Vsync::Disable);
+            if (error != Error::None) {
+                ALOGE("~Device: Failed to disable vsync for display %" PRIu64
+                        ": %s (%d)", display->getId(), to_string(error).c_str(),
+                        static_cast<int32_t>(error));
+            }
+        }
+    }
+!!!15058053.cpp!!!	dump() : std::string
+    return mComposer->dumpDebugInfo();
+!!!15058309.cpp!!!	getMaxVirtualDisplayCount() : uint32_t
+    return mComposer->getMaxVirtualDisplayCount();
+!!!15058437.cpp!!!	createVirtualDisplay(in width : uint32_t, in height : uint32_t, inout format : android_pixel_format_t, inout outDisplay : std::shared_ptr<Display>) : Error
+    ALOGI("Creating virtual display");
+
+    hwc2_display_t displayId = 0;
+    auto intFormat = static_cast<Hwc2::PixelFormat>(*format);
+    auto intError = mComposer->createVirtualDisplay(width, height,
+            &intFormat, &displayId);
+    auto error = static_cast<Error>(intError);
+    if (error != Error::None) {
+        return error;
+    }
+
+    ALOGI("Created virtual display");
+    *format = static_cast<android_pixel_format_t>(intFormat);
+    *outDisplay = getDisplayById(displayId);
+    if (!*outDisplay) {
+        ALOGE("Failed to get display by id");
+        return Error::BadDisplay;
+    }
+    (*outDisplay)->setConnected(true);
+    return Error::None;
+!!!15058565.cpp!!!	registerHotplugCallback(in hotplug : HotplugCallback) : void
+    ALOGV("registerHotplugCallback");
+    mHotplug = hotplug;
+    for (auto& pending : mPendingHotplugs) {
+        auto& display = pending.first;
+        auto connected = pending.second;
+        ALOGV("Sending pending hotplug(%" PRIu64 ", %s)", display->getId(),
+                to_string(connected).c_str());
+        mHotplug(std::move(display), connected);
+    }
+!!!15058693.cpp!!!	registerRefreshCallback(in refresh : RefreshCallback) : void
+    mRefresh = refresh;
+    for (auto& pending : mPendingRefreshes) {
+        mRefresh(std::move(pending));
+    }
+!!!15058821.cpp!!!	registerVsyncCallback(in vsync : VsyncCallback) : void
+    mVsync = vsync;
+    for (auto& pending : mPendingVsyncs) {
+        auto& display = pending.first;
+        auto timestamp = pending.second;
+        mVsync(std::move(display), timestamp);
+    }
+!!!15058949.cpp!!!	callHotplug(in display : std::shared_ptr<Display>, in connected : Connection) : void
+    if (connected == Connection::Connected) {
+        if (!display->isConnected()) {
+            mComposer->setClientTargetSlotCount(display->getId());
+            display->loadConfigs();
+            display->setConnected(true);
+        }
+    } else {
+        display->setConnected(false);
+        mDisplays.erase(display->getId());
+    }
+
+    if (mHotplug) {
+        mHotplug(std::move(display), connected);
+    } else {
+        ALOGV("callHotplug called, but no valid callback registered, storing");
+        mPendingHotplugs.emplace_back(std::move(display), connected);
+    }
+!!!15059077.cpp!!!	callRefresh(in display : std::shared_ptr<Display>) : void
+    if (mRefresh) {
+        mRefresh(std::move(display));
+    } else {
+        ALOGV("callRefresh called, but no valid callback registered, storing");
+        mPendingRefreshes.emplace_back(std::move(display));
+    }
+!!!15059205.cpp!!!	callVsync(in display : std::shared_ptr<Display>, in timestamp : nsecs_t) : void
+    if (mVsync) {
+        mVsync(std::move(display), timestamp);
+    } else {
+        ALOGV("callVsync called, but no valid callback registered, storing");
+        mPendingVsyncs.emplace_back(std::move(display), timestamp);
+    }
+!!!15059333.cpp!!!	getDisplayById(in id : hwc2_display_t) : std::shared_ptr<Display>
+    if (mDisplays.count(id) != 0) {
+        auto strongDisplay = mDisplays[id].lock();
+        ALOGE_IF(!strongDisplay, "Display %" PRId64 " is in mDisplays but is no"
+                " longer alive", id);
+        return strongDisplay;
+    }
+
+    auto display = std::make_shared<Display>(*this, id);
+    mDisplays.emplace(id, display);
+    return display;
+!!!15059461.cpp!!!	hasCapability(in capability : HWC2::Capability) : bool
+    return std::find(mCapabilities.cbegin(), mCapabilities.cend(),
+            capability) != mCapabilities.cend();
+!!!15059717.cpp!!!	loadCapabilities() : void
+    static_assert(sizeof(Capability) == sizeof(int32_t),
+            "Capability size has changed");
+    auto capabilities = mComposer->getCapabilities();
+    for (auto capability : capabilities) {
+        mCapabilities.emplace(static_cast<Capability>(capability));
+    }
+!!!15059845.cpp!!!	registerCallbacks() : void
+    sp<ComposerCallback> callback = new ComposerCallback(this);
+    mComposer->registerCallback(callback);
+!!!15059973.cpp!!!	destroyVirtualDisplay(in display : hwc2_display_t) : void
+    ALOGI("Destroying virtual display");
+    auto intError = mComposer->destroyVirtualDisplay(display);
+    auto error = static_cast<Error>(intError);
+    ALOGE_IF(error != Error::None, "destroyVirtualDisplay(%" PRIu64 ") failed:"
+            " %s (%d)", display, to_string(error).c_str(), intError);
+    mDisplays.erase(display);

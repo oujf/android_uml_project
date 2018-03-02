@@ -1,0 +1,465 @@
+class Composer
+!!!15047429.cpp!!!	Composer(in useVrComposer : bool)
+    if (mIsUsingVrComposer) {
+        mComposer = IComposer::getService("vr");
+    } else {
+        mComposer = IComposer::getService(); // use default name
+    }
+
+    if (mComposer == nullptr) {
+        LOG_ALWAYS_FATAL("failed to get hwcomposer service");
+    }
+
+    mComposer->createClient(
+            [&](const auto& tmpError, const auto& tmpClient)
+            {
+                if (tmpError == Error::NONE) {
+                    mClient = tmpClient;
+                }
+            });
+    if (mClient == nullptr) {
+        LOG_ALWAYS_FATAL("failed to create composer client");
+    }
+!!!15047557.cpp!!!	getCapabilities() : std::vector<IComposer::Capability>
+    std::vector<IComposer::Capability> capabilities;
+    mComposer->getCapabilities(
+            [&](const auto& tmpCapabilities) {
+                capabilities = tmpCapabilities;
+            });
+
+    return capabilities;
+!!!15047685.cpp!!!	dumpDebugInfo() : std::string
+    std::string info;
+    mComposer->dumpDebugInfo([&](const auto& tmpInfo) {
+        info = tmpInfo.c_str();
+    });
+
+    return info;
+!!!15047813.cpp!!!	registerCallback(in callback : sp<IComposerCallback>) : void
+    auto ret = mClient->registerCallback(callback);
+    if (!ret.isOk()) {
+        ALOGE("failed to register IComposerCallback");
+    }
+!!!15047941.cpp!!!	resetCommands() : void
+    mWriter.reset();
+!!!15048069.cpp!!!	getMaxVirtualDisplayCount() : uint32_t
+    auto ret = mClient->getMaxVirtualDisplayCount();
+    return unwrapRet(ret, 0);
+!!!15048325.cpp!!!	createVirtualDisplay(in width : uint32_t, in height : uint32_t, inout format : PixelFormat, inout outDisplay : Display) : Error
+    const uint32_t bufferSlotCount = 1;
+    Error error = kDefaultError;
+    mClient->createVirtualDisplay(width, height, *format, bufferSlotCount,
+            [&](const auto& tmpError, const auto& tmpDisplay,
+                const auto& tmpFormat) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outDisplay = tmpDisplay;
+                *format = tmpFormat;
+            });
+
+    return error;
+!!!15048453.cpp!!!	destroyVirtualDisplay(in display : Display) : Error
+    auto ret = mClient->destroyVirtualDisplay(display);
+    return unwrapRet(ret);
+!!!15048581.cpp!!!	acceptDisplayChanges(in display : Display) : Error
+    mWriter.selectDisplay(display);
+    mWriter.acceptDisplayChanges();
+    return Error::NONE;
+!!!15048709.cpp!!!	createLayer(in display : Display, inout outLayer : Layer) : Error
+    Error error = kDefaultError;
+    mClient->createLayer(display, BufferQueue::NUM_BUFFER_SLOTS,
+            [&](const auto& tmpError, const auto& tmpLayer) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outLayer = tmpLayer;
+            });
+
+    return error;
+!!!15048837.cpp!!!	destroyLayer(in display : Display, in layer : Layer) : Error
+    auto ret = mClient->destroyLayer(display, layer);
+    return unwrapRet(ret);
+!!!15048965.cpp!!!	getActiveConfig(in display : Display, inout outConfig : Config) : Error
+    Error error = kDefaultError;
+    mClient->getActiveConfig(display,
+            [&](const auto& tmpError, const auto& tmpConfig) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outConfig = tmpConfig;
+            });
+
+    return error;
+!!!15049093.cpp!!!	getChangedCompositionTypes(in display : Display, inout outLayers : std::vector<Layer>, inout outTypes : std::vector<IComposerClient::Composition>) : Error
+    mReader.takeChangedCompositionTypes(display, outLayers, outTypes);
+    return Error::NONE;
+!!!15049221.cpp!!!	getColorModes(in display : Display, inout outModes : std::vector<ColorMode>) : Error
+    Error error = kDefaultError;
+    mClient->getColorModes(display,
+            [&](const auto& tmpError, const auto& tmpModes) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outModes = tmpModes;
+            });
+
+    return error;
+!!!15049349.cpp!!!	getDisplayAttribute(in display : Display, in config : Config, in attribute : IComposerClient::Attribute, inout outValue : int32_t) : Error
+    Error error = kDefaultError;
+    mClient->getDisplayAttribute(display, config, attribute,
+            [&](const auto& tmpError, const auto& tmpValue) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outValue = tmpValue;
+            });
+
+    return error;
+!!!15049477.cpp!!!	getDisplayConfigs(in display : Display, inout outConfigs : std::vector<Config>) : Error
+    Error error = kDefaultError;
+    mClient->getDisplayConfigs(display,
+            [&](const auto& tmpError, const auto& tmpConfigs) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outConfigs = tmpConfigs;
+            });
+
+    return error;
+!!!15049605.cpp!!!	getDisplayName(in display : Display, inout outName : std::string) : Error
+    Error error = kDefaultError;
+    mClient->getDisplayName(display,
+            [&](const auto& tmpError, const auto& tmpName) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outName = tmpName.c_str();
+            });
+
+    return error;
+!!!15049733.cpp!!!	getDisplayRequests(in display : Display, inout outDisplayRequestMask : uint32_t, inout outLayers : std::vector<Layer>, inout outLayerRequestMasks : std::vector<uint32_t>) : Error
+    mReader.takeDisplayRequests(display, outDisplayRequestMask,
+            outLayers, outLayerRequestMasks);
+    return Error::NONE;
+!!!15049861.cpp!!!	getDisplayType(in display : Display, inout outType : IComposerClient::DisplayType) : Error
+    Error error = kDefaultError;
+    mClient->getDisplayType(display,
+            [&](const auto& tmpError, const auto& tmpType) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outType = tmpType;
+            });
+
+    return error;
+!!!15049989.cpp!!!	getDozeSupport(in display : Display, inout outSupport : bool) : Error
+    Error error = kDefaultError;
+    mClient->getDozeSupport(display,
+            [&](const auto& tmpError, const auto& tmpSupport) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outSupport = tmpSupport;
+            });
+
+    return error;
+!!!15050117.cpp!!!	getHdrCapabilities(in display : Display, inout outTypes : std::vector<Hdr>, inout outMaxLuminance : float, inout outMaxAverageLuminance : float, inout outMinLuminance : float) : Error
+    Error error = kDefaultError;
+    mClient->getHdrCapabilities(display,
+            [&](const auto& tmpError, const auto& tmpTypes,
+                const auto& tmpMaxLuminance,
+                const auto& tmpMaxAverageLuminance,
+                const auto& tmpMinLuminance) {
+                error = tmpError;
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                *outTypes = tmpTypes;
+                *outMaxLuminance = tmpMaxLuminance;
+                *outMaxAverageLuminance = tmpMaxAverageLuminance;
+                *outMinLuminance = tmpMinLuminance;
+            });
+
+    return error;
+!!!15050245.cpp!!!	getReleaseFences(in display : Display, inout outLayers : std::vector<Layer>, inout outReleaseFences : std::vector<int>) : Error
+    mReader.takeReleaseFences(display, outLayers, outReleaseFences);
+    return Error::NONE;
+!!!15050373.cpp!!!	presentDisplay(in display : Display, inout outPresentFence : int) : Error
+    mWriter.selectDisplay(display);
+    mWriter.presentDisplay();
+
+    Error error = execute();
+    if (error != Error::NONE) {
+        return error;
+    }
+
+    mReader.takePresentFence(display, outPresentFence);
+
+    return Error::NONE;
+!!!15050501.cpp!!!	setActiveConfig(in display : Display, in config : Config) : Error
+    auto ret = mClient->setActiveConfig(display, config);
+    return unwrapRet(ret);
+!!!15050629.cpp!!!	setClientTarget(in display : Display, in slot : uint32_t, in target : sp<GraphicBuffer>, in acquireFence : int, in dataspace : Dataspace, in damage : std::vector<IComposerClient::Rect>) : Error
+    mWriter.selectDisplay(display);
+    if (mIsUsingVrComposer && target.get()) {
+        IVrComposerClient::BufferMetadata metadata = {
+            .width = target->getWidth(),
+            .height = target->getHeight(),
+            .stride = target->getStride(),
+            .layerCount = target->getLayerCount(),
+            .format = static_cast<PixelFormat>(target->getPixelFormat()),
+            .usage = target->getUsage(),
+        };
+        mWriter.setClientTargetMetadata(metadata);
+    }
+
+    const native_handle_t* handle = nullptr;
+    if (target.get()) {
+        handle = target->getNativeBuffer()->handle;
+    }
+
+    mWriter.setClientTarget(slot, handle, acquireFence, dataspace, damage);
+    return Error::NONE;
+!!!15050757.cpp!!!	setColorMode(in display : Display, in mode : ColorMode) : Error
+    auto ret = mClient->setColorMode(display, mode);
+    return unwrapRet(ret);
+!!!15050885.cpp!!!	setColorTransform(in display : Display, in matrix : float, in hint : ColorTransform) : Error
+    mWriter.selectDisplay(display);
+    mWriter.setColorTransform(matrix, hint);
+    return Error::NONE;
+!!!15051013.cpp!!!	setOutputBuffer(in display : Display, in buffer : native_handle_t, in releaseFence : int) : Error
+    mWriter.selectDisplay(display);
+    mWriter.setOutputBuffer(0, buffer, dup(releaseFence));
+    return Error::NONE;
+!!!15051141.cpp!!!	setPowerMode(in display : Display, in mode : IComposerClient::PowerMode) : Error
+    auto ret = mClient->setPowerMode(display, mode);
+    return unwrapRet(ret);
+!!!15051269.cpp!!!	setVsyncEnabled(in display : Display, in enabled : IComposerClient::Vsync) : Error
+    auto ret = mClient->setVsyncEnabled(display, enabled);
+    return unwrapRet(ret);
+!!!15051397.cpp!!!	setClientTargetSlotCount(in display : Display) : Error
+    const uint32_t bufferSlotCount = BufferQueue::NUM_BUFFER_SLOTS;
+    auto ret = mClient->setClientTargetSlotCount(display, bufferSlotCount);
+    return unwrapRet(ret);
+!!!15051525.cpp!!!	validateDisplay(in display : Display, inout outNumTypes : uint32_t, inout outNumRequests : uint32_t) : Error
+    mWriter.selectDisplay(display);
+    mWriter.validateDisplay();
+
+    Error error = execute();
+    if (error != Error::NONE) {
+        return error;
+    }
+
+    mReader.hasChanges(display, outNumTypes, outNumRequests);
+
+    return Error::NONE;
+!!!15051653.cpp!!!	presentOrValidateDisplay(in display : Display, inout outNumTypes : uint32_t, inout outNumRequests : uint32_t, inout outPresentFence : int, inout state : uint32_t) : Error
+   mWriter.selectDisplay(display);
+   mWriter.presentOrvalidateDisplay();
+
+   Error error = execute();
+   if (error != Error::NONE) {
+       return error;
+   }
+
+   mReader.takePresentOrValidateStage(display, state);
+
+   if (*state == 1) { // Present succeeded
+       mReader.takePresentFence(display, outPresentFence);
+   }
+
+   if (*state == 0) { // Validate succeeded.
+       mReader.hasChanges(display, outNumTypes, outNumRequests);
+   }
+
+   return Error::NONE;
+!!!15051781.cpp!!!	setCursorPosition(in display : Display, in layer : Layer, in x : int32_t, in y : int32_t) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerCursorPosition(x, y);
+    return Error::NONE;
+!!!15051909.cpp!!!	setLayerBuffer(in display : Display, in layer : Layer, in slot : uint32_t, in buffer : sp<GraphicBuffer>, in acquireFence : int) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    if (mIsUsingVrComposer && buffer.get()) {
+        IVrComposerClient::BufferMetadata metadata = {
+            .width = buffer->getWidth(),
+            .height = buffer->getHeight(),
+            .stride = buffer->getStride(),
+            .layerCount = buffer->getLayerCount(),
+            .format = static_cast<PixelFormat>(buffer->getPixelFormat()),
+            .usage = buffer->getUsage(),
+        };
+        mWriter.setLayerBufferMetadata(metadata);
+    }
+
+    const native_handle_t* handle = nullptr;
+    if (buffer.get()) {
+        handle = buffer->getNativeBuffer()->handle;
+    }
+
+    mWriter.setLayerBuffer(slot, handle, acquireFence);
+    return Error::NONE;
+!!!15052037.cpp!!!	setLayerSurfaceDamage(in display : Display, in layer : Layer, in damage : std::vector<IComposerClient::Rect>) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerSurfaceDamage(damage);
+    return Error::NONE;
+!!!15052165.cpp!!!	setLayerBlendMode(in display : Display, in layer : Layer, in mode : IComposerClient::BlendMode) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerBlendMode(mode);
+    return Error::NONE;
+!!!15052293.cpp!!!	setLayerColor(in display : Display, in layer : Layer, in color : IComposerClient::Color) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerColor(color);
+    return Error::NONE;
+!!!15052421.cpp!!!	setLayerCompositionType(in display : Display, in layer : Layer, in type : IComposerClient::Composition) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerCompositionType(type);
+    return Error::NONE;
+!!!15052549.cpp!!!	setLayerDataspace(in display : Display, in layer : Layer, in dataspace : Dataspace) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerDataspace(dataspace);
+    return Error::NONE;
+!!!15052677.cpp!!!	setLayerDisplayFrame(in display : Display, in layer : Layer, in frame : IComposerClient::Rect) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerDisplayFrame(frame);
+    return Error::NONE;
+!!!15052805.cpp!!!	setLayerPlaneAlpha(in display : Display, in layer : Layer, in alpha : float) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerPlaneAlpha(alpha);
+    return Error::NONE;
+!!!15052933.cpp!!!	setLayerSidebandStream(in display : Display, in layer : Layer, in stream : native_handle_t) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerSidebandStream(stream);
+    return Error::NONE;
+!!!15053061.cpp!!!	setLayerSourceCrop(in display : Display, in layer : Layer, in crop : IComposerClient::FRect) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerSourceCrop(crop);
+    return Error::NONE;
+!!!15053189.cpp!!!	setLayerTransform(in display : Display, in layer : Layer, in transform : Transform) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerTransform(transform);
+    return Error::NONE;
+!!!15053317.cpp!!!	setLayerVisibleRegion(in display : Display, in layer : Layer, in visible : std::vector<IComposerClient::Rect>) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerVisibleRegion(visible);
+    return Error::NONE;
+!!!15053445.cpp!!!	setLayerZOrder(in display : Display, in layer : Layer, in z : uint32_t) : Error
+    mWriter.selectDisplay(display);
+    mWriter.selectLayer(layer);
+    mWriter.setLayerZOrder(z);
+    return Error::NONE;
+!!!15053573.cpp!!!	setLayerInfo(in display : Display, in layer : Layer, in type : uint32_t, in appId : uint32_t) : Error
+    if (mIsUsingVrComposer) {
+        mWriter.selectDisplay(display);
+        mWriter.selectLayer(layer);
+        mWriter.setLayerInfo(type, appId);
+    }
+    return Error::NONE;
+!!!15054469.cpp!!!	execute() : Error
+    // prepare input command queue
+    bool queueChanged = false;
+    uint32_t commandLength = 0;
+    hidl_vec<hidl_handle> commandHandles;
+    if (!mWriter.writeQueue(&queueChanged, &commandLength, &commandHandles)) {
+        mWriter.reset();
+        return Error::NO_RESOURCES;
+    }
+
+    // set up new input command queue if necessary
+    if (queueChanged) {
+        auto ret = mClient->setInputCommandQueue(*mWriter.getMQDescriptor());
+        auto error = unwrapRet(ret);
+        if (error != Error::NONE) {
+            mWriter.reset();
+            return error;
+        }
+    }
+
+    Error error = kDefaultError;
+    mClient->executeCommands(commandLength, commandHandles,
+            [&](const auto& tmpError, const auto& tmpOutChanged,
+                const auto& tmpOutLength, const auto& tmpOutHandles)
+            {
+                error = tmpError;
+
+                // set up new output command queue if necessary
+                if (error == Error::NONE && tmpOutChanged) {
+                    error = kDefaultError;
+                    mClient->getOutputCommandQueue(
+                            [&](const auto& tmpError,
+                                const auto& tmpDescriptor)
+                            {
+                                error = tmpError;
+                                if (error != Error::NONE) {
+                                    return;
+                                }
+
+                                mReader.setMQDescriptor(tmpDescriptor);
+                            });
+                }
+
+                if (error != Error::NONE) {
+                    return;
+                }
+
+                if (mReader.readQueue(tmpOutLength, tmpOutHandles)) {
+                    error = mReader.parse();
+                    mReader.reset();
+                } else {
+                    error = Error::NO_RESOURCES;
+                }
+            });
+
+    if (error == Error::NONE) {
+        std::vector<CommandReader::CommandError> commandErrors =
+            mReader.takeErrors();
+
+        for (const auto& cmdErr : commandErrors) {
+            auto command = mWriter.getCommand(cmdErr.location);
+
+            if (command == IComposerClient::Command::VALIDATE_DISPLAY ||
+                command == IComposerClient::Command::PRESENT_DISPLAY ||
+                command == IComposerClient::Command::PRESENT_OR_VALIDATE_DISPLAY) {
+                error = cmdErr.error;
+            } else {
+                ALOGW("command 0x%x generated error %d",
+                        command, cmdErr.error);
+            }
+        }
+    }
+
+    mWriter.reset();
+
+    return error;

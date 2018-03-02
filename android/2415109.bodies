@@ -1,0 +1,495 @@
+class VrHwc
+!!!15140101.cpp!!!	hasCapability(in capability : Capability) : bool
+ return false;
+!!!15140229.cpp!!!	setLayerInfo(in display : Display, in layer : Layer, in type : uint32_t, in appId : uint32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.type = type;
+  hwc_layer->info.app_id = appId;
+
+  return Error::NONE;
+!!!15140357.cpp!!!	setClientTargetMetadata(in display : Display, in metadata : IVrComposerClient::BufferMetadata) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->SetClientTargetMetadata(metadata);
+
+  return Error::NONE;
+!!!15140485.cpp!!!	setLayerBufferMetadata(in display : Display, in layer : Layer, in metadata : IVrComposerClient::BufferMetadata) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->buffer_metadata = metadata;
+
+  return Error::NONE;
+!!!15140613.cpp!!!	removeClient() : void
+  std::lock_guard<std::mutex> guard(mutex_);
+  client_ = nullptr;
+!!!15140741.cpp!!!	enableCallback(in enable : bool) : void
+  if (enable && client_ != nullptr) {
+    {
+      int32_t width, height;
+      GetPrimaryDisplaySize(&width, &height);
+      std::lock_guard<std::mutex> guard(mutex_);
+      // Create the primary display late to avoid initialization issues between
+      // VR HWC and SurfaceFlinger.
+      displays_[kDefaultDisplayId].reset(new HwcDisplay(width, height));
+    }
+    client_.promote()->onHotplug(kDefaultDisplayId,
+                                 IComposerCallback::Connection::CONNECTED);
+  }
+!!!15140869.cpp!!!	getMaxVirtualDisplayCount() : uint32_t
+ return 1;
+!!!15140997.cpp!!!	createVirtualDisplay(in width : uint32_t, in height : uint32_t, inout format : PixelFormat, inout outDisplay : Display) : Error
+  *format = PixelFormat::RGBA_8888;
+  *outDisplay = display_count_;
+  displays_[display_count_].reset(new HwcDisplay(width, height));
+  display_count_++;
+  return Error::NONE;
+!!!15141125.cpp!!!	destroyVirtualDisplay(in display : Display) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (display == kDefaultDisplayId || displays_.erase(display) == 0)
+    return Error::BAD_DISPLAY;
+  ComposerView::Frame frame;
+  frame.display_id = display;
+  frame.removed = true;
+  if (observer_)
+    observer_->OnNewFrame(frame);
+  return Error::NONE;
+!!!15141253.cpp!!!	createLayer(in display : Display, inout outLayer : Layer) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* layer = display_ptr->CreateLayer();
+  *outLayer = layer->info.id;
+  return Error::NONE;
+!!!15141381.cpp!!!	destroyLayer(in display : Display, in layer : Layer) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr) {
+    return Error::BAD_DISPLAY;
+  }
+
+  return display_ptr->DestroyLayer(layer) ? Error::NONE : Error::BAD_LAYER;
+!!!15141509.cpp!!!	getActiveConfig(in display : Display, inout outConfig : Config) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!FindDisplay(display))
+    return Error::BAD_DISPLAY;
+  *outConfig = kDefaultConfigId;
+  return Error::NONE;
+!!!15141637.cpp!!!	getClientTargetSupport(in display : Display, in width : uint32_t, in height : uint32_t, in format : PixelFormat, in dataspace : Dataspace) : Error
+  return Error::NONE;
+!!!15141765.cpp!!!	getColorModes(in display : Display, inout outModes : hidl_vec<ColorMode>) : Error
+  std::vector<ColorMode> color_modes(1, ColorMode::NATIVE);
+  *outModes = hidl_vec<ColorMode>(color_modes);
+  return Error::NONE;
+!!!15141893.cpp!!!	getDisplayAttribute(in display : Display, in config : Config, in attribute : IComposerClient::Attribute, inout outValue : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr) {
+    return Error::BAD_DISPLAY;
+  }
+  if (config != kDefaultConfigId) {
+    return Error::BAD_CONFIG;
+  }
+
+  switch (attribute) {
+    case IComposerClient::Attribute::WIDTH:
+      *outValue = display_ptr->width();
+      break;
+    case IComposerClient::Attribute::HEIGHT:
+      *outValue = display_ptr->height();
+      break;
+    case IComposerClient::Attribute::VSYNC_PERIOD:
+      *outValue = 1000 * 1000 * 1000 / 30;  // 30fps
+      break;
+    case IComposerClient::Attribute::DPI_X:
+    case IComposerClient::Attribute::DPI_Y:
+      *outValue = 300 * 1000;  // 300dpi
+      break;
+    default:
+      return Error::BAD_PARAMETER;
+  }
+
+  return Error::NONE;
+!!!15142021.cpp!!!	getDisplayConfigs(in display : Display, inout outConfigs : hidl_vec<Config>) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!FindDisplay(display))
+    return Error::BAD_DISPLAY;
+  std::vector<Config> configs(1, kDefaultConfigId);
+  *outConfigs = hidl_vec<Config>(configs);
+  return Error::NONE;
+!!!15142149.cpp!!!	getDisplayName(in display : Display, inout outName : hidl_string) : Error
+  *outName = hidl_string();
+  return Error::NONE;
+!!!15142277.cpp!!!	getDisplayType(in display : Display, inout outType : IComposerClient::DisplayType) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr) {
+    *outType = IComposerClient::DisplayType::INVALID;
+    return Error::BAD_DISPLAY;
+  }
+
+  if (display == kDefaultDisplayId)
+    *outType = IComposerClient::DisplayType::PHYSICAL;
+  else
+    *outType = IComposerClient::DisplayType::VIRTUAL;
+
+  return Error::NONE;
+!!!15142405.cpp!!!	getDozeSupport(in display : Display, inout outSupport : bool) : Error
+  *outSupport = false;
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!FindDisplay(display))
+    return Error::BAD_DISPLAY;
+  return Error::NONE;
+!!!15142533.cpp!!!	getHdrCapabilities(in display : Display, inout outTypes : hidl_vec<Hdr>, inout outMaxLuminance : float, inout outMaxAverageLuminance : float, inout outMinLuminance : float) : Error
+  *outMaxLuminance = 0;
+  *outMaxAverageLuminance = 0;
+  *outMinLuminance = 0;
+  return Error::NONE;
+!!!15142661.cpp!!!	setActiveConfig(in display : Display, in config : Config) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+  if (config != kDefaultConfigId)
+    return Error::BAD_CONFIG;
+
+  display_ptr->set_active_config(config);
+  return Error::NONE;
+!!!15142789.cpp!!!	setColorMode(in display : Display, in mode : ColorMode) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->set_color_mode(mode);
+  return Error::NONE;
+!!!15142917.cpp!!!	setPowerMode(in display : Display, in mode : IComposerClient::PowerMode) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->set_power_mode(mode);
+  return Error::NONE;
+!!!15143045.cpp!!!	setVsyncEnabled(in display : Display, in enabled : IComposerClient::Vsync) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->set_vsync_enabled(enabled);
+  return Error::NONE;
+!!!15143173.cpp!!!	setColorTransform(in display : Display, in matrix : float, in hint : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->SetColorTransform(matrix, hint);
+  return Error::NONE;
+!!!15143301.cpp!!!	setClientTarget(in display : Display, in target : buffer_handle_t, in acquireFence : int32_t, in dataspace : int32_t, in damage : std::vector<hwc_rect_t>) : Error
+  base::unique_fd fence(acquireFence);
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  if (target == nullptr)
+    return Error::NONE;
+
+  if (!display_ptr->SetClientTarget(target, std::move(fence)))
+    return Error::BAD_PARAMETER;
+
+  return Error::NONE;
+!!!15143429.cpp!!!	setOutputBuffer(in display : Display, in buffer : buffer_handle_t, in releaseFence : int32_t) : Error
+  base::unique_fd fence(releaseFence);
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  // TODO(dnicoara): Is it necessary to do anything here?
+  return Error::NONE;
+!!!15143557.cpp!!!	validateDisplay(in display : Display, inout outChangedLayers : std::vector<Layer>, inout outCompositionTypes : std::vector<IComposerClient::Composition>, inout outDisplayRequestMask : uint32_t, inout outRequestedLayers : std::vector<Layer>, inout outRequestMasks : std::vector<uint32_t>) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  display_ptr->GetChangedCompositionTypes(outChangedLayers,
+                                          outCompositionTypes);
+  return Error::NONE;
+!!!15143685.cpp!!!	acceptDisplayChanges(in display : Display) : Error
+ return Error::NONE;
+!!!15143813.cpp!!!	presentDisplay(in display : Display, inout outPresentFence : int32_t, inout outLayers : std::vector<Layer>, inout outReleaseFences : std::vector<int32_t>) : Error
+  *outPresentFence = -1;
+  outLayers->clear();
+  outReleaseFences->clear();
+
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  ComposerView::Frame frame;
+  std::vector<Layer> last_frame_layers;
+  Error status = display_ptr->GetFrame(&frame.layers);
+  frame.display_id = display;
+  frame.display_width = display_ptr->width();
+  frame.display_height = display_ptr->height();
+  frame.active_config = display_ptr->active_config();
+  frame.power_mode = display_ptr->power_mode();
+  frame.vsync_enabled = display_ptr->vsync_enabled();
+  frame.color_transform_hint = display_ptr->color_transform_hint();
+  frame.color_mode = display_ptr->color_mode();
+  memcpy(frame.color_transform, display_ptr->color_transform(),
+         sizeof(frame.color_transform));
+  if (status != Error::NONE)
+    return status;
+
+  last_frame_layers = display_ptr->UpdateLastFrameAndGetLastFrameLayers();
+
+  base::unique_fd fence;
+  if (observer_)
+    fence = observer_->OnNewFrame(frame);
+
+  if (fence.get() < 0)
+    return Error::NONE;
+
+  *outPresentFence = dup(fence.get());
+  outLayers->swap(last_frame_layers);
+  for (size_t i = 0; i < outLayers->size(); ++i)
+    outReleaseFences->push_back(dup(fence.get()));
+
+  return Error::NONE;
+!!!15143941.cpp!!!	setLayerCursorPosition(in display : Display, in layer : Layer, in x : int32_t, in y : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.cursor_x = x;
+  hwc_layer->info.cursor_y = y;
+  return Error::NONE;
+!!!15144069.cpp!!!	setLayerBuffer(in display : Display, in layer : Layer, in buffer : buffer_handle_t, in acquireFence : int32_t) : Error
+  base::unique_fd fence(acquireFence);
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.buffer = CreateGraphicBuffer(
+      buffer, hwc_layer->buffer_metadata);
+  hwc_layer->info.fence = new Fence(fence.release());
+
+  return Error::NONE;
+!!!15144197.cpp!!!	setLayerSurfaceDamage(in display : Display, in layer : Layer, in damage : std::vector<hwc_rect_t>) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.damaged_regions = damage;
+  return Error::NONE;
+!!!15144325.cpp!!!	setLayerBlendMode(in display : Display, in layer : Layer, in mode : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.blend_mode =
+      static_cast<ComposerView::ComposerLayer::BlendMode>(mode);
+
+  return Error::NONE;
+!!!15144453.cpp!!!	setLayerColor(in display : Display, in layer : Layer, in color : IComposerClient::Color) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.color = color;
+  return Error::NONE;
+!!!15144581.cpp!!!	setLayerCompositionType(in display : Display, in layer : Layer, in type : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->composition_type = static_cast<HwcLayer::Composition>(type);
+
+  return Error::NONE;
+!!!15144709.cpp!!!	setLayerDataspace(in display : Display, in layer : Layer, in dataspace : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.dataspace = dataspace;
+  return Error::NONE;
+!!!15144837.cpp!!!	setLayerDisplayFrame(in display : Display, in layer : Layer, in frame : hwc_rect_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.display_frame =
+      {frame.left, frame.top, frame.right, frame.bottom};
+
+  return Error::NONE;
+!!!15144965.cpp!!!	setLayerPlaneAlpha(in display : Display, in layer : Layer, in alpha : float) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.alpha = alpha;
+
+  return Error::NONE;
+!!!15145093.cpp!!!	setLayerSidebandStream(in display : Display, in layer : Layer, in stream : buffer_handle_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!FindDisplay(display))
+    return Error::BAD_DISPLAY;
+  return Error::NONE;
+!!!15145221.cpp!!!	setLayerSourceCrop(in display : Display, in layer : Layer, in crop : hwc_frect_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.crop = {crop.left, crop.top, crop.right, crop.bottom};
+
+  return Error::NONE;
+!!!15145349.cpp!!!	setLayerTransform(in display : Display, in layer : Layer, in transform : int32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.transform = transform;
+  return Error::NONE;
+!!!15145477.cpp!!!	setLayerVisibleRegion(in display : Display, in layer : Layer, in visible : std::vector<hwc_rect_t>) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.visible_regions = visible;
+  return Error::NONE;
+!!!15145605.cpp!!!	setLayerZOrder(in display : Display, in layer : Layer, in z : uint32_t) : Error
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto display_ptr = FindDisplay(display);
+  if (!display_ptr)
+    return Error::BAD_DISPLAY;
+
+  HwcLayer* hwc_layer = display_ptr->GetLayer(layer);
+  if (!hwc_layer)
+    return Error::BAD_LAYER;
+
+  hwc_layer->info.z_order = z;
+
+  return Error::NONE;
+!!!15145733.cpp!!!	getCapabilities(in hidl_cb : getCapabilities_cb) : Return<void>
+  hidl_cb(hidl_vec<Capability>());
+  return Void();
+!!!15145861.cpp!!!	dumpDebugInfo(in hidl_cb : dumpDebugInfo_cb) : Return<void>
+  hidl_cb(hidl_string());
+  return Void();
+!!!15145989.cpp!!!	createClient(in hidl_cb : createClient_cb) : Return<void>
+  std::lock_guard<std::mutex> guard(mutex_);
+
+  Error status = Error::NONE;
+  sp<VrComposerClient> client;
+  if (client_ == nullptr) {
+    client = new VrComposerClient(*this);
+    client->initialize();
+  } else {
+    ALOGE("Already have a client");
+    status = Error::NO_RESOURCES;
+  }
+
+  client_ = client;
+  hidl_cb(status, client);
+  return Void();
+!!!15146117.cpp!!!	RegisterObserver(inout observer : Observer) : void
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (observer_)
+    ALOGE("Overwriting observer");
+  else
+    observer_ = observer;
+!!!15146245.cpp!!!	UnregisterObserver(inout observer : Observer) : void
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (observer != observer_)
+    ALOGE("Trying to unregister unknown observer");
+  else
+    observer_ = nullptr;
+!!!15146373.cpp!!!	FindDisplay(in display : Display) : HwcDisplay
+  auto iter = displays_.find(display);
+  return iter == displays_.end() ? nullptr : iter->second.get();

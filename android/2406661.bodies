@@ -1,0 +1,85 @@
+class Hwc2TestBuffer
+!!!15101061.cpp!!!	updateBufferArea(in bufferArea : Area) : void
+    if (mBufferArea.width == bufferArea.width
+            && mBufferArea.height == bufferArea.height)
+        return;
+
+    mBufferArea.width = bufferArea.width;
+    mBufferArea.height = bufferArea.height;
+
+    mValidBuffer = false;
+!!!15101189.cpp!!!	get(inout outHandle : buffer_handle_t, inout outFence : int32_t) : int
+    if (mBufferArea.width == -1 || mBufferArea.height == -1)
+        return -EINVAL;
+
+    /* If the current buffer is valid, the previous buffer can be reused.
+     * Otherwise, create new buffer */
+    if (!mValidBuffer) {
+        int ret = generateBuffer();
+        if (ret)
+            return ret;
+    }
+
+    *outFence = mFenceGenerator->get();
+    *outHandle = mHandle;
+
+    mValidBuffer = true;
+
+    return 0;
+!!!15101317.cpp!!!	generateBuffer() : int
+    /* Create new graphic buffer with correct dimensions */
+    mGraphicBuffer = new GraphicBuffer(mBufferArea.width, mBufferArea.height,
+            mFormat, GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_HW_RENDER,
+            "hwc2_test_buffer");
+    int ret = mGraphicBuffer->initCheck();
+    if (ret) {
+        return ret;
+    }
+    if (!mGraphicBuffer->handle) {
+        return -EINVAL;
+    }
+
+    /* Locks the buffer for writing */
+    uint8_t* img;
+    mGraphicBuffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, (void**)(&img));
+
+    uint32_t stride = mGraphicBuffer->getStride();
+
+    /* Iterate from the top row of the buffer to the bottom row */
+    for (int32_t y = 0; y < mBufferArea.height; y++) {
+
+        /* Will be used as R, G and B values for pixel colors */
+        uint8_t max = 255;
+        uint8_t min = 0;
+
+        /* Divide the rows into 3 sections. The first section will contain
+         * the lighest colors. The last section will contain the darkest
+         * colors. */
+        if (y < mBufferArea.height * 1.0 / 3.0) {
+            min = 255 / 2;
+        } else if (y >= mBufferArea.height * 2.0 / 3.0) {
+            max = 255 / 2;
+        }
+
+        /* Divide the columns into 3 sections. The first section is red,
+         * the second is green and the third is blue */
+        int32_t x = 0;
+        for (; x < mBufferArea.width / 3; x++) {
+            setColor(x, y, mFormat, stride, img, max, min, min, 255);
+        }
+
+        for (; x < mBufferArea.width * 2 / 3; x++) {
+            setColor(x, y, mFormat, stride, img, min, max, min, 255);
+        }
+
+        for (; x < mBufferArea.width; x++) {
+            setColor(x, y, mFormat, stride, img, min, min, max, 255);
+        }
+    }
+
+    /* Unlock the buffer for reading */
+    mGraphicBuffer->unlock();
+
+    mHandle = mGraphicBuffer->handle;
+
+    return 0;

@@ -1,0 +1,128 @@
+class ConsumerChannel
+!!!15122949.cpp!!!	ConsumerChannel(inout service : BufferHubService, in buffer_id : int, in channel_id : int, in producer : std::shared_ptr<Channel>)
+  GetProducer()->AddConsumer(this);
+!!!15123077.cpp!!!	~ConsumerChannel()
+  ALOGD_IF(TRACE,
+           "ConsumerChannel::~ConsumerChannel: channel_id=%d buffer_id=%d",
+           channel_id(), buffer_id());
+
+  if (auto producer = GetProducer()) {
+    if (!handled_)  // Producer is waiting for our Release.
+      producer->OnConsumerIgnored();
+    producer->RemoveConsumer(this);
+  }
+!!!15123205.cpp!!!	HandleMessage(inout message : ConsumerChannel::Message) : bool
+  ATRACE_NAME("ConsumerChannel::HandleMessage");
+  auto producer = GetProducer();
+  if (!producer)
+    REPLY_ERROR_RETURN(message, EPIPE, true);
+
+  switch (message.GetOp()) {
+    case BufferHubRPC::GetBuffer::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::GetBuffer>(
+          *producer, &ProducerChannel::OnGetBuffer, message);
+      return true;
+
+    case BufferHubRPC::NewConsumer::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::NewConsumer>(
+          *producer, &ProducerChannel::OnNewConsumer, message);
+      return true;
+
+    case BufferHubRPC::ConsumerAcquire::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ConsumerAcquire>(
+          *this, &ConsumerChannel::OnConsumerAcquire, message);
+      return true;
+
+    case BufferHubRPC::ConsumerRelease::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ConsumerRelease>(
+          *this, &ConsumerChannel::OnConsumerRelease, message);
+      return true;
+
+    case BufferHubRPC::ConsumerSetIgnore::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ConsumerSetIgnore>(
+          *this, &ConsumerChannel::OnConsumerSetIgnore, message);
+      return true;
+
+    default:
+      return false;
+  }
+!!!15123333.cpp!!!	HandleImpulse(inout message : ConsumerChannel::Message) : void
+  ATRACE_NAME("ConsumerChannel::HandleImpulse");
+  switch (message.GetOp()) {
+    case BufferHubRPC::ConsumerRelease::Opcode:
+      OnConsumerRelease(message, {});
+      break;
+  }
+!!!15123461.cpp!!!	GetBufferInfo() : BufferInfo
+  BufferHubChannel::BufferInfo info;
+  if (auto producer = GetProducer()) {
+    // If producer has not hung up, copy most buffer info from the producer.
+    info = producer->GetBufferInfo();
+  }
+  info.id = buffer_id();
+  return info;
+!!!15123589.cpp!!!	OnProducerPosted() : bool
+  if (ignored_) {
+    handled_ = true;
+    return false;
+  } else {
+    handled_ = false;
+    SignalAvailable();
+    return true;
+  }
+!!!15123717.cpp!!!	OnProducerClosed() : void
+  producer_.reset();
+  Hangup();
+!!!15123845.cpp!!!	GetProducer() : std::shared_ptr<ProducerChannel>
+  return std::static_pointer_cast<ProducerChannel>(producer_.lock());
+!!!15123973.cpp!!!	OnConsumerAcquire(inout message : ConsumerChannel::Message, in metadata_size : std::size_t) : pdx::Status<std::pair<BorrowedFence, MetaData>>
+  ATRACE_NAME("ConsumerChannel::OnConsumerAcquire");
+  auto producer = GetProducer();
+  if (!producer)
+    return ErrorStatus(EPIPE);
+
+  if (ignored_ || handled_) {
+    ALOGE(
+        "ConsumerChannel::OnConsumerAcquire: Acquire when not posted: "
+        "ignored=%d handled=%d channel_id=%d buffer_id=%d",
+        ignored_, handled_, message.GetChannelId(), producer->buffer_id());
+    return ErrorStatus(EBUSY);
+  } else {
+    ClearAvailable();
+    return producer->OnConsumerAcquire(message, metadata_size);
+  }
+!!!15124101.cpp!!!	OnConsumerRelease(inout message : ConsumerChannel::Message, in release_fence : LocalFence) : pdx::Status<void>
+  ATRACE_NAME("ConsumerChannel::OnConsumerRelease");
+  auto producer = GetProducer();
+  if (!producer)
+    return ErrorStatus(EPIPE);
+
+  if (ignored_ || handled_) {
+    ALOGE(
+        "ConsumerChannel::OnConsumerRelease: Release when not acquired: "
+        "ignored=%d handled=%d channel_id=%d buffer_id=%d",
+        ignored_, handled_, message.GetChannelId(), producer->buffer_id());
+    return ErrorStatus(EBUSY);
+  } else {
+    ClearAvailable();
+    auto status =
+        producer->OnConsumerRelease(message, std::move(release_fence));
+    handled_ = !!status;
+    return status;
+  }
+!!!15124229.cpp!!!	OnConsumerSetIgnore(inout message : ConsumerChannel::Message, in ignored : bool) : pdx::Status<void>
+  ATRACE_NAME("ConsumerChannel::OnConsumerSetIgnore");
+  auto producer = GetProducer();
+  if (!producer)
+    return ErrorStatus(EPIPE);
+
+  ignored_ = ignored;
+  if (ignored_ && !handled_) {
+    // Update the producer if ignore is set after the consumer acquires the
+    // buffer.
+    ClearAvailable();
+    producer->OnConsumerIgnored();
+    handled_ = false;
+  }
+
+  return {};

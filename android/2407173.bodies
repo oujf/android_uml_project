@@ -1,0 +1,165 @@
+class Hwc2TestLayers
+!!!15107461.cpp!!!	dump() : std::string
+    std::stringstream dmp;
+    for (auto& testLayer : mTestLayers) {
+        dmp << testLayer.second.dump();
+    }
+    return dmp.str();
+!!!15107589.cpp!!!	reset() : void
+    for (auto& testLayer : mTestLayers) {
+        testLayer.second.reset();
+    }
+
+    setVisibleRegions();
+!!!15107717.cpp!!!	advance() : bool
+    auto itr = mTestLayers.begin();
+    bool optimized;
+
+    while (itr != mTestLayers.end()) {
+        if (itr->second.advance()) {
+            optimized = setVisibleRegions();
+            if (!mOptimize || optimized)
+                return true;
+            itr = mTestLayers.begin();
+        } else {
+            itr->second.reset();
+            ++itr;
+        }
+    }
+    return false;
+!!!15107845.cpp!!!	advanceVisibleRegions() : bool
+    auto itr = mTestLayers.begin();
+    bool optimized;
+
+    while (itr != mTestLayers.end()) {
+        if (itr->second.advanceVisibleRegion()) {
+            optimized = setVisibleRegions();
+            if (!mOptimize || optimized)
+                return true;
+            itr = mTestLayers.begin();
+        } else {
+            itr->second.reset();
+            ++itr;
+        }
+    }
+    return false;
+!!!15107973.cpp!!!	optimizeLayouts() : bool
+    mOptimize = true;
+
+    if (setVisibleRegions())
+        return true;
+    return advance();
+!!!15108101.cpp!!!	contains(in layer : hwc2_layer_t) : bool
+    return mTestLayers.count(layer) != 0;
+!!!15108229.cpp!!!	getBuffer(in layer : hwc2_layer_t, inout outHandle : buffer_handle_t, inout outAcquireFence : int32_t) : int
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getBuffer(outHandle, outAcquireFence);
+!!!15108357.cpp!!!	getBlendMode(in layer : hwc2_layer_t) : hwc2_blend_mode_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getBlendMode();
+!!!15108485.cpp!!!	getBufferArea(in layer : hwc2_layer_t) : Area
+    auto testLayer = mTestLayers.find(layer);
+    if (testLayer == mTestLayers.end())
+        [] () { GTEST_FAIL(); }();
+    return testLayer->second.getBufferArea();
+!!!15108613.cpp!!!	getColor(in layer : hwc2_layer_t) : hwc_color_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getColor();
+!!!15108741.cpp!!!	getComposition(in layer : hwc2_layer_t) : hwc2_composition_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getComposition();
+!!!15108869.cpp!!!	getCursorPosition(in layer : hwc2_layer_t) : hwc_rect_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getCursorPosition();
+!!!15108997.cpp!!!	getDataspace(in layer : hwc2_layer_t) : android_dataspace_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getDataspace();
+!!!15109125.cpp!!!	getDisplayFrame(in layer : hwc2_layer_t) : hwc_rect_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getDisplayFrame();
+!!!15109381.cpp!!!	getPlaneAlpha(in layer : hwc2_layer_t) : float
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getPlaneAlpha();
+!!!15109509.cpp!!!	getSourceCrop(in layer : hwc2_layer_t) : hwc_frect_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getSourceCrop();
+!!!15109637.cpp!!!	getSurfaceDamage(in layer : hwc2_layer_t) : hwc_region_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getSurfaceDamage();
+!!!15109765.cpp!!!	getTransform(in layer : hwc2_layer_t) : hwc_transform_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getTransform();
+!!!15109893.cpp!!!	getVisibleRegion(in layer : hwc2_layer_t) : hwc_region_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getVisibleRegion();
+!!!15110021.cpp!!!	getZOrder(in layer : hwc2_layer_t) : uint32_t
+    if (mTestLayers.count(layer) == 0) {
+        []() { GTEST_FAIL(); }();
+    }
+    return mTestLayers.at(layer).getZOrder();
+!!!15110149.cpp!!!	setVisibleRegions() : bool
+    /* The region of the display that is covered by layers above the current
+     * layer */
+    android::Region aboveOpaqueLayers;
+
+    bool optimized = true;
+
+    /* Iterate over test layers from max z order to min z order. */
+    for (auto& testLayer : mTestLayers) {
+        android::Region visibleRegion;
+
+        /* Set the visible region of this layer */
+        const hwc_rect_t displayFrame = testLayer.second.getDisplayFrame();
+
+        visibleRegion.set(android::Rect(displayFrame.left, displayFrame.top,
+                displayFrame.right, displayFrame.bottom));
+
+        /* Remove the area covered by opaque layers above this layer
+         * from this layer's visible region */
+        visibleRegion.subtractSelf(aboveOpaqueLayers);
+
+        testLayer.second.setVisibleRegion(visibleRegion);
+
+        /* If a layer is not visible, return false */
+        if (visibleRegion.isEmpty())
+            optimized = false;
+
+        /* If this layer is opaque, store the region it covers */
+        if (testLayer.second.getPlaneAlpha() == 1.0f)
+            aboveOpaqueLayers.orSelf(visibleRegion);
+    }
+
+    /* If the opaque region does not cover the entire display return false */
+    if (!aboveOpaqueLayers.isRect())
+        return false;
+
+    const auto rect = aboveOpaqueLayers.begin();
+    if (rect->left != 0 || rect->top != 0 || rect->right != mDisplayArea.width
+            || rect->bottom != mDisplayArea.height)
+        return false;
+
+    return optimized;

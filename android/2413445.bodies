@@ -1,0 +1,32 @@
+class VrComposer
+!!!15131013.cpp!!!	registerObserver(in callback : sp<IVrComposerCallback>) : binder::Status
+  std::lock_guard<std::mutex> guard(mutex_);
+
+  if (!CheckPermission())
+    return binder::Status::fromStatusT(PERMISSION_DENIED);
+
+  if (callback_.get()) {
+    ALOGE("Failed to register callback, already registered");
+    return binder::Status::fromStatusT(ALREADY_EXISTS);
+  }
+
+  callback_ = callback;
+  IInterface::asBinder(callback_)->linkToDeath(this);
+  return binder::Status::ok();
+!!!15131141.cpp!!!	OnNewFrame(in frame : ComposerView::Frame) : base::unique_fd
+  std::lock_guard<std::mutex> guard(mutex_);
+
+  if (!callback_.get())
+    return base::unique_fd();
+
+  ParcelableComposerFrame parcelable_frame(frame);
+  ParcelableUniqueFd fence;
+  binder::Status ret = callback_->onNewFrame(parcelable_frame, &fence);
+  if (!ret.isOk())
+    ALOGE("Failed to send new frame: %s", ret.toString8().string());
+
+  return fence.fence();
+!!!15131269.cpp!!!	binderDied(in who : wp<IBinder>) : void
+  std::lock_guard<std::mutex> guard(mutex_);
+
+  callback_ = nullptr;

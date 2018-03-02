@@ -1,0 +1,138 @@
+class VirtualTouchpadEvdev
+!!!15160453.cpp!!!	Create() : std::unique_ptr<VirtualTouchpad>
+  std::unique_ptr<VirtualTouchpadEvdev> touchpad(new VirtualTouchpadEvdev());
+  touchpad->Reset();
+  return touchpad;
+!!!15160709.cpp!!!	Attach() : status_t
+  status_t status = OK;
+  for (int i = 0; i < kTouchpads; ++i) {
+    Touchpad& touchpad = touchpad_[i];
+    if (!touchpad.injector) {
+      touchpad.owned_injector.reset(new EvdevInjector());
+      touchpad.injector = touchpad.owned_injector.get();
+    }
+    String8 DeviceName;
+    DeviceName.appendFormat(kDeviceNameFormat, i);
+    touchpad.injector->ConfigureBegin(DeviceName, kDeviceBusType,
+                                      kDeviceVendor, kDeviceProduct,
+                                      kDeviceVersion);
+    touchpad.injector->ConfigureInputProperty(INPUT_PROP_DIRECT);
+    touchpad.injector->ConfigureMultiTouchXY(0, 0, kWidth - 1, kHeight - 1);
+    touchpad.injector->ConfigureAbsSlots(kSlots);
+    touchpad.injector->ConfigureKey(BTN_TOUCH);
+    touchpad.injector->ConfigureKey(BTN_BACK);
+    touchpad.injector->ConfigureEnd();
+    if (const status_t configuration_status =  touchpad.injector->GetError()) {
+      status = configuration_status;
+    }
+  }
+  return status;
+!!!15160837.cpp!!!	Detach() : status_t
+  Reset();
+  return OK;
+!!!15160965.cpp!!!	Touch(in touchpad_id : int, in x : float, in y : float, in pressure : float) : status_t
+  if (touchpad_id < 0 || touchpad_id >= kTouchpads) {
+    return EINVAL;
+  }
+  if ((x < 0.0f) || (x >= 1.0f) || (y < 0.0f) || (y >= 1.0f)) {
+    return EINVAL;
+  }
+  int32_t device_x = x * kWidth;
+  int32_t device_y = y * kHeight;
+  Touchpad& touchpad = touchpad_[touchpad_id];
+  touchpad.touches = ((touchpad.touches & 1) << 1) | (pressure > 0);
+  ALOGV("(%f,%f) %f -> (%" PRId32 ",%" PRId32 ") %d", x, y, pressure, device_x,
+        device_y, touchpad.touches);
+
+  if (!touchpad.injector) {
+    return EvdevInjector::ERROR_SEQUENCING;
+  }
+  touchpad.injector->ResetError();
+  switch (touchpad.touches) {
+    case 0b00:  // Hover continues.
+      if (device_x != touchpad.last_device_x ||
+          device_y != touchpad.last_device_y) {
+        touchpad.injector->SendMultiTouchXY(0, 0, device_x, device_y);
+        touchpad.injector->SendSynReport();
+      }
+      break;
+    case 0b01:  // Touch begins.
+      // Press.
+      touchpad.injector->SendMultiTouchXY(0, 0, device_x, device_y);
+      touchpad.injector->SendKey(BTN_TOUCH, EvdevInjector::KEY_PRESS);
+      touchpad.injector->SendSynReport();
+      break;
+    case 0b10:  // Touch ends.
+      touchpad.injector->SendKey(BTN_TOUCH, EvdevInjector::KEY_RELEASE);
+      touchpad.injector->SendMultiTouchLift(0);
+      touchpad.injector->SendSynReport();
+      break;
+    case 0b11:  // Touch continues.
+      if (device_x != touchpad.last_device_x ||
+          device_y != touchpad.last_device_y) {
+        touchpad.injector->SendMultiTouchXY(0, 0, device_x, device_y);
+        touchpad.injector->SendSynReport();
+      }
+      break;
+  }
+  touchpad.last_device_x = device_x;
+  touchpad.last_device_y = device_y;
+
+  return touchpad.injector->GetError();
+!!!15161093.cpp!!!	ButtonState(in touchpad_id : int, in buttons : int) : status_t
+  if (touchpad_id < 0 || touchpad_id >= kTouchpads) {
+    return EINVAL;
+  }
+  Touchpad& touchpad = touchpad_[touchpad_id];
+  const int changes = touchpad.last_motion_event_buttons ^ buttons;
+  if (!changes) {
+    return 0;
+  }
+  if (buttons & ~AMOTION_EVENT_BUTTON_BACK) {
+    return ENOTSUP;
+  }
+  ALOGV("change %X from %X to %X", changes, touchpad.last_motion_event_buttons,
+        buttons);
+
+  if (!touchpad.injector) {
+    return EvdevInjector::ERROR_SEQUENCING;
+  }
+  touchpad.injector->ResetError();
+  if (changes & AMOTION_EVENT_BUTTON_BACK) {
+    touchpad.injector->SendKey(BTN_BACK, (buttons & AMOTION_EVENT_BUTTON_BACK)
+                                             ? EvdevInjector::KEY_PRESS
+                                             : EvdevInjector::KEY_RELEASE);
+    touchpad.injector->SendSynReport();
+  }
+  touchpad.last_motion_event_buttons = buttons;
+  return touchpad.injector->GetError();
+!!!15161221.cpp!!!	dumpInternal(inout result : String8) : void
+  for (int i = 0; i < kTouchpads; ++i) {
+    const auto& touchpad = touchpad_[i];
+    result.appendFormat("[virtual touchpad %d]\n", i);
+    if (!touchpad.injector) {
+      result.append("injector = none\n");
+      return;
+    }
+    result.appendFormat("injector = %s\n",
+                        touchpad.owned_injector ? "normal" : "test");
+    result.appendFormat("touches = %d\n", touchpad.touches);
+    result.appendFormat("last_position = (%" PRId32 ", %" PRId32 ")\n",
+                        touchpad.last_device_x, touchpad.last_device_y);
+    result.appendFormat("last_buttons = 0x%" PRIX32 "\n",
+                        touchpad.last_motion_event_buttons);
+    touchpad.injector->dumpInternal(result);
+    result.append("\n");
+  }
+!!!15161477.cpp!!!	Reset() : void
+  for (auto& touchpad : touchpad_) {
+    if (touchpad.injector) {
+      touchpad.injector->Close();
+    }
+    touchpad.injector = nullptr;
+    touchpad.owned_injector.reset();
+    touchpad.last_device_x = INT32_MIN;
+    touchpad.last_device_y = INT32_MIN;
+    touchpad.touches = 0;
+    touchpad.last_motion_event_buttons = 0;
+  }

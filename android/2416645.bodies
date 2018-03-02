@@ -1,0 +1,116 @@
+class HwcDisplay
+!!!15137157.cpp!!!	CreateLayer() : HwcLayer
+  uint64_t layer_id = layer_ids_++;
+  layers_.push_back(HwcLayer(layer_id));
+  return &layers_.back();
+!!!15137285.cpp!!!	DestroyLayer(in id : Layer) : bool
+  for (auto it = layers_.begin(); it != layers_.end(); ++it) {
+    if (it->info.id == id) {
+      layers_.erase(it);
+      return true;
+    }
+  }
+
+  return false;
+!!!15137413.cpp!!!	GetLayer(in id : Layer) : HwcLayer
+  for (size_t i = 0; i < layers_.size(); ++i)
+    if (layers_[i].info.id == id)
+      return &layers_[i];
+
+  return nullptr;
+!!!15137541.cpp!!!	SetClientTarget(in handle : native_handle_t, in fence : base::unique_fd) : bool
+  if (handle)
+    buffer_ = CreateGraphicBuffer(handle, buffer_metadata_);
+
+  fence_ = new Fence(fence.release());
+  return true;
+!!!15137669.cpp!!!	SetClientTargetMetadata(in metadata : IVrComposerClient::BufferMetadata) : void
+  buffer_metadata_ = metadata;
+!!!15137797.cpp!!!	GetChangedCompositionTypes(inout layer_ids : std::vector<Layer>, inout types : std::vector<IComposerClient::Composition>) : void
+  std::sort(layers_.begin(), layers_.end(),
+            [](const auto& lhs, const auto& rhs) {
+              return lhs.info.z_order < rhs.info.z_order;
+            });
+
+  int first_client_layer = -1, last_client_layer = -1;
+  for (size_t i = 0; i < layers_.size(); ++i) {
+    switch (layers_[i].composition_type) {
+      case IComposerClient::Composition::SOLID_COLOR:
+      case IComposerClient::Composition::CURSOR:
+      case IComposerClient::Composition::SIDEBAND:
+        if (first_client_layer < 0)
+          first_client_layer = i;
+
+        last_client_layer = i;
+        break;
+      default:
+        break;
+    }
+  }
+
+  for (size_t i = 0; i < layers_.size(); ++i) {
+    if (i >= first_client_layer && i <= last_client_layer) {
+      if (layers_[i].composition_type != IComposerClient::Composition::CLIENT) {
+        layer_ids->push_back(layers_[i].info.id);
+        types->push_back(IComposerClient::Composition::CLIENT);
+        layers_[i].composition_type = IComposerClient::Composition::CLIENT;
+      }
+
+      continue;
+    }
+
+    if (layers_[i].composition_type != IComposerClient::Composition::DEVICE) {
+      layer_ids->push_back(layers_[i].info.id);
+      types->push_back(IComposerClient::Composition::DEVICE);
+      layers_[i].composition_type = IComposerClient::Composition::DEVICE;
+    }
+  }
+!!!15137925.cpp!!!	GetFrame(inout out_frames : std::vector<ComposerView::ComposerLayer>) : Error
+  bool queued_client_target = false;
+  std::vector<ComposerView::ComposerLayer> frame;
+  for (const auto& layer : layers_) {
+    if (layer.composition_type == IComposerClient::Composition::CLIENT) {
+      if (queued_client_target)
+        continue;
+
+      if (!buffer_.get()) {
+        ALOGE("Client composition requested but no client target buffer");
+        return Error::BAD_LAYER;
+      }
+
+      ComposerView::ComposerLayer client_target_layer = {
+          .buffer = buffer_,
+          .fence = fence_.get() ? fence_ : new Fence(-1),
+          .display_frame = {0, 0, static_cast<int32_t>(buffer_->getWidth()),
+            static_cast<int32_t>(buffer_->getHeight())},
+          .crop = {0.0f, 0.0f, static_cast<float>(buffer_->getWidth()),
+            static_cast<float>(buffer_->getHeight())},
+          .blend_mode = IComposerClient::BlendMode::NONE,
+      };
+
+      frame.push_back(client_target_layer);
+      queued_client_target = true;
+    } else {
+      if (!layer.info.buffer.get() || !layer.info.fence.get()) {
+        ALOGV("Layer requested without valid buffer");
+        continue;
+      }
+
+      frame.push_back(layer.info);
+    }
+  }
+
+  out_frames->swap(frame);
+  return Error::NONE;
+!!!15138053.cpp!!!	UpdateLastFrameAndGetLastFrameLayers() : std::vector<Layer>
+  std::vector<Layer> last_frame_layers;
+  last_frame_layers.swap(last_frame_layers_ids_);
+
+  for (const auto& layer : layers_)
+    last_frame_layers_ids_.push_back(layer.info.id);
+
+  return last_frame_layers;
+!!!15139461.cpp!!!	SetColorTransform(in matrix : float, in hint : int32_t) : void
+  color_transform_hint_ = hint;
+  if (matrix)
+    memcpy(color_transform_, matrix, sizeof(color_transform_));

@@ -1,0 +1,60 @@
+class AttachedEvent
+!!!14814213.cpp!!!	AttachedEvent(in callback : sp<IEventCallback>)
+    mLooperAttached = getLooper()->addFd(mFwkReceiver.getFd(),
+            Looper::POLL_CALLBACK,
+            Looper::EVENT_INPUT,
+            this,
+            nullptr);
+!!!14814341.cpp!!!	~AttachedEvent()
+    if (!detach()) {
+        LOG(ERROR) << "Could not remove fd from looper.";
+    }
+!!!14814469.cpp!!!	detach() : bool
+    if (!valid()) {
+        return true;
+    }
+
+    return getLooper()->removeFd(mFwkReceiver.getFd());
+!!!14814597.cpp!!!	valid() : bool
+    return mFwkReceiver.initCheck() == OK && mLooperAttached;
+!!!14814725.cpp!!!	receiver() : DisplayEventReceiver::FwkReceiver
+    return mFwkReceiver;
+!!!14814853.cpp!!!	handleEvent(in fd : int, in events : int, inout  : void) : int
+    CHECK(fd == mFwkReceiver.getFd());
+
+    if (events & (Looper::EVENT_ERROR | Looper::EVENT_HANGUP)) {
+        LOG(ERROR) << "AttachedEvent handleEvent received error or hangup:" << events;
+        return 0; // remove the callback
+    }
+
+    if (!(events & Looper::EVENT_INPUT)) {
+        LOG(ERROR) << "AttachedEvent handleEvent unhandled poll event:" << events;
+        return 1; // keep the callback
+    }
+
+    constexpr size_t SIZE = 1;
+
+    ssize_t n;
+    FwkReceiver::Event buf[SIZE];
+    while ((n = mFwkReceiver.getEvents(buf, SIZE)) > 0) {
+        for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
+            const FwkReceiver::Event &event = buf[i];
+
+            uint32_t type = event.header.type;
+            uint64_t timestamp = event.header.timestamp;
+
+            switch(buf[i].header.type) {
+                case FwkReceiver::DISPLAY_EVENT_VSYNC: {
+                    mCallback->onVsync(timestamp, event.vsync.count);
+                } break;
+                case FwkReceiver::DISPLAY_EVENT_HOTPLUG: {
+                    mCallback->onHotplug(timestamp, event.hotplug.connected);
+                } break;
+                default: {
+                    LOG(ERROR) << "AttachedEvent handleEvent unknown type: " << type;
+                }
+            }
+        }
+    }
+
+    return 1; // keep on going

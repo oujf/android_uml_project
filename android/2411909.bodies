@@ -1,0 +1,110 @@
+class ConsumerQueueChannel
+!!!15124613.cpp!!!	ConsumerQueueChannel(inout service : BufferHubService, in buffer_id : int, in channel_id : int, in producer : std::shared_ptr<Channel>)
+  GetProducer()->AddConsumer(this);
+!!!15124741.cpp!!!	~ConsumerQueueChannel()
+  ALOGD_IF(TRACE, "ConsumerQueueChannel::~ConsumerQueueChannel: channel_id=%d",
+           channel_id());
+
+  if (auto producer = GetProducer()) {
+    producer->RemoveConsumer(this);
+  }
+!!!15124869.cpp!!!	HandleMessage(inout message : ConsumerQueueChannel::Message) : bool
+  ATRACE_NAME("ConsumerQueueChannel::HandleMessage");
+  auto producer = GetProducer();
+  if (!producer) {
+    RemoteMethodError(message, EPIPE);
+    return true;
+  }
+
+  switch (message.GetOp()) {
+    case BufferHubRPC::CreateConsumerQueue::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::CreateConsumerQueue>(
+          *producer, &ProducerQueueChannel::OnCreateConsumerQueue, message);
+      return true;
+
+    case BufferHubRPC::GetQueueInfo::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::GetQueueInfo>(
+          *producer, &ProducerQueueChannel::OnGetQueueInfo, message);
+      return true;
+
+    case BufferHubRPC::ConsumerQueueImportBuffers::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ConsumerQueueImportBuffers>(
+          *this, &ConsumerQueueChannel::OnConsumerQueueImportBuffers, message);
+      return true;
+
+    default:
+      return false;
+  }
+!!!15124997.cpp!!!	HandleImpulse(inout message : ConsumerQueueChannel::Message) : void
+  ATRACE_NAME("ConsumerQueueChannel::HandleImpulse");
+!!!15125125.cpp!!!	GetBufferInfo() : BufferInfo
+  BufferHubChannel::BufferInfo info;
+  if (auto producer = GetProducer()) {
+    // If producer has not hung up, copy most buffer info from the producer.
+    info = producer->GetBufferInfo();
+  }
+  info.id = buffer_id();
+  info.capacity = capacity_;
+  return info;
+!!!15125253.cpp!!!	RegisterNewBuffer(in producer_channel : std::shared_ptr<ProducerChannel>, in slot : size_t) : void
+  ALOGD_IF(TRACE,
+           "ConsumerQueueChannel::RegisterNewBuffer: buffer_id=%d slot=%zu",
+           producer_channel->buffer_id(), slot);
+  pending_buffer_slots_.emplace(producer_channel, slot);
+
+  // Signal the client that there is new buffer available throught POLLIN.
+  SignalAvailable();
+!!!15125381.cpp!!!	OnConsumerQueueImportBuffers(inout message : ConsumerQueueChannel::Message) : pdx::Status<std::vector<std::pair<RemoteChannelHandle, size_t>>>
+  std::vector<std::pair<RemoteChannelHandle, size_t>> buffer_handles;
+  ATRACE_NAME("ConsumerQueueChannel::OnConsumerQueueImportBuffers");
+  ALOGD_IF(
+      TRACE,
+      "ConsumerQueueChannel::OnConsumerQueueImportBuffers number of buffers to "
+      "import: %zu",
+      pending_buffer_slots_.size());
+
+  while (!pending_buffer_slots_.empty()) {
+    auto producer_channel = pending_buffer_slots_.front().first.lock();
+    size_t producer_slot = pending_buffer_slots_.front().second;
+    pending_buffer_slots_.pop();
+
+    // It's possible that the producer channel has expired. When this occurs,
+    // ignore the producer channel.
+    if (producer_channel == nullptr) {
+      ALOGW(
+          "ConsumerQueueChannel::OnConsumerQueueImportBuffers: producer "
+          "channel has already been expired.");
+      continue;
+    }
+
+    auto status = producer_channel->CreateConsumer(message);
+
+    // If no buffers are imported successfully, clear available and return an
+    // error. Otherwise, return all consumer handles already imported
+    // successfully, but keep available bits on, so that the client can retry
+    // importing remaining consumer buffers.
+    if (!status) {
+      ALOGE(
+          "ConsumerQueueChannel::OnConsumerQueueImportBuffers: Failed create "
+          "consumer: %s",
+          status.GetErrorMessage().c_str());
+      if (buffer_handles.empty()) {
+        ClearAvailable();
+        return status.error_status();
+      } else {
+        return {std::move(buffer_handles)};
+      }
+    }
+
+    buffer_handles.emplace_back(status.take(), producer_slot);
+  }
+
+  ClearAvailable();
+  return {std::move(buffer_handles)};
+!!!15125509.cpp!!!	OnProducerClosed() : void
+  ALOGD_IF(TRACE, "ConsumerQueueChannel::OnProducerClosed: queue_id=%d",
+           buffer_id());
+  producer_.reset();
+  Hangup();
+!!!15125637.cpp!!!	GetProducer() : std::shared_ptr<ProducerQueueChannel>
+  return std::static_pointer_cast<ProducerQueueChannel>(producer_.lock());

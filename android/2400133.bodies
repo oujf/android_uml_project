@@ -1,0 +1,240 @@
+class CommandReader
+!!!15045253.cpp!!!	~CommandReader()
+    resetData();
+!!!15045381.cpp!!!	parse() : Error
+    resetData();
+
+    IComposerClient::Command command;
+    uint16_t length = 0;
+
+    while (!isEmpty()) {
+        if (!beginCommand(&command, &length)) {
+            break;
+        }
+
+        bool parsed = false;
+        switch (command) {
+        case IComposerClient::Command::SELECT_DISPLAY:
+            parsed = parseSelectDisplay(length);
+            break;
+        case IComposerClient::Command::SET_ERROR:
+            parsed = parseSetError(length);
+            break;
+        case IComposerClient::Command::SET_CHANGED_COMPOSITION_TYPES:
+            parsed = parseSetChangedCompositionTypes(length);
+            break;
+        case IComposerClient::Command::SET_DISPLAY_REQUESTS:
+            parsed = parseSetDisplayRequests(length);
+            break;
+        case IComposerClient::Command::SET_PRESENT_FENCE:
+            parsed = parseSetPresentFence(length);
+            break;
+        case IComposerClient::Command::SET_RELEASE_FENCES:
+            parsed = parseSetReleaseFences(length);
+            break;
+        case IComposerClient::Command ::SET_PRESENT_OR_VALIDATE_DISPLAY_RESULT:
+            parsed = parseSetPresentOrValidateDisplayResult(length);
+            break;
+        default:
+            parsed = false;
+            break;
+        }
+
+        endCommand();
+
+        if (!parsed) {
+            ALOGE("failed to parse command 0x%x length %" PRIu16,
+                    command, length);
+            break;
+        }
+    }
+
+    return isEmpty() ? Error::NONE : Error::NO_RESOURCES;
+!!!15045509.cpp!!!	takeErrors() : std::vector<CommandError>
+    return std::move(mErrors);
+!!!15045637.cpp!!!	hasChanges(in display : Display, inout outNumChangedCompositionTypes : uint32_t, inout outNumLayerRequestMasks : uint32_t) : bool
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        *outNumChangedCompositionTypes = 0;
+        *outNumLayerRequestMasks = 0;
+        return false;
+    }
+
+    const ReturnData& data = found->second;
+
+    *outNumChangedCompositionTypes = data.compositionTypes.size();
+    *outNumLayerRequestMasks = data.requestMasks.size();
+
+    return !(data.compositionTypes.empty() && data.requestMasks.empty());
+!!!15045765.cpp!!!	takeChangedCompositionTypes(in display : Display, inout outLayers : std::vector<Layer>, inout outTypes : std::vector<IComposerClient::Composition>) : void
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        outLayers->clear();
+        outTypes->clear();
+        return;
+    }
+
+    ReturnData& data = found->second;
+
+    *outLayers = std::move(data.changedLayers);
+    *outTypes = std::move(data.compositionTypes);
+!!!15045893.cpp!!!	takeDisplayRequests(in display : Display, inout outDisplayRequestMask : uint32_t, inout outLayers : std::vector<Layer>, inout outLayerRequestMasks : std::vector<uint32_t>) : void
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        *outDisplayRequestMask = 0;
+        outLayers->clear();
+        outLayerRequestMasks->clear();
+        return;
+    }
+
+    ReturnData& data = found->second;
+
+    *outDisplayRequestMask = data.displayRequests;
+    *outLayers = std::move(data.requestedLayers);
+    *outLayerRequestMasks = std::move(data.requestMasks);
+!!!15046021.cpp!!!	takeReleaseFences(in display : Display, inout outLayers : std::vector<Layer>, inout outReleaseFences : std::vector<int>) : void
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        outLayers->clear();
+        outReleaseFences->clear();
+        return;
+    }
+
+    ReturnData& data = found->second;
+
+    *outLayers = std::move(data.releasedLayers);
+    *outReleaseFences = std::move(data.releaseFences);
+!!!15046149.cpp!!!	takePresentFence(in display : Display, inout outPresentFence : int) : void
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        *outPresentFence = -1;
+        return;
+    }
+
+    ReturnData& data = found->second;
+
+    *outPresentFence = data.presentFence;
+    data.presentFence = -1;
+!!!15046277.cpp!!!	takePresentOrValidateStage(in display : Display, inout state : uint32_t) : void
+    auto found = mReturnData.find(display);
+    if (found == mReturnData.end()) {
+        *state= -1;
+        return;
+    }
+    ReturnData& data = found->second;
+    *state = data.presentOrValidateState;
+!!!15046405.cpp!!!	resetData() : void
+    mErrors.clear();
+
+    for (auto& data : mReturnData) {
+        if (data.second.presentFence >= 0) {
+            close(data.second.presentFence);
+        }
+        for (auto fence : data.second.releaseFences) {
+            if (fence >= 0) {
+                close(fence);
+            }
+        }
+    }
+
+    mReturnData.clear();
+    mCurrentReturnData = nullptr;
+!!!15046533.cpp!!!	parseSelectDisplay(in length : uint16_t) : bool
+    if (length != CommandWriterBase::kSelectDisplayLength) {
+        return false;
+    }
+
+    mCurrentReturnData = &mReturnData[read64()];
+
+    return true;
+!!!15046661.cpp!!!	parseSetError(in length : uint16_t) : bool
+    if (length != CommandWriterBase::kSetErrorLength) {
+        return false;
+    }
+
+    auto location = read();
+    auto error = static_cast<Error>(readSigned());
+
+    mErrors.emplace_back(CommandError{location, error});
+
+    return true;
+!!!15046789.cpp!!!	parseSetChangedCompositionTypes(in length : uint16_t) : bool
+    // (layer id, composition type) pairs
+    if (length % 3 != 0 || !mCurrentReturnData) {
+        return false;
+    }
+
+    uint32_t count = length / 3;
+    mCurrentReturnData->changedLayers.reserve(count);
+    mCurrentReturnData->compositionTypes.reserve(count);
+    while (count > 0) {
+        auto layer = read64();
+        auto type = static_cast<IComposerClient::Composition>(readSigned());
+
+        mCurrentReturnData->changedLayers.push_back(layer);
+        mCurrentReturnData->compositionTypes.push_back(type);
+
+        count--;
+    }
+
+    return true;
+!!!15046917.cpp!!!	parseSetDisplayRequests(in length : uint16_t) : bool
+    // display requests followed by (layer id, layer requests) pairs
+    if (length % 3 != 1 || !mCurrentReturnData) {
+        return false;
+    }
+
+    mCurrentReturnData->displayRequests = read();
+
+    uint32_t count = (length - 1) / 3;
+    mCurrentReturnData->requestedLayers.reserve(count);
+    mCurrentReturnData->requestMasks.reserve(count);
+    while (count > 0) {
+        auto layer = read64();
+        auto layerRequestMask = read();
+
+        mCurrentReturnData->requestedLayers.push_back(layer);
+        mCurrentReturnData->requestMasks.push_back(layerRequestMask);
+
+        count--;
+    }
+
+    return true;
+!!!15047045.cpp!!!	parseSetPresentFence(in length : uint16_t) : bool
+    if (length != CommandWriterBase::kSetPresentFenceLength ||
+            !mCurrentReturnData) {
+        return false;
+    }
+
+    if (mCurrentReturnData->presentFence >= 0) {
+        close(mCurrentReturnData->presentFence);
+    }
+    mCurrentReturnData->presentFence = readFence();
+
+    return true;
+!!!15047173.cpp!!!	parseSetReleaseFences(in length : uint16_t) : bool
+    // (layer id, release fence index) pairs
+    if (length % 3 != 0 || !mCurrentReturnData) {
+        return false;
+    }
+
+    uint32_t count = length / 3;
+    mCurrentReturnData->releasedLayers.reserve(count);
+    mCurrentReturnData->releaseFences.reserve(count);
+    while (count > 0) {
+        auto layer = read64();
+        auto fence = readFence();
+
+        mCurrentReturnData->releasedLayers.push_back(layer);
+        mCurrentReturnData->releaseFences.push_back(fence);
+
+        count--;
+    }
+
+    return true;
+!!!15047301.cpp!!!	parseSetPresentOrValidateDisplayResult(in length : uint16_t) : bool
+    if (length != CommandWriterBase::kPresentOrValidateDisplayResultLength || !mCurrentReturnData) {
+        return false;
+    }
+    mCurrentReturnData->presentOrValidateState = read();
+    return true;

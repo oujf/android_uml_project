@@ -1,0 +1,108 @@
+class stdio_filebuf
+!!!15152389.cpp!!!	stdio_filebuf(inout __fp : FILE)
+  imbue(this->getloc());
+!!!15152517.cpp!!!	~stdio_filebuf()
+  if (__file_)
+    fclose(__file_);
+!!!15152645.cpp!!!	underflow() : stdio_filebuf::int_type
+  return __getchar(false);
+!!!15152773.cpp!!!	uflow() : stdio_filebuf::int_type
+  return __getchar(true);
+!!!15152901.cpp!!!	pbackfail(in __c : stdio_filebuf::int_type = traits_type::eof()) : stdio_filebuf::int_type
+  if (traits_type::eq_int_type(__c, traits_type::eof())) {
+    if (!__last_consumed_is_next_) {
+      __c = __last_consumed_;
+      __last_consumed_is_next_ =
+          !traits_type::eq_int_type(__last_consumed_, traits_type::eof());
+    }
+    return __c;
+  }
+  if (__last_consumed_is_next_) {
+    char __extbuf[__limit];
+    char* __enxt;
+    const char_type __ci = traits_type::to_char_type(__last_consumed_);
+    const char_type* __inxt;
+    switch (__cv_->out(__st_, &__ci, &__ci + 1, __inxt, __extbuf,
+                       __extbuf + sizeof(__extbuf), __enxt)) {
+      case std::codecvt_base::ok:
+        break;
+      case std::codecvt_base::noconv:
+        __extbuf[0] = static_cast<char>(__last_consumed_);
+        __enxt = __extbuf + 1;
+        break;
+      case std::codecvt_base::partial:
+      case std::codecvt_base::error:
+        return traits_type::eof();
+    }
+    while (__enxt > __extbuf)
+      if (ungetc(*--__enxt, __file_) == EOF)
+        return traits_type::eof();
+  }
+  __last_consumed_ = __c;
+  __last_consumed_is_next_ = true;
+  return __c;
+!!!15153029.cpp!!!	imbue(in __loc : std::locale) : void
+  __cv_ = &std::use_facet<std::codecvt<char_type, char, state_type> >(__loc);
+  __encoding_ = __cv_->encoding();
+  __always_noconv_ = __cv_->always_noconv();
+  if (__encoding_ > __limit)
+    std::__throw_runtime_error("unsupported locale for standard io");
+!!!15153413.cpp!!!	__getchar(in __consume : bool) : stdio_filebuf::int_type
+  if (__last_consumed_is_next_) {
+    int_type __result = __last_consumed_;
+    if (__consume) {
+      __last_consumed_ = traits_type::eof();
+      __last_consumed_is_next_ = false;
+    }
+    return __result;
+  }
+  char __extbuf[__limit];
+  int __nread = std::max(1, __encoding_);
+  for (int __i = 0; __i < __nread; ++__i) {
+    int __c = getc(__file_);
+    if (__c == EOF)
+      return traits_type::eof();
+    __extbuf[__i] = static_cast<char>(__c);
+  }
+  char_type __1buf;
+  if (__always_noconv_)
+    __1buf = static_cast<char_type>(__extbuf[0]);
+  else {
+    const char* __enxt;
+    char_type* __inxt;
+    std::codecvt_base::result __r;
+    do {
+      state_type __sv_st = __st_;
+      __r = __cv_->in(__st_, __extbuf, __extbuf + __nread, __enxt, &__1buf,
+                      &__1buf + 1, __inxt);
+      switch (__r) {
+        case std::codecvt_base::ok:
+          break;
+        case std::codecvt_base::partial:
+          __st_ = __sv_st;
+          if (__nread == sizeof(__extbuf))
+            return traits_type::eof();
+          {
+            int __c = getc(__file_);
+            if (__c == EOF)
+              return traits_type::eof();
+            __extbuf[__nread] = static_cast<char>(__c);
+          }
+          ++__nread;
+          break;
+        case std::codecvt_base::error:
+          return traits_type::eof();
+        case std::codecvt_base::noconv:
+          __1buf = static_cast<char_type>(__extbuf[0]);
+          break;
+      }
+    } while (__r == std::codecvt_base::partial);
+  }
+  if (!__consume) {
+    for (int __i = __nread; __i > 0;) {
+      if (ungetc(traits_type::to_int_type(__extbuf[--__i]), __file_) == EOF)
+        return traits_type::eof();
+    }
+  } else
+    __last_consumed_ = traits_type::to_int_type(__1buf);
+  return traits_type::to_int_type(__1buf);

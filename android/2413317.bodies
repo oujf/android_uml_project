@@ -1,0 +1,35 @@
+class ProducerQueueChannel
+!!!15128837.cpp!!!	Create(inout service : BufferHubService, in channel_id : int, in meta_size_bytes : size_t, in usage_policy : UsagePolicy) : pdx::Status<std::shared_ptr<ProducerQueueChannel>>
+  // Configuration between |usage_deny_set_mask| and |usage_deny_clear_mask|
+  // should be mutually exclusive.
+  if ((usage_policy.usage_deny_set_mask & usage_policy.usage_deny_clear_mask)) {
+    ALOGE(
+        "BufferHubService::OnCreateProducerQueue: illegal usage mask "
+        "configuration: usage_deny_set_mask=%" PRIx64
+        " usage_deny_clear_mask=%" PRIx64,
+        usage_policy.usage_deny_set_mask, usage_policy.usage_deny_clear_mask);
+    return ErrorStatus(EINVAL);
+  }
+
+  int error = 0;
+  std::shared_ptr<ProducerQueueChannel> producer(new ProducerQueueChannel(
+      service, channel_id, meta_size_bytes, usage_policy, &error));
+  if (error < 0)
+    return ErrorStatus(-error);
+  else
+    return {std::move(producer)};
+!!!15128965.cpp!!!	~ProducerQueueChannel()
+  ALOGD_IF(TRACE, "ProducerQueueChannel::~ProducerQueueChannel: queue_id=%d",
+           buffer_id());
+  for (auto* consumer : consumer_channels_)
+    consumer->OnProducerClosed();
+!!!15129349.cpp!!!	GetBufferInfo() : BufferInfo
+  return BufferInfo(channel_id(), consumer_channels_.size(), capacity_,
+                    usage_policy_);
+!!!15129989.cpp!!!	AddConsumer(inout channel : ConsumerQueueChannel) : void
+  consumer_channels_.push_back(channel);
+!!!15130117.cpp!!!	RemoveConsumer(inout channel : ConsumerQueueChannel) : void
+  consumer_channels_.erase(
+      std::find(consumer_channels_.begin(), consumer_channels_.end(), channel));
+!!!15130245.cpp!!!	ProducerQueueChannel(inout service : BufferHubService, in channel_id : int, in meta_size_bytes : size_t, in usage_policy : UsagePolicy, inout error : int)
+  *error = 0;

@@ -1,0 +1,79 @@
+class VirtualTouchpadService
+!!!15162117.cpp!!!	~VirtualTouchpadService()
+  if (client_pid_) {
+    client_pid_ = 0;
+    touchpad_->Detach();
+  }
+!!!15162245.cpp!!!	attach() : binder::Status
+  pid_t pid;
+  if (!CheckTouchPermission(&pid)) {
+    return binder::Status::fromStatusT(PERMISSION_DENIED);
+  }
+  if (client_pid_ == pid) {
+    // The same client has called attach() twice with no intervening detach().
+    // This indicates a problem with the client, so return an error.
+    // However, since the client is already attached, any touchpad actions
+    // it takes will still work.
+    ALOGE("pid=%ld attached twice", static_cast<long>(pid));
+    return binder::Status::fromStatusT(ALREADY_EXISTS);
+  }
+  if (client_pid_ != 0) {
+    // Attach while another client is attached. This can happen if the client
+    // dies without cleaning up after itself, so move ownership to the current
+    // caller. If two actual clients have connected, the problem will be
+    // reported when the previous client performs any touchpad action.
+    ALOGE("pid=%ld replaces %ld", static_cast<long>(pid),
+          static_cast<long>(client_pid_));
+    client_pid_ = pid;
+    return binder::Status::ok();
+  }
+  client_pid_ = pid;
+  if (const status_t error = touchpad_->Attach()) {
+    return binder::Status::fromStatusT(error);
+  }
+  return binder::Status::ok();
+!!!15162373.cpp!!!	detach() : binder::Status
+  if (!CheckPermissions()) {
+    return binder::Status::fromStatusT(PERMISSION_DENIED);
+  }
+  client_pid_ = 0;
+  if (const status_t error = touchpad_->Detach()) {
+    return binder::Status::fromStatusT(error);
+  }
+  return binder::Status::ok();
+!!!15162501.cpp!!!	touch(in touchpad : int, in x : float, in y : float, in pressure : float) : binder::Status
+  if (!CheckPermissions()) {
+    return binder::Status::fromStatusT(PERMISSION_DENIED);
+  }
+  if (const status_t error = touchpad_->Touch(touchpad, x, y, pressure)) {
+    return binder::Status::fromStatusT(error);
+  }
+  return binder::Status::ok();
+!!!15162629.cpp!!!	buttonState(in touchpad : int, in buttons : int) : binder::Status
+  if (!CheckPermissions()) {
+    return binder::Status::fromStatusT(PERMISSION_DENIED);
+  }
+  if (const status_t error = touchpad_->ButtonState(touchpad, buttons)) {
+    return binder::Status::fromStatusT(error);
+  }
+  return binder::Status::ok();
+!!!15162885.cpp!!!	CheckPermissions() : bool
+  pid_t pid;
+  if (!CheckTouchPermission(&pid)) {
+    return false;
+  }
+  if (client_pid_ != pid) {
+    ALOGE("pid=%ld is not owner", static_cast<long>(pid));
+    return false;
+  }
+  return true;
+!!!15163013.cpp!!!	CheckTouchPermission(inout out_pid : pid_t) : bool
+  const android::IPCThreadState* ipc = android::IPCThreadState::self();
+  *out_pid = ipc->getCallingPid();
+  const uid_t uid = ipc->getCallingUid();
+  const bool permission = PermissionCache::checkPermission(kTouchPermission, *out_pid, uid);
+  if (!permission) {
+    ALOGE("permission denied to pid=%ld uid=%ld", static_cast<long>(*out_pid),
+          static_cast<long>(uid));
+  }
+  return permission;

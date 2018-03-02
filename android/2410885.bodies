@@ -1,0 +1,267 @@
+class ProducerChannel
+!!!15126021.cpp!!!	Create(inout service : BufferHubService, in channel_id : int, in width : uint32_t, in height : uint32_t, in layer_count : uint32_t, in format : uint32_t, in usage : uint64_t, in meta_size_bytes : size_t) : pdx::Status<std::shared_ptr<ProducerChannel>>
+  int error;
+  std::shared_ptr<ProducerChannel> producer(
+      new ProducerChannel(service, channel_id, width, height, layer_count,
+                          format, usage, meta_size_bytes, &error));
+  if (error < 0)
+    return ErrorStatus(-error);
+  else
+    return {std::move(producer)};
+!!!15126149.cpp!!!	~ProducerChannel()
+  ALOGD_IF(TRACE,
+           "ProducerChannel::~ProducerChannel: channel_id=%d buffer_id=%d",
+           channel_id(), buffer_id());
+  for (auto consumer : consumer_channels_)
+    consumer->OnProducerClosed();
+!!!15126277.cpp!!!	HandleMessage(inout message : ProducerChannel::Message) : bool
+  ATRACE_NAME("ProducerChannel::HandleMessage");
+  switch (message.GetOp()) {
+    case BufferHubRPC::GetBuffer::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::GetBuffer>(
+          *this, &ProducerChannel::OnGetBuffer, message);
+      return true;
+
+    case BufferHubRPC::NewConsumer::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::NewConsumer>(
+          *this, &ProducerChannel::OnNewConsumer, message);
+      return true;
+
+    case BufferHubRPC::ProducerPost::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ProducerPost>(
+          *this, &ProducerChannel::OnProducerPost, message);
+      return true;
+
+    case BufferHubRPC::ProducerGain::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ProducerGain>(
+          *this, &ProducerChannel::OnProducerGain, message);
+      return true;
+
+    case BufferHubRPC::ProducerMakePersistent::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ProducerMakePersistent>(
+          *this, &ProducerChannel::OnProducerMakePersistent, message);
+      return true;
+
+    case BufferHubRPC::ProducerRemovePersistence::Opcode:
+      DispatchRemoteMethod<BufferHubRPC::ProducerRemovePersistence>(
+          *this, &ProducerChannel::OnRemovePersistence, message);
+      return true;
+
+    default:
+      return false;
+  }
+!!!15126405.cpp!!!	HandleImpulse(inout message : ProducerChannel::Message) : void
+  ATRACE_NAME("ProducerChannel::HandleImpulse");
+  switch (message.GetOp()) {
+    case BufferHubRPC::ProducerGain::Opcode:
+      OnProducerGain(message);
+      break;
+  }
+!!!15126533.cpp!!!	GetBufferInfo() : BufferInfo
+  return BufferInfo(buffer_id(), consumer_channels_.size(), buffer_.width(),
+                    buffer_.height(), buffer_.layer_count(), buffer_.format(),
+                    buffer_.usage(), name_);
+!!!15126661.cpp!!!	OnGetBuffer(inout message : ProducerChannel::Message) : pdx::Status<NativeBufferHandle<BorrowedHandle>>
+  ATRACE_NAME("ProducerChannel::OnGetBuffer");
+  ALOGD_IF(TRACE, "ProducerChannel::OnGetBuffer: buffer=%d", buffer_id());
+  return {NativeBufferHandle<BorrowedHandle>(buffer_, buffer_id())};
+!!!15126789.cpp!!!	CreateConsumer(inout message : ProducerChannel::Message) : pdx::Status<RemoteChannelHandle>
+  ATRACE_NAME("ProducerChannel::CreateConsumer");
+  ALOGD_IF(TRACE, "ProducerChannel::CreateConsumer: buffer_id=%d", buffer_id());
+
+  int channel_id;
+  auto status = message.PushChannel(0, nullptr, &channel_id);
+  if (!status) {
+    ALOGE(
+        "ProducerChannel::CreateConsumer: Failed to push consumer channel: %s",
+        status.GetErrorMessage().c_str());
+    return ErrorStatus(ENOMEM);
+  }
+
+  auto consumer = std::make_shared<ConsumerChannel>(
+      service(), buffer_id(), channel_id, shared_from_this());
+  const auto channel_status = service()->SetChannel(channel_id, consumer);
+  if (!channel_status) {
+    ALOGE(
+        "ProducerChannel::CreateConsumer: failed to set new consumer channel: "
+        "%s",
+        channel_status.GetErrorMessage().c_str());
+    return ErrorStatus(ENOMEM);
+  }
+
+  if (!producer_owns_) {
+    // Signal the new consumer when adding it to a posted producer.
+    if (consumer->OnProducerPosted())
+      pending_consumers_++;
+  }
+
+  return {status.take()};
+!!!15126917.cpp!!!	OnNewConsumer(inout message : ProducerChannel::Message) : pdx::Status<RemoteChannelHandle>
+  ATRACE_NAME("ProducerChannel::OnNewConsumer");
+  ALOGD_IF(TRACE, "ProducerChannel::OnNewConsumer: buffer_id=%d", buffer_id());
+  return CreateConsumer(message);
+!!!15127045.cpp!!!	OnConsumerAcquire(inout message : ProducerChannel::Message, in metadata_size : std::size_t) : pdx::Status<std::pair<BorrowedFence, BufferWrapper<std::uint8_t*>>>
+  ATRACE_NAME("ProducerChannel::OnConsumerAcquire");
+  ALOGD_IF(TRACE, "ProducerChannel::OnConsumerAcquire: buffer_id=%d",
+           buffer_id());
+  if (producer_owns_) {
+    ALOGE("ProducerChannel::OnConsumerAcquire: Not in posted state!");
+    return ErrorStatus(EBUSY);
+  }
+
+  // Return a borrowed fd to avoid unnecessary duplication of the underlying fd.
+  // Serialization just needs to read the handle.
+  if (metadata_size == 0)
+    return {std::make_pair(post_fence_.borrow(),
+                           WrapBuffer<std::uint8_t>(nullptr, 0))};
+  else
+    return {std::make_pair(post_fence_.borrow(),
+                           WrapBuffer(meta_.get(), meta_size_bytes_))};
+!!!15127173.cpp!!!	OnConsumerRelease(inout message : ProducerChannel::Message, in release_fence : LocalFence) : pdx::Status<void>
+  ATRACE_NAME("ProducerChannel::OnConsumerRelease");
+  ALOGD_IF(TRACE, "ProducerChannel::OnConsumerRelease: buffer_id=%d",
+           buffer_id());
+  if (producer_owns_) {
+    ALOGE("ProducerChannel::OnConsumerRelease: Not in acquired state!");
+    return ErrorStatus(EBUSY);
+  }
+
+  // Attempt to merge the fences if necessary.
+  if (release_fence) {
+    if (returned_fence_) {
+      LocalFence merged_fence(sync_merge("bufferhub_merged",
+                                         returned_fence_.get_fd(),
+                                         release_fence.get_fd()));
+      const int error = errno;
+      if (!merged_fence) {
+        ALOGE("ProducerChannel::OnConsumerRelease: Failed to merge fences: %s",
+              strerror(error));
+        return ErrorStatus(error);
+      }
+      returned_fence_ = std::move(merged_fence);
+    } else {
+      returned_fence_ = std::move(release_fence);
+    }
+  }
+
+  OnConsumerIgnored();
+  return {};
+!!!15127301.cpp!!!	OnConsumerIgnored() : void
+  if (!--pending_consumers_)
+    SignalAvailable();
+  ALOGD_IF(TRACE,
+           "ProducerChannel::OnConsumerIgnored: buffer_id=%d %d consumers left",
+           buffer_id(), pending_consumers_);
+!!!15127429.cpp!!!	AddConsumer(inout channel : ConsumerChannel) : void
+  consumer_channels_.push_back(channel);
+!!!15127557.cpp!!!	RemoveConsumer(inout channel : ConsumerChannel) : void
+  consumer_channels_.erase(
+      std::find(consumer_channels_.begin(), consumer_channels_.end(), channel));
+!!!15127685.cpp!!!	CheckAccess(in euid : int, in egid : int) : bool
+  const bool no_check =
+      owner_user_id_ == kNoCheckId && owner_group_id_ == kNoCheckId;
+  const bool euid_check = euid == owner_user_id_ || euid == kRootId;
+  const bool egid_check = egid == owner_group_id_ || egid == kRootId;
+  return no_check || euid_check || egid_check;
+!!!15127813.cpp!!!	CheckParameters(in width : uint32_t, in height : uint32_t, in layer_count : uint32_t, in format : uint32_t, in usage : uint64_t, in meta_size_bytes : size_t) : bool
+  return meta_size_bytes == meta_size_bytes_ && buffer_.width() == width &&
+         buffer_.height() == height && buffer_.layer_count() == layer_count &&
+         buffer_.format() == format && buffer_.usage() == usage;
+!!!15127941.cpp!!!	OnProducerMakePersistent(inout message : ProducerChannel::Message, in name : std::string, in user_id : int, in group_id : int) : pdx::Status<void>
+  ATRACE_NAME("ProducerChannel::OnProducerMakePersistent");
+  ALOGD_IF(TRACE,
+           "ProducerChannel::OnProducerMakePersistent: buffer_id=%d name=%s "
+           "user_id=%d group_id=%d",
+           buffer_id(), name.c_str(), user_id, group_id);
+
+  if (name.empty() || (user_id < 0 && user_id != kNoCheckId) ||
+      (group_id < 0 && group_id != kNoCheckId)) {
+    return ErrorStatus(EINVAL);
+  }
+
+  // Try to add this buffer with the requested name.
+  if (service()->AddNamedBuffer(name, std::static_pointer_cast<ProducerChannel>(
+                                          shared_from_this()))) {
+    // If successful, set the requested permissions.
+
+    // A value of zero indicates that the ids from the sending process should be
+    // used.
+    if (user_id == kUseCallerId)
+      user_id = message.GetEffectiveUserId();
+    if (group_id == kUseCallerId)
+      group_id = message.GetEffectiveGroupId();
+
+    owner_user_id_ = user_id;
+    owner_group_id_ = group_id;
+    name_ = name;
+    return {};
+  } else {
+    // Otherwise a buffer with that name already exists.
+    return ErrorStatus(EALREADY);
+  }
+!!!15128069.cpp!!!	OnRemovePersistence(inout message : ProducerChannel::Message) : pdx::Status<void>
+  if (service()->RemoveNamedBuffer(*this))
+    return {};
+  else
+    return ErrorStatus(ENOENT);
+!!!15128197.cpp!!!	ProducerChannel(inout service : BufferHubService, in channel_id : int, in width : uint32_t, in height : uint32_t, in layer_count : uint32_t, in format : uint32_t, in usage : uint64_t, in meta_size_bytes : size_t, inout error : int)
+  const int ret = buffer_.Alloc(width, height, layer_count, format, usage);
+  if (ret < 0) {
+    ALOGE("ProducerChannel::ProducerChannel: Failed to allocate buffer: %s",
+          strerror(-ret));
+    *error = ret;
+    return;
+  }
+
+  // Success.
+  *error = 0;
+!!!15128325.cpp!!!	OnProducerPost(inout message : ProducerChannel::Message, in acquire_fence : LocalFence, in metadata : BufferWrapper<std::vector<std::uint8_t>>) : pdx::Status<void>
+  ATRACE_NAME("ProducerChannel::OnProducerPost");
+  ALOGD_IF(TRACE, "ProducerChannel::OnProducerPost: buffer_id=%d", buffer_id());
+  if (!producer_owns_) {
+    ALOGE("ProducerChannel::OnProducerPost: Not in gained state!");
+    return ErrorStatus(EBUSY);
+  }
+
+  if (meta_size_bytes_ != metadata.size()) {
+    ALOGD_IF(TRACE,
+             "ProducerChannel::OnProducerPost: Expected meta_size_bytes=%zu "
+             "got size=%zu",
+             meta_size_bytes_, metadata.size());
+    return ErrorStatus(EINVAL);
+  }
+
+  std::copy(metadata.begin(), metadata.end(), meta_.get());
+  post_fence_ = std::move(acquire_fence);
+  producer_owns_ = false;
+
+  // Signal any interested consumers. If there are none, automatically release
+  // the buffer.
+  pending_consumers_ = 0;
+  for (auto consumer : consumer_channels_) {
+    if (consumer->OnProducerPosted())
+      pending_consumers_++;
+  }
+  if (pending_consumers_ == 0)
+    SignalAvailable();
+  ALOGD_IF(TRACE, "ProducerChannel::OnProducerPost: %d pending consumers",
+           pending_consumers_);
+
+  return {};
+!!!15128453.cpp!!!	OnProducerGain(inout message : ProducerChannel::Message) : pdx::Status<LocalFence>
+  ATRACE_NAME("ProducerChannel::OnGain");
+  ALOGD_IF(TRACE, "ProducerChannel::OnGain: buffer_id=%d", buffer_id());
+  if (producer_owns_) {
+    ALOGE("ProducerChanneL::OnGain: Already in gained state: channel=%d",
+          channel_id());
+    return ErrorStatus(EALREADY);
+  }
+
+  // There are still pending consumers, return busy.
+  if (pending_consumers_ > 0)
+    return ErrorStatus(EBUSY);
+
+  ClearAvailable();
+  producer_owns_ = true;
+  post_fence_.close();
+  return {std::move(returned_fence_)};
